@@ -27,6 +27,23 @@ _insight_lock = _threading.Lock()
 _feedback_task: dict[str, _Any] = {}
 _feedback_lock = _threading.Lock()
 
+# 태스크 TTL (초) — 완료/오류 태스크 자동 정리
+_INSIGHT_TTL_SECONDS = 300
+_insight_timestamps: dict[int, float] = {}
+
+
+def _gc_insight_tasks() -> None:
+    """완료/오류된 인사이트 태스크를 TTL 기반으로 정리."""
+    import time
+    now = time.time()
+    with _insight_lock:
+        for key in list(_insight_timestamps):
+            if now - _insight_timestamps[key] > _INSIGHT_TTL_SECONDS:
+                status = _insight_tasks.get(key, {}).get("status")
+                if status in ("done", "error", None):
+                    _insight_tasks.pop(key, None)
+                    _insight_timestamps.pop(key, None)
+
 
 def _submit_insight_task(
     period_days: int,
@@ -38,11 +55,14 @@ def _submit_insight_task(
     llm_model: str,
 ) -> bool:
     """AI 인사이트 생성을 백그라운드 스레드에 제출."""
+    import time
+    _gc_insight_tasks()
     with _insight_lock:
         existing = _insight_tasks.get(period_days)
         if existing and existing["status"] == "running":
             return False
         _insight_tasks[period_days] = {"status": "running"}
+        _insight_timestamps[period_days] = time.time()
 
     def _run() -> None:
         try:
@@ -173,12 +193,13 @@ def render() -> None:
             .filter(Post.created_at >= since_dt, Post.status == PostStatus.UPLOADED)
             .scalar() or 0
         )
-        # 업로드된 컨텐츠 목록 (analytics 데이터 포함)
+        # 업로드된 컨텐츠 목록 (analytics 데이터 포함) — 최대 200건 제한
         _uploaded_contents: list[tuple[Post, Content]] = (
             _db.query(Post, Content)
             .join(Content, Content.post_id == Post.id)
-            .filter(Post.status == PostStatus.UPLOADED)
+            .filter(Post.status == PostStatus.UPLOADED, Post.created_at >= since_dt)
             .order_by(Post.updated_at.desc())
+            .limit(200)
             .all()
         )
 
@@ -304,6 +325,11 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
         if st.button("📡 Analytics 수집", key="fetch_analytics", width="content"):
             _fetched, _errors = 0, 0
             with st.spinner("YouTube Analytics 수집 중..."):
+                from uploaders.youtube import YouTubeUploader
+                _uploader = YouTubeUploader()
+
+                # 업데이트할 데이터를 먼저 수집
+                _updates: list[tuple[int, dict]] = []
                 for _post, _cnt in _uploaded_contents:
                     _meta = dict(_cnt.upload_meta or {})
                     _yt = _meta.get("youtube", {})
@@ -311,8 +337,6 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
                     if not _video_id:
                         continue
                     try:
-                        from uploaders.youtube import YouTubeUploader
-                        _uploader = YouTubeUploader()
                         _stats = _uploader.fetch_analytics(_video_id)
                         if _stats:
                             _yt["analytics"] = {
@@ -320,15 +344,21 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
                                 "collected_at": datetime.now(timezone.utc).isoformat(),
                             }
                             _meta["youtube"] = _yt
-                            with SessionLocal() as _s:
-                                _c = _s.query(Content).filter_by(post_id=_post.id).first()
-                                if _c:
-                                    _c.upload_meta = _meta
-                                    _s.commit()
+                            _updates.append((_post.id, _meta))
                             _fetched += 1
                     except Exception as _ex:
                         log.warning("Analytics 수집 실패 post_id=%d: %s", _post.id, _ex)
                         _errors += 1
+
+                # 단일 세션에서 일괄 업데이트
+                if _updates:
+                    with SessionLocal() as _s:
+                        for _pid, _meta in _updates:
+                            _c = _s.query(Content).filter_by(post_id=_pid).first()
+                            if _c:
+                                _c.upload_meta = _meta
+                        _s.commit()
+
             if _fetched:
                 st.success(f"✅ {_fetched}건 수집 완료" + (f" ({_errors}건 실패)" if _errors else ""))
                 st.rerun()
@@ -369,7 +399,7 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
         _itask_running = _insight_tasks.get(period_days, {}).get("status") == "running"
 
         if _itask_running:
-            @st.fragment(run_every="10s")
+            @st.fragment(run_every="30s")
             def _insight_poller() -> None:
                 _t = _insight_tasks.get(period_days)
                 if _t and _t["status"] in ("done", "error"):
@@ -448,7 +478,7 @@ background:{color};border-radius:3px;vertical-align:middle"></span>
                     width="stretch",
                     disabled=True,
                 )
-                @st.fragment(run_every="5s")
+                @st.fragment(run_every="30s")
                 def _fb_poller() -> None:
                     if _feedback_task.get("status") in ("done", "error"):
                         st.rerun()

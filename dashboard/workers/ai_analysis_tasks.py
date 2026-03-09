@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import threading
+import time as _time
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -11,6 +12,20 @@ log = logging.getLogger(__name__)
 # post_id → {"status": "running"|"done"|"error", "result": dict, "error": str}
 _analysis_tasks: dict[int, dict[str, Any]] = {}
 _task_lock = threading.Lock()
+_task_created_at: dict[int, float] = {}
+_TASK_TTL_SECONDS = 300  # 완료/오류 태스크 5분 후 자동 삭제
+
+
+def _gc_analysis_tasks() -> None:
+    """완료/오류된 분석 태스크를 TTL 기반으로 정리."""
+    now = _time.time()
+    with _task_lock:
+        for pid in list(_task_created_at):
+            elapsed = now - _task_created_at[pid]
+            status = _analysis_tasks.get(pid, {}).get("status")
+            if status in ("done", "error") and elapsed > _TASK_TTL_SECONDS:
+                _analysis_tasks.pop(pid, None)
+                _task_created_at.pop(pid, None)
 
 
 def get_analysis_task(post_id: int) -> dict | None:
@@ -19,15 +34,18 @@ def get_analysis_task(post_id: int) -> dict | None:
 
 def clear_analysis_task(post_id: int) -> None:
     _analysis_tasks.pop(post_id, None)
+    _task_created_at.pop(post_id, None)
 
 
 def submit_analysis_task(post_id: int, title: str, content: str, model: str) -> bool:
     """분석 작업을 백그라운드 스레드에 제출. 이미 실행 중이면 False 반환."""
+    _gc_analysis_tasks()
     with _task_lock:
         existing = _analysis_tasks.get(post_id)
         if existing and existing["status"] == "running":
             return False
         _analysis_tasks[post_id] = {"status": "running"}
+        _task_created_at[post_id] = _time.time()
 
     def _run() -> None:
         try:

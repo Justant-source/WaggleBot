@@ -907,13 +907,25 @@ def assign_video_modes(
     intro/outro 등 미할당 씬만 처리한다.
 
     할당 규칙 (미할당 씬):
-    1. text_only → "t2v"
-    2. image_text / image_only → image_filter 평가, score >= threshold → "i2v", 아니면 "t2v"
-    3. intro / outro → "t2v"
+    1. comment / outro → "static" (비디오 클립 사용 안 함)
+    2. text_only → "t2v"
+    3. image_text / image_only → image_filter 평가, score >= threshold → "i2v", 아니면 "t2v"
+    4. intro → "t2v"
     """
     from ai_worker.video.image_filter import evaluate_image
 
     for i, scene in enumerate(scenes):
+        # ── 댓글·아웃트로 씬은 비디오 클립 사용 안 함 ──
+        # (사전 할당 여부와 무관하게 static 강제)
+        if scene.type == "outro" or getattr(scene, "block_type", "body") == "comment":
+            if scene.video_mode not in (None, "static"):
+                logger.info(
+                    "[scene] 씬 %d (%s, block=%s): 비디오 클립 비대상 → static 강제 전환",
+                    i, scene.type, getattr(scene, "block_type", "body"),
+                )
+            scene.video_mode = "static"
+            continue
+
         # distribute_images()에서 사전 할당된 씬 스킵
         if scene.video_mode is not None:
             continue
@@ -955,7 +967,7 @@ def assign_video_modes(
             else:
                 scene.video_mode = "t2v"
 
-        elif scene.type in ("intro", "outro"):
+        elif scene.type == "intro":
             scene.video_mode = "t2v"
 
         else:

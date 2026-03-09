@@ -846,9 +846,9 @@ class RobustProcessor:
             except Exception:
                 logger.warning("썸네일 생성 실패 (비치명적)", exc_info=True)
 
-            post.status = PostStatus.PREVIEW_RENDERED
+            post.status = PostStatus.RENDERED
             session.commit()
-            logger.info("[Pipeline Render] ✓ 완료: post_id=%d → PREVIEW_RENDERED", post_id)
+            logger.info("[Pipeline Render] ✓ 완료: post_id=%d → RENDERED", post_id)
 
         return video_path
 

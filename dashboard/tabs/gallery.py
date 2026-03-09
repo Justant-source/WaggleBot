@@ -14,13 +14,26 @@ from db.session import SessionLocal
 from dashboard.components.status_utils import (
     stats_display, delete_post, STATUS_COLORS, STATUS_EMOJI, STATUS_TEXT,
 )
-from dashboard.workers.hd_render import (
-    hd_render_pending, hd_render_errors, enqueue_hd_render,
-)
+# HD 렌더 제거됨 — ai_worker가 직접 FHD 렌더링 + RENDERED 상태 전환
 
 # 플랫폼별 업로드 작업 레지스트리: "{post_id}_{platform}" → {"status": ..., "error": ...}
 _upload_tasks: dict[str, dict] = {}
 _upload_lock = _gal_threading.Lock()
+_upload_created_at: dict[str, float] = {}
+_UPLOAD_TASK_TTL = 300  # 5분
+
+
+def _gc_upload_tasks() -> None:
+    """완료/오류된 업로드 태스크를 TTL 기반으로 정리."""
+    import time
+    now = time.time()
+    with _upload_lock:
+        for key in list(_upload_created_at):
+            if now - _upload_created_at[key] > _UPLOAD_TASK_TTL:
+                status = _upload_tasks.get(key, {}).get("status")
+                if status in ("done", "error", None):
+                    _upload_tasks.pop(key, None)
+                    _upload_created_at.pop(key, None)
 
 # 플랫폼별 표시 정보 (label, help)
 _PLATFORM_DISPLAY: dict[str, tuple[str, str]] = {
@@ -42,7 +55,7 @@ def _get_upload_platforms() -> tuple[str, ...]:
 
 @st.fragment
 def _gallery_action_btn(post_id: int, content_id: int) -> None:
-    """갤러리 btn_col1 fragment — HD 렌더/플랫폼별 업로드 버튼."""
+    """갤러리 btn_col1 fragment — 플랫폼별 업로드 버튼."""
     with SessionLocal() as _s:
         _post = _s.get(Post, post_id)
         _content = _s.query(Content).filter_by(post_id=post_id).first()
@@ -53,19 +66,7 @@ def _gallery_action_btn(post_id: int, content_id: int) -> None:
             _raw = _content.upload_meta
             _upload_meta = json.loads(_raw) if isinstance(_raw, str) else (_raw or {})
 
-    _hd_err = hd_render_errors.pop(post_id, None)
-    if _hd_err:
-        st.error(f"렌더링 실패: {_hd_err}")
-
-    if post_id in hd_render_pending:
-        st.button(
-            "🎬렌더링 중",
-            key=f"hd_{content_id}",
-            width="stretch",
-            disabled=True,
-            help="고화질 렌더링이 대기 중이거나 진행 중입니다.",
-        )
-    elif _post.status in (PostStatus.RENDERED, PostStatus.UPLOADED):
+    if _post.status in (PostStatus.RENDERED, PostStatus.UPLOADED, PostStatus.PREVIEW_RENDERED):
         # ── 플랫폼별 업로드 버튼 ──
         platforms = _get_upload_platforms()
         _cols = st.columns(len(platforms)) if len(platforms) > 1 else [st.container()]
@@ -126,7 +127,7 @@ def _gallery_action_btn(post_id: int, content_id: int) -> None:
                                     _uc = _us.query(Content).filter_by(post_id=pid).first()
                                     ok = upload_post(_up, _uc, _us, target_platform=plat)
                                     if ok:
-                                        if _up.status == PostStatus.RENDERED:
+                                        if _up.status in (PostStatus.RENDERED, PostStatus.PREVIEW_RENDERED):
                                             _up.status = PostStatus.UPLOADED
                                         _us.commit()
                                         with _upload_lock:
@@ -151,22 +152,17 @@ def _gallery_action_btn(post_id: int, content_id: int) -> None:
                                         "error": str(_e),
                                     }
 
+                        import time as _time_mod
+                        _gc_upload_tasks()
                         with _upload_lock:
                             _upload_tasks[_task_key] = {"status": "running"}
+                            _upload_created_at[_task_key] = _time_mod.time()
                         _gal_threading.Thread(
                             target=_do_upload,
                             args=(post_id, _target),
                             daemon=True,
                         ).start()
 
-    elif _post.status == PostStatus.PREVIEW_RENDERED:
-        if st.button(
-            "🎬 고화질",
-            key=f"hd_{content_id}",
-            width="stretch",
-            help="1080×1920 고화질로 재렌더링",
-        ):
-            enqueue_hd_render(post_id)
 
 
 # ---------------------------------------------------------------------------
@@ -184,30 +180,24 @@ def render() -> None:
         if st.button("🔄 새로고침", key="gallery_refresh_btn", width="stretch"):
             st.rerun()
 
-    # HD 렌더 또는 업로드 진행 중일 때 자동 감지 fragment
-    @st.fragment(run_every="10s")
-    def _gallery_task_monitor() -> None:
-        """HD 렌더/업로드 완료 시 자동 새로고침."""
-        _has_pending = bool(hd_render_pending) or any(
-            t.get("status") == "running" for t in _upload_tasks.values()
-        )
-        _has_done = bool(hd_render_errors) or any(
-            t.get("status") in ("done", "error") for t in _upload_tasks.values()
-        )
-        if _has_done:
-            st.rerun()  # 완료 감지 → 전체 갱신
-        elif _has_pending:
-            st.caption("⏳ 렌더링/업로드 작업 진행 중... (자동 감지)")
+    # 업로드 진행 중일 때만 자동 감지 fragment 활성화
+    _has_active_tasks = any(
+        t.get("status") == "running" for t in _upload_tasks.values()
+    )
 
-    _gallery_task_monitor()
+    if _has_active_tasks:
+        @st.fragment(run_every="30s")
+        def _gallery_task_monitor() -> None:
+            """업로드 완료 시 자동 새로고침."""
+            _has_done = any(
+                t.get("status") in ("done", "error") for t in _upload_tasks.values()
+            )
+            if _has_done:
+                st.rerun()
+            else:
+                st.caption("⏳ 업로드 작업 진행 중... (자동 감지)")
 
-    # HD 렌더 진행 상태 표시
-    if hd_render_pending:
-        st.info(f"🎬 HD 렌더링 진행 중: {len(hd_render_pending)}건 (완료 시 자동 새로고침)")
-    if hd_render_errors:
-        for _err_pid, _err_msg in list(hd_render_errors.items()):
-            st.error(f"❌ Post #{_err_pid} HD 렌더링 실패: {_err_msg}")
-            hd_render_errors.pop(_err_pid, None)
+        _gallery_task_monitor()
 
     _gal_filter = st.multiselect(
         "상태 필터",
@@ -308,7 +298,7 @@ def render() -> None:
                                 PostStatus.PREVIEW_RENDERED,
                                 PostStatus.RENDERED,
                                 PostStatus.UPLOADED,
-                            ) or post.id in hd_render_pending:
+                            ):
                                 _gallery_action_btn(post.id, content.id)
 
                         with btn_col2:

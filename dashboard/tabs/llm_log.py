@@ -195,7 +195,7 @@ def _query_logs_flat(
     if filter_post_id > 0:
         q = q.filter(LLMLog.post_id == filter_post_id)
 
-    logs = q.order_by(LLMLog.created_at.desc()).limit(500).all()
+    logs = q.order_by(LLMLog.created_at.desc()).limit(100).all()
 
     # Post / Content 일괄 조회
     post_ids = {lg.post_id for lg in logs if lg.post_id is not None}
@@ -919,29 +919,32 @@ def render() -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(days=filter_days)
 
     # ── 3개 서브탭 ─────────────────────────────────────
-    with SessionLocal() as db:
-        # 각 탭 로그 수 미리 조회
-        script_cnt = db.query(func.count(LLMLog.id)).filter(
-            LLMLog.created_at >= cutoff, LLMLog.call_type.in_(_SCRIPT_TYPES),
-        ).scalar() or 0
-        scene_cnt = db.query(func.count(LLMLog.id)).filter(
-            LLMLog.created_at >= cutoff, LLMLog.call_type.in_(_SCENE_TYPES),
-        ).scalar() or 0
-        video_cnt = db.query(func.count(LLMLog.id)).filter(
-            LLMLog.created_at >= cutoff, LLMLog.call_type.in_(_VIDEO_TYPES),
-        ).scalar() or 0
+    # 카운트를 단일 쿼리로 통합
+    with SessionLocal() as _cnt_db:
+        from sqlalchemy import case as _case
+        _cnt_row = _cnt_db.query(
+            func.sum(_case((LLMLog.call_type.in_(_SCRIPT_TYPES), 1), else_=0)),
+            func.sum(_case((LLMLog.call_type.in_(_SCENE_TYPES), 1), else_=0)),
+            func.sum(_case((LLMLog.call_type.in_(_VIDEO_TYPES), 1), else_=0)),
+        ).filter(LLMLog.created_at >= cutoff).one()
+        script_cnt = int(_cnt_row[0] or 0)
+        scene_cnt = int(_cnt_row[1] or 0)
+        video_cnt = int(_cnt_row[2] or 0)
 
-        tab_script, tab_scene, tab_video = st.tabs([
-            f"대본 LLM ({script_cnt})",
-            f"씬 LLM ({scene_cnt})",
-            f"비디오 LLM ({video_cnt})",
-        ])
+    tab_script, tab_scene, tab_video = st.tabs([
+        f"대본 LLM ({script_cnt})",
+        f"씬 LLM ({scene_cnt})",
+        f"비디오 LLM ({video_cnt})",
+    ])
 
-        with tab_script:
+    with tab_script:
+        with SessionLocal() as db:
             _render_script_tab(db, cutoff, filter_success, filter_post_id)
 
-        with tab_scene:
+    with tab_scene:
+        with SessionLocal() as db:
             _render_scene_tab(db, cutoff, filter_success, filter_post_id)
 
-        with tab_video:
+    with tab_video:
+        with SessionLocal() as db:
             _render_video_tab(db, cutoff, filter_success, filter_post_id)
