@@ -101,6 +101,7 @@ class Content(Base):
     video_path = Column(String(255), nullable=True)
     upload_meta = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     # 비디오 생성 체크포인트 (Phase 7 씬별 진행 상태)
     pipeline_state = Column(JSON, nullable=True)
     # A/B 테스트 — 활성 테스트가 없으면 모두 NULL

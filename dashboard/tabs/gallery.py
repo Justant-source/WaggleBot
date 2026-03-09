@@ -228,7 +228,7 @@ def render() -> None:
             session.query(Content)
             .join(Post)
             .filter(Post.status.in_(_gal_statuses))
-            .order_by(Content.created_at.desc())
+            .order_by(Content.updated_at.desc())
             .offset(st.session_state["gallery_page"] * _GAL_PAGE_SIZE)
             .limit(_GAL_PAGE_SIZE)
             .all()
