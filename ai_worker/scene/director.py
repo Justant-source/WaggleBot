@@ -288,14 +288,19 @@ def _build_llm_input(
     oversized_indices: list[int],
     itv_candidates: list[dict],
     max_video_clips: int,
+    body_tts_map: dict[int, dict] | None = None,
 ) -> dict:
     """Phase 4-B LLM에 전달할 입력 데이터를 구성한다."""
     scenes_data: list[dict] = []
     for i, (text, _voice, bt, _author, _psl) in enumerate(body_items):
+        if body_tts_map and i in body_tts_map:
+            tts_sec = body_tts_map[i]["duration"]
+        else:
+            tts_sec = estimate_tts_duration(text)
         scenes_data.append({
             "index": i,
             "text": text[:25] + ("..." if len(text) > 25 else ""),
-            "tts_sec": estimate_tts_duration(text),
+            "tts_sec": tts_sec,
             "type": bt,
         })
 
@@ -756,6 +761,7 @@ def _convert_to_scene_decisions(
     oversized_indices: list[int],
     mood: str = "daily",
     tts_emotion: str = "",
+    body_tts_map: dict[int, dict] | None = None,
 ) -> list[SceneDecision]:
     """검증된 LLM 출력을 SceneDecision 리스트로 변환한다.
 
@@ -778,7 +784,7 @@ def _convert_to_scene_decisions(
         # oversized 씬 (직접 인덱스 지정)
         if scene_index is not None and scene_index in oversized_set:
             text, voice, bt, author, psl = body_items[scene_index]
-            tts_sec = estimate_tts_duration(text)
+            tts_sec = body_tts_map[scene_index]["duration"] if body_tts_map and scene_index in body_tts_map else estimate_tts_duration(text)
             img_url = None
             init_img = None
             v_mode = "t2v"
@@ -884,12 +890,75 @@ def _convert_to_scene_decisions(
                 author=author,
                 pre_split_lines=psl,
                 video_mode="static",
-                estimated_tts_sec=estimate_tts_duration(text),
+                estimated_tts_sec=body_tts_map[idx]["duration"] if body_tts_map and idx in body_tts_map else estimate_tts_duration(text),
                 merged_scene_indices=[idx],
             )
 
     # 인덱스 순서로 정렬하여 반환
     return [decisions[k] for k in sorted(decisions.keys())]
+
+
+# =====================================================================
+# Phase 4-D: 최소 비디오 클립 보장 (oversized 씬 루프 재생 지원)
+# =====================================================================
+
+def _ensure_video_clips(
+    scenes: list[SceneDecision],
+    max_video_clips: int,
+) -> None:
+    """비디오 클립 수가 max_video_clips에 미달하면 body 씬을 승격한다.
+
+    모든 씬이 5초 초과(oversized)인 경우에도 비디오 클립을 만들어
+    5초 비디오를 TTS 구간 동안 루프 재생한다.
+    댓글 씬은 승격 대상에서 제외한다.
+
+    Args:
+        scenes: SceneDecision 리스트 (in-place 수정)
+        max_video_clips: 목표 비디오 클립 수
+    """
+    n_video = sum(
+        1 for s in scenes
+        if s.type == "video_text" or s.video_mode in ("t2v", "i2v")
+    )
+    if n_video >= max_video_clips:
+        return
+
+    # 승격 가능 씬: body(비댓글) & 아직 비디오 아닌 씬
+    candidates = [
+        i for i, s in enumerate(scenes)
+        if s.block_type != "comment"
+        and s.type != "video_text"
+        and s.video_mode not in ("t2v", "i2v")
+    ]
+    if not candidates:
+        return
+
+    need = min(max_video_clips - n_video, len(candidates))
+    if need <= 0:
+        return
+
+    # 균등 분포로 선별 (시각적 다양성)
+    interval = len(candidates) / (need + 1)
+    promote_idx = [
+        candidates[min(round(interval * (k + 1)) - 1, len(candidates) - 1)]
+        for k in range(need)
+    ]
+    # 중복 제거 (round 오차)
+    promote_idx = list(dict.fromkeys(promote_idx))
+
+    for idx in promote_idx:
+        scenes[idx].type = "video_text"
+        scenes[idx].video_mode = "t2v"
+        scenes[idx].video_subtype = "ttv"
+        logger.info(
+            "[scene_director] 비디오 승격: 씬 %d (%.1f초) → video_text(t2v, 루프 재생)",
+            idx, scenes[idx].estimated_tts_sec,
+        )
+
+    logger.info(
+        "[scene_director] 최소 비디오 보장: %d개 승격 (총 비디오=%d/%d)",
+        len(promote_idx), n_video + len(promote_idx), max_video_clips,
+    )
 
 
 # =====================================================================
@@ -1162,6 +1231,7 @@ class SceneDirector:
         mood: str = "daily",
         post_id: int | None = None,
         image_cache_dir: Path | None = None,
+        body_tts_map: dict[int, dict] | None = None,
     ) -> None:
         self.profile = profile
         self._images: list[str] = list(images)   # 소모 추적용 복사본
@@ -1169,6 +1239,7 @@ class SceneDirector:
         self.mood = mood
         self.post_id = post_id
         self.image_cache_dir = image_cache_dir
+        self.body_tts_map: dict[int, dict] = body_tts_map or {}
 
         if comment_voices is None:
             # pipeline.json에서 자동 로드 (processor.py 레거시 경로용)
@@ -1270,14 +1341,18 @@ class SceneDirector:
         # ── Body ───────────────────────────────────────────────────────
         body_raw = list(self.script.get("body", []))
         body_items: list[tuple[str, str | None, str, str | None, list[str] | None]] = []
-        for item in body_raw:
+        for _bi, item in enumerate(body_raw):
             if isinstance(item, dict):
                 lines_raw = item.get("lines", [])
                 text = " ".join(lines_raw)
                 block_type = item.get("type", "body")
                 author = item.get("author")
                 is_comment = block_type == "comment"
-                voice = random.choice(self.comment_voices) if is_comment and self.comment_voices else None
+                # body_tts_map에서 사전 할당된 voice 사용 (Phase 4-pre TTS와 일관성 유지)
+                if _bi in self.body_tts_map:
+                    voice = self.body_tts_map[_bi].get("voice")
+                else:
+                    voice = random.choice(self.comment_voices) if is_comment and self.comment_voices else None
                 body_items.append((text, voice, block_type, author, lines_raw if len(lines_raw) > 1 else None))
             else:
                 body_items.append((str(item), None, "body", None, None))
@@ -1383,13 +1458,18 @@ class SceneDirector:
         # ── Phase 4-A: 사전 계산 ──
         logger.info("[scene_director] Phase 4-A: 사전 계산 시작 (body=%d)", len(body_items))
 
-        # 씬 데이터 구성 (TTS 예상 시간 포함)
+        # 씬 데이터 구성 (실제 TTS 시간 또는 추정값)
         scenes_data: list[dict] = []
         for i, (text, _voice, bt, _author, _psl) in enumerate(body_items):
+            # body_tts_map에 실제 TTS 시간이 있으면 우선 사용
+            if i in self.body_tts_map:
+                tts_sec = self.body_tts_map[i]["duration"]
+            else:
+                tts_sec = estimate_tts_duration(text)
             scenes_data.append({
                 "index": i,
                 "text": text,
-                "estimated_tts_sec": estimate_tts_duration(text),
+                "estimated_tts_sec": tts_sec,
                 "block_type": bt,
             })
 
@@ -1406,65 +1486,77 @@ class SceneDirector:
         )
 
         # merge_groups가 비어있고 oversized도 없으면 → LLM 스킵, 전체 text_only
+        body_scenes: list[SceneDecision] | None = None
+
         if not merge_groups and not oversized_indices:
-            logger.info("[scene_director] 병합 후보 없음 — 전체 text_only 배분")
-            return self._all_text_only(body_items, body_images, tts_emotion, mood, max_body_images)
+            logger.info("[scene_director] 병합 후보 없음 — text_only 기반 배분")
+            body_scenes = self._all_text_only(body_items, body_images, tts_emotion, mood, max_body_images)
+        else:
+            # ITV 이미지 사전 필터링
+            itv_candidates: list[dict] = []
+            if body_images and self.image_cache_dir:
+                self.image_cache_dir.mkdir(parents=True, exist_ok=True)
+                itv_candidates = filter_itv_candidates(
+                    body_images, self.image_cache_dir, threshold=itv_threshold,
+                )
+                logger.info(
+                    "[scene_director] Phase 4-A: ITV 후보 %d개 / 전체 이미지 %d개",
+                    len(itv_candidates), len(body_images),
+                )
 
-        # ITV 이미지 사전 필터링
-        itv_candidates: list[dict] = []
-        if body_images and self.image_cache_dir:
-            self.image_cache_dir.mkdir(parents=True, exist_ok=True)
-            itv_candidates = filter_itv_candidates(
-                body_images, self.image_cache_dir, threshold=itv_threshold,
+            # LLM 입력 데이터 구성
+            llm_input = _build_llm_input(
+                body_items, merge_groups, oversized_indices,
+                itv_candidates, max_video_clips,
+                body_tts_map=self.body_tts_map or None,
             )
-            logger.info(
-                "[scene_director] Phase 4-A: ITV 후보 %d개 / 전체 이미지 %d개",
-                len(itv_candidates), len(body_images),
+
+            # ── Phase 4-B: LLM 디렉팅 ──
+            logger.info("[scene_director] Phase 4-B: LLM 호출 시작")
+            llm_output = _call_scene_director_llm(
+                llm_input, timeout=llm_timeout, post_id=self.post_id,
             )
 
-        # LLM 입력 데이터 구성
-        llm_input = _build_llm_input(
-            body_items, merge_groups, oversized_indices,
-            itv_candidates, max_video_clips,
-        )
+            if llm_output is None:
+                if fallback_on_fail:
+                    return None  # 폴백 트리거 → distribute_images() 사용
+                logger.warning("[scene_director] LLM 실패, 폴백 비활성 — text_only 기반 배분")
+                body_scenes = self._all_text_only(body_items, body_images, tts_emotion, mood, max_body_images)
+            else:
+                # ── Phase 4-C: 후처리 검증 ──
+                logger.info("[scene_director] Phase 4-C: 후처리 검증 시작")
+                validated = validate_llm_output(
+                    llm_output, merge_groups, itv_candidates,
+                    total_scenes=len(body_items),
+                    max_video_clips=max_video_clips,
+                    oversized_indices=oversized_indices,
+                )
 
-        # ── Phase 4-B: LLM 디렉팅 ──
-        logger.info("[scene_director] Phase 4-B: LLM 호출 시작")
-        llm_output = _call_scene_director_llm(
-            llm_input, timeout=llm_timeout, post_id=self.post_id,
-        )
+                # SceneDecision 변환
+                body_scenes = _convert_to_scene_decisions(
+                    validated, body_items, merge_groups, itv_candidates,
+                    body_images, oversized_indices,
+                    mood=mood, tts_emotion=tts_emotion,
+                    body_tts_map=self.body_tts_map or None,
+                )
 
-        if llm_output is None:
-            if fallback_on_fail:
-                return None  # 폴백 트리거
-            logger.warning("[scene_director] LLM 실패, 폴백 비활성 — 전체 text_only")
-            return self._all_text_only(body_items, body_images, tts_emotion, mood, max_body_images)
-
-        # ── Phase 4-C: 후처리 검증 ──
-        logger.info("[scene_director] Phase 4-C: 후처리 검증 시작")
-        validated = validate_llm_output(
-            llm_output, merge_groups, itv_candidates,
-            total_scenes=len(body_items),
-            max_video_clips=max_video_clips,
-            oversized_indices=oversized_indices,
-        )
-
-        # SceneDecision 변환
-        body_scenes = _convert_to_scene_decisions(
-            validated, body_items, merge_groups, itv_candidates,
-            body_images, oversized_indices,
-            mood=mood, tts_emotion=tts_emotion,
-        )
+        # ── Phase 4-D: 최소 비디오 클립 보장 ──────────────────────────
+        # 모든 씬이 5초 초과(oversized)이면 merge_groups가 비어서 LLM이
+        # 비디오를 할당하지 않을 수 있다. max_video_clips까지 body 씬을
+        # video_text(t2v)로 승격하여 5초 비디오를 루프 재생한다.
+        if body_scenes is not None:
+            _ensure_video_clips(body_scenes, max_video_clips)
 
         # 결과 로깅
-        n_video = sum(1 for s in body_scenes if s.type == "video_text")
-        n_static = sum(1 for s in body_scenes if s.type in ("text_only", "image_text"))
-        n_itv = sum(1 for s in body_scenes if s.video_subtype == "itv")
-        n_ttv = sum(1 for s in body_scenes if s.video_subtype == "ttv")
-        logger.info(
-            "[scene_director] Phase 4 완료: %d씬 (비디오=%d [ITV=%d, TTV=%d], 정적=%d)",
-            len(body_scenes), n_video, n_itv, n_ttv, n_static,
-        )
+        if body_scenes is not None:
+            n_video = sum(1 for s in body_scenes if s.type == "video_text")
+            n_static = sum(1 for s in body_scenes if s.type in ("text_only", "image_text"))
+            n_itv = sum(1 for s in body_scenes if s.video_subtype == "itv")
+            n_ttv = sum(1 for s in body_scenes if s.video_subtype == "ttv")
+            logger.info(
+                "[scene_director] Phase 4 완료: %d씬 (비디오=%d [ITV=%d, TTV=%d], 정적=%d)",
+                len(body_scenes), n_video, n_itv, n_ttv, n_static,
+            )
         return body_scenes
 
     def _all_text_only(
@@ -1478,7 +1570,8 @@ class SceneDirector:
         """모든 본문 씬을 text_only/image_text로 배분한다 (비디오 없음)."""
         scenes: list[SceneDecision] = []
         img_idx = 0
-        for text, voice, bt, author, psl in body_items:
+        for i, (text, voice, bt, author, psl) in enumerate(body_items):
+            tts_dur = self.body_tts_map[i]["duration"] if i in self.body_tts_map else estimate_tts_duration(text)
             if img_idx < len(body_images) and img_idx < max_body_images:
                 scenes.append(SceneDecision(
                     type="image_text",
@@ -1491,7 +1584,8 @@ class SceneDirector:
                     author=author,
                     pre_split_lines=psl,
                     video_mode="static",
-                    estimated_tts_sec=estimate_tts_duration(text),
+                    estimated_tts_sec=tts_dur,
+                    merged_scene_indices=[i],
                 ))
                 img_idx += 1
             else:
@@ -1506,7 +1600,8 @@ class SceneDirector:
                     author=author,
                     pre_split_lines=psl,
                     video_mode="static",
-                    estimated_tts_sec=estimate_tts_duration(text),
+                    estimated_tts_sec=tts_dur,
+                    merged_scene_indices=[i],
                 ))
         return scenes
 

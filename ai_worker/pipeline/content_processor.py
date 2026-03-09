@@ -3,22 +3,26 @@
 각 Phase의 실제 로직은 해당 도메인 모듈에 위치한다.
 이 파일은 Phase 실행 순서와 VRAM 전환만 담당한다.
 
-Phase 1: scene.analyzer.analyze_resources()
-Phase 2: script.chunker.chunk_with_llm()
-Phase 3: scene.validator.validate_and_fix()
-Phase 4: scene.director.SceneDirector.direct()
-Phase 4.5: scene.director.assign_video_modes()
-Phase 5: tts.fish_client.synthesize()
-Phase 6: video.prompt_engine.VideoPromptEngine.generate_batch()
-Phase 7: video.manager.VideoManager.generate_all_clips()
+Phase 1:    scene.analyzer.analyze_resources()
+Phase 2:    script.chunker.chunk_with_llm()
+Phase 3:    scene.validator.validate_and_fix()
+Phase 4-pre: tts.fish_client.synthesize() (본문 TTS 사전 생성 → 실제 발화 시간 측정)
+Phase 4:    scene.director.SceneDirector.direct()
+Phase 4.5:  scene.director.assign_video_modes()
+Phase 5:    tts.fish_client.synthesize() (intro/outro + 사전 실패분 보충)
+Phase 6:    video.prompt_engine.VideoPromptEngine.generate_batch()
+Phase 7:    video.manager.VideoManager.generate_all_clips()
 """
 import collections
 import json as _json
 import logging
+import random as _random
 from pathlib import Path
 
 from ai_worker.script.chunker import chunk_with_llm
-from ai_worker.scene.analyzer import ResourceProfile, analyze_resources
+from ai_worker.scene.analyzer import (
+    ResourceProfile, analyze_resources, estimate_tts_duration, get_audio_duration,
+)
 from ai_worker.scene.director import SceneDecision, SceneDirector
 from ai_worker.scene.validator import validate_and_fix
 from ai_worker.tts.fish_client import synthesize
@@ -63,6 +67,58 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         len(script.get("closer", "")),
     )
 
+    # ── Phase 4-pre: Body TTS 사전 생성 (실제 발화 시간 측정) ─────
+    #
+    # 기존: 글자수÷4.0 추정 → 부정확한 씬 병합 결정
+    # 변경: Fish Speech로 실제 TTS 생성 → 정확한 발화 시간으로 씬 병합
+    # 생성된 오디오는 Phase 5에서 재사용 (intro/outro만 추가 생성)
+    body_tts_map: dict[int, dict] = {}
+    body_raw = list(script.get("body", []))
+    for _bi, item in enumerate(body_raw):
+        if isinstance(item, dict):
+            text = " ".join(item.get("lines", []))
+            block_type = item.get("type", "body")
+        else:
+            text = str(item)
+            block_type = "body"
+
+        is_comment = block_type == "comment"
+        voice = _random.choice(comment_voices) if is_comment and comment_voices else None
+
+        try:
+            tts_kwargs: dict = {"text": text, "scene_type": block_type}
+            if voice:
+                tts_kwargs["voice_key"] = voice
+            audio_path = await synthesize(**tts_kwargs)
+            duration = get_audio_duration(audio_path)
+            body_tts_map[_bi] = {
+                "audio": str(audio_path),
+                "duration": duration,
+                "voice": voice,
+            }
+            logger.debug(
+                "[content_processor] Phase 4-pre TTS: body[%d] %.1f초 (%s)",
+                _bi, duration, Path(str(audio_path)).name,
+            )
+        except Exception as exc:
+            estimated = estimate_tts_duration(text)
+            body_tts_map[_bi] = {
+                "audio": None,
+                "duration": estimated,
+                "voice": voice,
+            }
+            logger.warning(
+                "[content_processor] Phase 4-pre TTS 실패 (body[%d]): %s — 추정값 %.1f초",
+                _bi, exc, estimated,
+            )
+
+    _pre_ok = sum(1 for v in body_tts_map.values() if v["audio"])
+    _pre_fail = len(body_tts_map) - _pre_ok
+    logger.info(
+        "[content_processor] Phase 4-pre 완료: body TTS 생성=%d 실패=%d",
+        _pre_ok, _pre_fail,
+    )
+
     # ── Phase 4: 씬 배분 ──────────────────────────────────────────
     from config.settings import VIDEO_GEN_ENABLED, MEDIA_DIR
 
@@ -76,6 +132,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         comment_voices=comment_voices,
         post_id=post.id,
         image_cache_dir=image_cache_dir if VIDEO_GEN_ENABLED else None,
+        body_tts_map=body_tts_map,
     )
     scenes: list[SceneDecision] = director.direct()
 
@@ -100,17 +157,29 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
     else:
         logger.info("[content_processor] VIDEO_GEN_ENABLED=false — Phase 4.5 스킵")
 
-    # ── Phase 5: TTS 사전 생성 ────────────────────────────────────
+    # ── Phase 5: TTS 보충 생성 (Phase 4-pre 재사용 + intro/outro 신규) ──
     tts_ok = 0
     tts_fail = 0
+    tts_reused = 0
     for scene in scenes:
+        indices = getattr(scene, "merged_scene_indices", None) or []
         for j, line in enumerate(scene.text_lines):
             text = line if isinstance(line, str) else line.get("text", "")
+
+            # Phase 4-pre에서 사전 생성된 TTS 재사용
+            if j < len(indices) and indices[j] in body_tts_map:
+                pre = body_tts_map[indices[j]]
+                if pre.get("audio") and Path(pre["audio"]).exists():
+                    scene.text_lines[j] = {"text": text, "audio": pre["audio"]}
+                    tts_reused += 1
+                    continue
+
+            # intro/outro 또는 사전 생성 실패분 → 새로 생성
             try:
-                tts_kwargs: dict = {"text": text, "scene_type": scene.type}
+                tts_kw: dict = {"text": text, "scene_type": scene.type}
                 if scene.voice_override:
-                    tts_kwargs["voice_key"] = scene.voice_override
-                audio_path = await synthesize(**tts_kwargs)
+                    tts_kw["voice_key"] = scene.voice_override
+                audio_path = await synthesize(**tts_kw)
                 scene.text_lines[j] = {"text": text, "audio": str(audio_path)}
                 tts_ok += 1
             except Exception as exc:
@@ -122,8 +191,8 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
                 tts_fail += 1
 
     logger.info(
-        "[content_processor] Phase 5 완료: TTS 성공=%d 실패=%d",
-        tts_ok, tts_fail,
+        "[content_processor] Phase 5 완료: TTS 재사용=%d 신규=%d 실패=%d",
+        tts_reused, tts_ok, tts_fail,
     )
 
     # ── Phase 6: Video Prompt 생성 (GPU 불필요, LLM CPU 호출) ─────
