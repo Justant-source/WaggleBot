@@ -1,3 +1,6 @@
 #!/bin/sh
 APP_HOME="$(cd "$(dirname "$0")" && pwd)"
-exec java -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" "$@"
+CLASSPATH="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+exec java -Xmx64m -Xms64m $JAVA_OPTS $GRADLE_OPTS \
+    -classpath "$CLASSPATH" \
+    org.gradle.wrapper.GradleWrapperMain "$@"

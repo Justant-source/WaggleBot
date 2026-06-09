@@ -42,7 +42,7 @@ services:
     restart: unless-stopped
     runtime: nvidia
     ports:
-      - "8080:8080"
+      - "8082:8080"
     volumes:
       - ../assets/voices:/opt/fish-speech/references
       - ../checkpoints:/opt/fish-speech/checkpoints

@@ -10,53 +10,75 @@
 #   - CUDA 베이스: 12.6.3 → 13.0.1 (드라이버 591.86 호환)
 #   - PyTorch: cu128 → cu130 (comfy_kitchen cuda/triton 백엔드 활성화)
 #   - Flash Attention: CUDA/PyTorch 버전 일치로 설치 시도 (실패 시 SDPA 폴백)
+#
+# Python 3.12 전환 (2026-06-09):
+#   - Ubuntu 22.04 기본 python3.11 패키지가 3.11.0~rc1이라 sys.get_int_max_str_digits 없음
+#   - torch._dynamo.polyfills.sys 로드 시 AttributeError 발생 → Python 3.12(stable)로 교체
 
 FROM nvidia/cuda:13.0.1-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3.11-venv python3-pip \
+# deadsnakes PPA: Ubuntu 22.04 기본 python3.11은 3.11.0~rc1(release candidate)로
+# sys.get_int_max_str_digits 미포함 → torch._dynamo 로드 실패.
+# Python 3.12(stable)으로 교체.
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 python3.12-venv python3.12-dev python3-pip \
     git wget ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
+    && python3.12 -m ensurepip --upgrade \
+    && python3.12 -m pip install --upgrade pip
 
 WORKDIR /comfyui
 
 # PyTorch cu130 명시 설치 — comfy_kitchen cuda/triton 백엔드 활성화
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+RUN python3.12 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 
 # CUBLAS 버전 일치: PyTorch pip 패키지의 nvidia-cublas(13.1)와 system CUDA(13.0)의
 # libcublasLt 버전 불일치 방지. pip 경로를 우선시하여 cublas+cublasLt 모두 동일 버전 사용.
-ENV LD_LIBRARY_PATH="/usr/local/lib/python3.11/dist-packages/nvidia/cu13/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib:${LD_LIBRARY_PATH}"
 
 # ComfyUI 클론 + 의존성 (이미 설치된 torch cu130은 유지됨)
 RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
-    && pip install --no-cache-dir -r requirements.txt
+    && python3.12 -m pip install --no-cache-dir -r requirements.txt
 
 # Flash Attention: CUDA 13.0 + cu130 PyTorch 환경 일치
 # pre-built wheel 없으면 SDPA 자동 폴백 (runtime 이미지라 소스 빌드 불가)
-RUN pip install --no-cache-dir flash-attn --no-build-isolation 2>/dev/null || \
+RUN python3.12 -m pip install --no-cache-dir flash-attn --no-build-isolation 2>/dev/null || \
     echo "WARN: flash-attn pre-built wheel not available, using PyTorch SDPA fallback"
 
 # VHS (Video Helper Suite) 커스텀 노드 — VHS_VideoCombine 노드 제공
 RUN cd custom_nodes && \
     git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git && \
     cd ComfyUI-VideoHelperSuite && \
-    pip install --no-cache-dir -r requirements.txt
+    python3.12 -m pip install --no-cache-dir -r requirements.txt
 
 # LTX-Video 커스텀 노드 (LTX-2 전용 노드: LTXVConditioning, LTXVScheduler,
 # EmptyLTXVLatentVideo, LTXVImgToVideoInplace, SamplerCustomAdvanced 등)
+# kornia 0.8+ 호환 패치: pyramid.pad가 제거됨 → F.pad로 교체
 RUN cd custom_nodes && \
     git clone https://github.com/Lightricks/ComfyUI-LTXVideo.git && \
     cd ComfyUI-LTXVideo && \
-    pip install --no-cache-dir -r requirements.txt || true
+    python3.12 -m pip install --no-cache-dir -r requirements.txt || true && \
+    python3.12 -c "
+import re, pathlib
+p = pathlib.Path('pyramid_blending.py')
+t = p.read_text()
+t = re.sub(r'\n    pad,\n', '\n', t)
+t = t.replace('    image = pad(image,', '    image = F.pad(image,')
+t = t.replace('    images = pad(images,', '    images = F.pad(images,')
+p.write_text(t)
+print('kornia pad patch applied')
+"
 
 # ComfyUI-GGUF — GGUF 양자화 모델 로더 (UnetLoaderGGUF 노드 제공)
 # GGUF Q4 UNet(~12.7GB)을 GPU에 직접 로드하여 --lowvram 없이 실행 가능
 RUN cd custom_nodes && \
     git clone https://github.com/city96/ComfyUI-GGUF.git && \
-    pip install --no-cache-dir gguf
+    python3.12 -m pip install --no-cache-dir gguf
 
 EXPOSE 8188
 
