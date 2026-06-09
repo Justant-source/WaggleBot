@@ -94,8 +94,7 @@ class RobustProcessor:
 
                 # ===== Step 1: LLM 대본 생성 =====
                 logger.info("[Step 1/3] LLM 대본 생성 중...")
-                with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
-                    script = self._safe_generate_summary(post, session)
+                script = self._safe_generate_summary(post, session)
                 logger.info("[Step 1/3] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
 
                 # ===== Step 2: TTS 생성 =====
@@ -729,13 +728,12 @@ class RobustProcessor:
                     "[Pipeline LLM+TTS] content_processor 모드: 전략=%s 이미지=%d",
                     _profile.strategy, _profile.image_count,
                 )
-                with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
-                    _raw = await chunk_with_llm(
-                        post.content or "",
-                        _profile,
-                        post_id=post_id,
-                        extended=True,
-                    )
+                _raw = await chunk_with_llm(
+                    post.content or "",
+                    _profile,
+                    post_id=post_id,
+                    extended=True,
+                )
                 script = ScriptData(
                     hook=_raw.get("hook", ""),
                     body=_raw.get("body", []),
@@ -746,8 +744,7 @@ class RobustProcessor:
                 )
             else:
                 # 레거시 generate_script 경로
-                with self.gpu_manager.managed_inference(ModelType.LLM, "summarizer"):
-                    script = self._safe_generate_summary(post, session)
+                script = self._safe_generate_summary(post, session)
 
             logger.info("[Pipeline LLM+TTS] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
 
@@ -846,9 +843,9 @@ class RobustProcessor:
             except Exception:
                 logger.warning("썸네일 생성 실패 (비치명적)", exc_info=True)
 
-            post.status = PostStatus.RENDERED
+            post.status = PostStatus.PREVIEW_RENDERED
             session.commit()
-            logger.info("[Pipeline Render] ✓ 완료: post_id=%d → RENDERED", post_id)
+            logger.info("[Pipeline Render] ✓ 완료: post_id=%d → PREVIEW_RENDERED", post_id)
 
         return video_path
 

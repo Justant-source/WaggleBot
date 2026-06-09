@@ -3,7 +3,12 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv()
+from pathlib import Path as _PathDotenv
+_env_file = _PathDotenv(__file__).resolve().parent.parent / "env" / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
+else:
+    load_dotenv()
 
 ENABLED_CRAWLERS: list[str] = os.getenv("ENABLED_CRAWLERS", "nate_pann").split(",")
 

@@ -183,6 +183,6 @@ echo "   source ~/.bashrc"
 echo
 echo "WaggleBot 실행:"
 echo "   cd ~/Data/WaggleBot"
-echo "   docker compose up -d"
-echo "   docker compose logs --tail 30 ai_worker"
+echo "   docker compose -f env/docker-compose.yml up -d"
+echo "   docker compose -f env/docker-compose.yml logs --tail 30 ai_worker"
 echo

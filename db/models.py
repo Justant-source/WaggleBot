@@ -24,6 +24,25 @@ class PostStatus(enum.Enum):
     FAILED = "FAILED"
 
 
+class JobStatus(enum.Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    DONE = "DONE"
+    ERROR = "ERROR"
+
+
+class JobType(enum.Enum):
+    GENERATE_SCRIPT = "GENERATE_SCRIPT"
+    TTS_PREVIEW = "TTS_PREVIEW"
+    AI_FITNESS = "AI_FITNESS"
+    MANUAL_CRAWL = "MANUAL_CRAWL"
+    HD_RENDER = "HD_RENDER"
+    UPLOAD = "UPLOAD"
+    FETCH_YT_ANALYTICS = "FETCH_YT_ANALYTICS"
+    AI_INSIGHT = "AI_INSIGHT"
+    FEEDBACK_APPLY = "FEEDBACK_APPLY"
+
+
 def _utcnow():
     return datetime.now(timezone.utc)
 
@@ -101,7 +120,6 @@ class Content(Base):
     video_path = Column(String(255), nullable=True)
     upload_meta = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
-    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
     # 비디오 생성 체크포인트 (Phase 7 씬별 진행 상태)
     pipeline_state = Column(JSON, nullable=True)
     # A/B 테스트 — 활성 테스트가 없으면 모두 NULL
@@ -146,6 +164,27 @@ class CrawlBlocklist(Base):
     site_code = Column(String(32), nullable=False)
     origin_id = Column(String(64), nullable=False)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
+
+
+class Job(Base):
+    """대시보드 즉시 작업 큐 — Java backend가 enqueue, dashboard_worker가 처리."""
+    __tablename__ = "jobs"
+    __table_args__ = (
+        Index("ix_jobs_status_type", "status", "job_type"),
+        Index("ix_jobs_post", "post_id"),
+    )
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    job_type = Column(Enum(JobType), nullable=False)
+    post_id = Column(
+        BigInteger, ForeignKey("posts.id", ondelete="SET NULL"), nullable=True
+    )
+    status = Column(Enum(JobStatus), nullable=False, default=JobStatus.PENDING)
+    payload = Column(JSON, nullable=True)
+    result = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=_utcnow)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 
 
 class LLMLog(Base):

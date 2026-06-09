@@ -1,0 +1,33 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: wagglebot-backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mariadb://db:3306/wagglebot}
+    username: ${SPRING_DATASOURCE_USERNAME:wagglebot}
+    password: ${SPRING_DATASOURCE_PASSWORD:wagglebot}
+    driver-class-name: org.mariadb.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    properties:
+      hibernate.dialect: org.hibernate.dialect.MariaDBDialect
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
+  jackson:
+    time-zone: UTC
+    default-property-inclusion: non_null
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+app:
+  media-dir: ${MEDIA_DIR:/app/media}
+  config-dir: ${CONFIG_DIR:/app/config}
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}

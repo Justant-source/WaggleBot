@@ -1,6 +1,6 @@
 # /proposal - Write-Proposal 패키지 자동 생성
 
-공유 파일(db/, config/settings.py 등) 변경이 필요할 때, `arch/env/AGENT_TEAM.md` Section 5의 Write-Proposal 패턴을 따라 올바른 Proposal 패키지를 생성하는 스킬.
+공유 파일(db/, config/settings.py 등) 변경이 필요할 때, `docs/arch/env/AGENT_TEAM.md` Section 5의 Write-Proposal 패턴을 따라 올바른 Proposal 패키지를 생성하는 스킬.
 
 ## 사용법
 

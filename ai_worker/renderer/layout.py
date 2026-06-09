@@ -717,7 +717,7 @@ def render_layout_video(post, script, output_path: Path | None = None) -> Path:
     video_dir = MEDIA_DIR / "video" / post.site_code
     video_dir.mkdir(parents=True, exist_ok=True)
     if output_path is None:
-        output_path = video_dir / f"post_{post.origin_id}_FHD.mp4"
+        output_path = video_dir / f"post_{post.origin_id}_SD.mp4"
 
     sentences: list[dict] = []
     sentences.append({"text": script.hook, "section": "hook"})
@@ -783,7 +783,7 @@ def render_layout_video_from_scenes(
     video_dir = MEDIA_DIR / "video" / post.site_code
     video_dir.mkdir(parents=True, exist_ok=True)
     if output_path is None:
-        output_path = video_dir / f"post_{post.origin_id}_FHD.mp4"
+        output_path = video_dir / f"post_{post.origin_id}_SD.mp4"
 
     sentences, plan, images = _scenes_to_plan_and_sentences(scenes)
     logger.info(

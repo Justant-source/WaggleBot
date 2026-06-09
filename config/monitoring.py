@@ -3,7 +3,12 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv()
+from pathlib import Path as _PathDotenv
+_env_file = _PathDotenv(__file__).resolve().parent.parent / "env" / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
+else:
+    load_dotenv()
 
 MONITORING_ENABLED: bool = os.getenv("MONITORING_ENABLED", "true").lower() == "true"
 HEALTH_CHECK_INTERVAL: int = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))  # 5분

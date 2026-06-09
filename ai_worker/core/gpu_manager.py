@@ -57,14 +57,16 @@ class GPUMemoryManager:
     """
 
     # 모델별 예상 VRAM 사용량 (GB) — RTX 3090 24GB Quality-First 기준
+    # LLM은 원격(llm-worker/Claude API) → 로컬 VRAM 불필요
+    # TTS(5GB) + VIDEO(12GB) = 17GB — 6GB 안전마진 확보
     MODEL_VRAM_REQUIREMENTS = {
-        ModelType.LLM: 14.0,   # qwen2.5:14b 8-bit 기준
         ModelType.TTS: 5.0,    # Fish Speech 1.5 고사양 버전 기준
         ModelType.VIDEO: 12.0,  # LTX-Video 2B v0.9.8-distilled 기준
         ModelType.OTHER: 2.0,
     }
 
     # 동시 상주 허용 최대 VRAM (24GB 중 20GB, 4GB 안전마진)
+    # TTS(5)+VIDEO(12)=17GB, LLM은 원격
     MAX_COEXIST_VRAM_GB: float = 20.0
 
     def __init__(self):

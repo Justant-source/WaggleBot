@@ -9,37 +9,13 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 
-_codec_cache: str | None = None
-
-
 def _resolve_codec() -> str:
-    """h264_nvenc 사용 가능 여부를 감지하여 반환. 불가 시 libx264 폴백."""
-    global _codec_cache
-    if _codec_cache is not None:
-        return _codec_cache
-
-    try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-f", "lavfi", "-i", "nullsrc=s=64x64:d=0.1",
-             "-c:v", "h264_nvenc", "-f", "null", "-"],
-            capture_output=True, timeout=10,
-        )
-        if result.returncode == 0:
-            _codec_cache = "h264_nvenc"
-        else:
-            logger.warning("[encode] h264_nvenc 사용 불가 — libx264 폴백")
-            _codec_cache = "libx264"
-    except Exception:
-        logger.warning("[encode] h264_nvenc 감지 실패 — libx264 폴백")
-        _codec_cache = "libx264"
-
-    return _codec_cache
+    """h264_nvenc 반환 (RTX 3090 필수 환경)."""
+    return "h264_nvenc"
 
 
 def _get_encoder_args(codec: str) -> list[str]:
-    if codec == "h264_nvenc":
-        return ["-c:v", "h264_nvenc", "-preset", "medium", "-cq", "23", "-pix_fmt", "yuv420p"]
-    return ["-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "h264_nvenc", "-preset", "medium", "-cq", "23", "-pix_fmt", "yuv420p"]
 
 
 def _escape_ffmpeg_text(text: str) -> str:

@@ -46,7 +46,7 @@
 
 ## 설치 가이드
 
-**RTX 3090 24GB 이상** NVIDIA GPU 환경을 지원합니다. 설치 가이드: [arch/env/ENV_GPU.md](arch/env/ENV_GPU.md)
+**RTX 3090 24GB 이상** NVIDIA GPU 환경을 지원합니다. 설치 가이드: [docs/arch/env/ENV_GPU.md](docs/arch/env/ENV_GPU.md)
 
 ### 1. WSL2 + Ubuntu 설치
 
@@ -226,10 +226,11 @@ VOICE_REFERENCE_TEXTS = {
 WaggleBot/
 ├── CLAUDE.md                          # AI 개발 규칙 (코딩 컨벤션, 제약사항)
 ├── docker-compose.yml                 # RTX 3090 GPU 환경 (fish-speech + ComfyUI 포함)
-├── arch/
-│   ├── done/                          # 완료된 명세 (1~11번)
-│   └── env/
-│       └── ENV_GPU.md
+├── docs/
+│   └── arch/
+│       ├── done/                          # 완료된 명세 (1~11번)
+│       └── env/
+│           └── ENV_GPU.md
 ├── crawlers/
 │   ├── __init__.py                    # 크롤러 자동 등록 (explicit imports)
 │   ├── base.py                        # BaseCrawler (공통 헬퍼 + retry + 스코어링)

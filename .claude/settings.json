@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /home/justant/Data/WaggleBot/claude-telegram-bridge/scripts/stop-notify.mjs",
+            "command": "node /home/justant/Data/WaggleBot/claude-telegram-bridge/scripts/stop-notify.mjs 2>/dev/null || true",
             "timeout": 15
           }
         ]

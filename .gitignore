@@ -1,6 +1,7 @@
 # --- Python & 가상 환경 ---
 venv/
 .env
+env/.env
 __pycache__/
 *.pyc
 

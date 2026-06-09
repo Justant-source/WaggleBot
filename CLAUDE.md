@@ -32,7 +32,7 @@ Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만 실행.
 | 크롤러 | `crawlers/` — base.py (retry + 스코어링), nate_pann, bobaedream, dcinside, fmkorea, plugin_manager |
 | DB | `db/models.py` (Post/Comment/Content/LLMLog/ScriptData/PostStatus), `db/session.py`, `db/migrations/` |
 | AI 워커 | `ai_worker/processor.py` (루프), `ai_worker/main.py` (진입점), `gpu_manager.py` |
-| LLM | `ai_worker/llm/client.py` (call_ollama_raw, generate_script), `llm/logger.py` |
+| LLM | `ai_worker/llm/transport.py` (call_llm, pick_model, resolve_model_id), `ai_worker/script/client.py` (call_ollama_raw, generate_script), `ai_worker/script/logger.py` |
 | TTS | `ai_worker/tts/` (base, fish_client, edge_tts, kokoro, gptsovits) |
 | 비디오 | `ai_worker/video/` — manager.py (오케스트레이션), comfy_client.py (ComfyUI 통신), prompt_engine.py (한→영 프롬프트), image_filter.py (I2V 적합성), video_utils.py (FFmpeg 후처리) |
 | 렌더링 | `ai_worker/renderer/` — layout.py (하이브리드 합성), video.py (레거시/프리뷰), subtitle.py (ASS 자막), thumbnail.py |
@@ -48,8 +48,11 @@ Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만 실행.
 | 서비스 | 역할 | 포트 |
 |--------|------|------|
 | `db` | MariaDB 11 | 3306 |
+| `llm-worker` | claude CLI 게이트웨이 (haiku/sonnet) | 8090 |
 | `crawler` | 크롤링 루프 | — |
-| `dashboard` | Streamlit UI | 8501 |
+| `backend` | Spring Boot 3.3 REST API | 8080 |
+| `frontend` | Next.js 14 대시보드 | 3000 |
+| `dashboard_worker` | jobs 테이블 폴링 데몬 | — |
 | `fish-speech` | TTS (zero-shot 클로닝) | 8080 |
 | `comfyui` | LTX-2 비디오 생성 | 8188 |
 | `ai_worker` | 8-Phase 파이프라인 | — |
@@ -57,14 +60,12 @@ Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만 실행.
 
 ## 하드 제약 (절대 위반 금지)
 
-**VRAM (RTX 3090 24GB):** 2막 구조로 운영.
-1막(LLM): qwen2.5:14b 8-bit 단독 실행(~14GB). 대본/자막/프롬프트 생성.
-2막(미디어): LLM 완전 해제 후 Fish Speech(~5GB) + LTX-2 GGUF Q4(~12.7GB, ComfyUI --lowvram) 실행.
+**VRAM (RTX 3090 24GB):** LLM은 `llm-worker` 컨테이너에서 `claude` CLI로 원격 실행 — 로컬 LLM VRAM 없음.
+로컬 GPU는 TTS(Fish Speech ~5GB) + VIDEO(LTX-2 GGUF Q4 ~12.7GB)만 담당. 합계 ~17GB < 20GB 안전마진 확보 → 공존 가능.
 각 단계 후 `torch.cuda.empty_cache()` + `gc.collect()` 유지. GPU 컨텍스트 매니저 필수.
-동시 모델 로드는 총 VRAM 합계 18GB 이하일 때만 허용 (6GB 안전마진).
 ```python
-with gpu_manager.managed_inference(ModelType.LLM, "name"):
-    result = model.generate(text)
+with gpu_manager.managed_inference(ModelType.TTS, "fish-speech"):
+    result = tts.synthesize(text)
 ```
 
 **FFmpeg:** `h264_nvenc` 필수. `libx264` 수동 지정 금지. 프리뷰(480x854)는 CPU 허용.
@@ -84,7 +85,7 @@ with SessionLocal() as db:  # DB 항상 with 블록
 - `pathlib.Path` 필수 — os.path 금지
 - 설정은 `config/` 경유 — 로직 내 `os.getenv()` 금지
 - 타입힌트 모든 함수 필수, 가드절로 중첩 최소화
-- Ollama HTTP 직접 호출 금지 → `ai_worker/llm/client.py`의 `call_ollama_raw()` 사용
+- LLM 직접 호출 금지 → `ai_worker/llm/transport.py`의 `call_llm()` / `call_llm_raw()` 사용; Ollama 미사용
 - ScriptData는 `from db.models import ScriptData` (canonical 위치)
 - 사이트 목록 하드코딩 금지 → `CrawlerRegistry.list_crawlers()` 동적 조회
 - `ai_worker/video`는 `ai_worker/tts` 모듈을 절대 import 금지 — TTS와 비디오는 독립 파이프라인
@@ -109,11 +110,14 @@ with SessionLocal() as db:  # DB 항상 with 블록
 - **플러그인**: 크롤러 `crawlers/ADDING_CRAWLER.md`, 업로더 `uploaders/ADDING_UPLOADER.md` 참조.
 - **설정 분리**: `config/crawler.py`, `config/monitoring.py`. settings.py에서 re-export.
 - **로그**: `docker compose logs --tail 50 ai_worker`
+- **llm-worker**: `POST :8090/v1/invoke` — claude CLI subprocess 게이트웨이. `temperature`/`max_tokens`는 advisory(claude CLI 미지원). `~/.claude` 마운트 인증(구독).
+- **haiku/sonnet 라우팅**: `pick_model(call_type)` — chunk/generate_script/scene_director/feedback → sonnet; video_prompt/translate/comment_summarize → haiku. `config/pipeline.json`의 `llm_model_overrides`로 override 가능.
+- **dashboard_worker**: `jobs` 테이블 폴링 데몬. Java backend가 enqueue, Python이 execute.
 
-## arch/ 문서
+## docs/arch/ 문서
 
-- `arch/done/` — 완료된 과거 스펙
-- `arch/env/AGENT_TEAM.md` — Agent Team 운영 가이드 v3 (현행)
+- `docs/arch/done/` — 완료된 과거 스펙
+- `docs/arch/env/AGENT_TEAM.md` — Agent Team 운영 가이드 v3 (현행)
 
 ## 작업 완료 보고 규칙
 작업 완료 시 반드시 `_result/{작업이름}.md` 파일을 생성하여 상세 내용을 기록할 것. 작업이름은 2단어 이하.

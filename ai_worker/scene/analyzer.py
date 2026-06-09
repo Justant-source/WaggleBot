@@ -65,33 +65,6 @@ def analyze_resources(post, images: list[str]) -> ResourceProfile:
     return profile
 
 
-def get_audio_duration(path: "Path") -> float:
-    """WAV/오디오 파일의 실제 재생 시간(초)을 반환한다 (ffprobe 기반).
-
-    Args:
-        path: 오디오 파일 경로
-
-    Returns:
-        재생 시간 (초). 소수점 한 자리 반올림.
-
-    Raises:
-        subprocess.CalledProcessError: ffprobe 실행 실패
-    """
-    import subprocess
-    from pathlib import Path as _Path
-
-    result = subprocess.run(
-        [
-            "ffprobe", "-v", "quiet",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
-        capture_output=True, text=True, check=True,
-    )
-    return round(float(result.stdout.strip()), 1)
-
-
 def estimate_tts_duration(text: str) -> float:
     """씬 텍스트의 TTS 예상 시간(초)을 반환한다.
 

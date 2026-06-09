@@ -1,0 +1,5 @@
+package com.wagglebot.common;
+public enum JobType {
+    GENERATE_SCRIPT, TTS_PREVIEW, AI_FITNESS, MANUAL_CRAWL,
+    HD_RENDER, UPLOAD, FETCH_YT_ANALYTICS, AI_INSIGHT, FEEDBACK_APPLY
+}

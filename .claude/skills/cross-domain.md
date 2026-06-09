@@ -3,7 +3,7 @@
 Agent가 타 Agent의 소유 도메인 변경이 필요할 때 Team Lead에게 보내는
 올바른 형식의 SendMessage를 생성하는 스킬.
 
-`arch/env/AGENT_TEAM.md` Section 4-3 프로토콜을 따른다.
+`docs/arch/env/AGENT_TEAM.md` Section 4-3 프로토콜을 따른다.
 
 ## 사용법
 

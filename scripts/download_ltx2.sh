@@ -100,8 +100,8 @@ find checkpoints/ltx-2 checkpoints/latent_upscale_models checkpoints/loras \
 done
 echo ""
 echo "다음 단계:"
-echo "  1. docker compose build comfyui"
-echo "  2. docker compose up -d comfyui"
+echo "  1. docker compose -f env/docker-compose.yml build comfyui"
+echo "  2. docker compose -f env/docker-compose.yml up -d comfyui"
 echo ""
 echo "구버전 모델 정리 (수동):"
 echo "  rm -rf checkpoints/ltx-video/"

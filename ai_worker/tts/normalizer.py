@@ -140,40 +140,6 @@ _SLANG_MAP: dict[str, str] = load_slang_map()
 _PRONUNCIATION_MAP: dict[str, str] = load_pronunciation_map()
 
 
-# ── 겹받침 단순화 테이블 (표준 발음법 제10항) ──
-# 자음 앞·어말에서 겹받침 → 대표 단자음
-_DOUBLE_JONG_SIMPLIFY: dict[int, int] = {
-    3:  1,   # ㄳ → ㄱ
-    5:  4,   # ㄵ → ㄴ
-    6:  4,   # ㄶ → ㄴ
-    9:  1,   # ㄺ → ㄱ
-    10: 16,  # ㄻ → ㅁ
-    11: 8,   # ㄼ → ㄹ
-    12: 8,   # ㄽ → ㄹ
-    13: 8,   # ㄾ → ㄹ
-    14: 17,  # ㄿ → ㅂ
-    15: 8,   # ㅀ → ㄹ
-    18: 17,  # ㅄ → ㅂ
-}
-
-# ── 비음화 테이블 (표준 발음법 제18항) ──
-# 폐쇄음 종성 + ㄴ/ㅁ 초성 → 비음 종성
-_NASALIZATION_MAP: dict[int, int] = {
-    17: 16,  # ㅂ → ㅁ
-    26: 16,  # ㅍ → ㅁ
-    1:  21,  # ㄱ → ㅇ
-    2:  21,  # ㄲ → ㅇ
-    24: 21,  # ㅋ → ㅇ
-    7:  4,   # ㄷ → ㄴ
-    19: 4,   # ㅅ → ㄴ
-    20: 4,   # ㅆ → ㄴ
-    22: 4,   # ㅈ → ㄴ
-    23: 4,   # ㅊ → ㄴ
-    25: 4,   # ㅌ → ㄴ
-}
-_NASAL_CHOSEONG: frozenset[int] = frozenset({2, 6})  # 초성 ㄴ(2), ㅁ(6)
-
-
 def has_jongseong(char: str) -> bool:
     """받침 유무 확인 (유니코드 연산)."""
     if not char or not ('가' <= char <= '힣'):
@@ -188,26 +154,11 @@ def has_rieul_jongseong(char: str) -> bool:
     return (ord(char) - 0xAC00) % 28 == 8  # ㄹ = jongseong index 8
 
 
-# 조사 교정 제외 종성: 겹받침 + ㅆ (용언 어간에 주로 출현)
-# 이들 뒤 은/는/이/가 등은 조사가 아닌 어미일 가능성이 높음
-_VERB_STEM_JONGSEONG: frozenset[int] = frozenset(_DOUBLE_JONG_SIMPLIFY.keys()) | {20}  # ㅆ
-
-
-def _has_verb_stem_jongseong(char: str) -> bool:
-    """용언 어간에 주로 나타나는 종성(겹받침·ㅆ) 여부 확인."""
-    if not char or not ('가' <= char <= '힣'):
-        return False
-    return (ord(char) - 0xAC00) % 28 in _VERB_STEM_JONGSEONG
-
-
 def fix_particles(text: str) -> str:
     """받침 유무에 따른 조사 자동 교정.
 
     축약어 치환 후 받침이 달라져 조사가 맞지 않는 경우 교정.
     예: '남친과' → (축약어 치환) → '남자친구과' → (교정) → '남자친구와'
-
-    겹받침(ㅄ, ㄺ 등) 뒤는 용언 어간일 가능성이 높으므로 교정 건너뜀.
-    예: '없는'의 '는'은 관형사형 어미이므로 '은'으로 바꾸면 안 됨.
     """
     particle_pairs = [
         ("과", "와"),
@@ -224,72 +175,17 @@ def fix_particles(text: str) -> str:
             + r')(?=\s|$|[^가-힣])'
         )
         if with_jong == "으로":
+            # ㄹ받침 + 로 → "로" (예외: ㄹ받침은 "으로"가 아닌 "로")
             def _replace(m, wj=with_jong, woj=without_jong) -> str:
                 prev = m.group(1)
-                if _has_verb_stem_jongseong(prev):
-                    return m.group(0)
                 if has_rieul_jongseong(prev) or not has_jongseong(prev):
                     return prev + woj  # 로
                 return prev + wj       # 으로
         else:
             def _replace(m, wj=with_jong, woj=without_jong) -> str:
-                prev = m.group(1)
-                if _has_verb_stem_jongseong(prev):
-                    return m.group(0)
-                return prev + (wj if has_jongseong(prev) else woj)
+                return m.group(1) + (wj if has_jongseong(m.group(1)) else woj)
         text = pattern.sub(_replace, text)
     return text
-
-
-def simplify_double_jongseong(text: str) -> str:
-    """겹받침을 비음 초성 앞·어말에서 단순화 + 비음화 (표준 발음법 제10·18항).
-
-    Fish Speech G2P가 겹받침(ㅄ, ㄺ 등)을 잘못 분리하는 문제를 보수적으로 보완.
-
-    적용 조건:
-      - 다음 초성이 ㄴ/ㅁ → 겹받침 단순화 + 비음화 (없는→엄는, 읽는→잉는)
-      - 어말 또는 비한글 뒤 → 겹받침 단순화 (삶→삼, 값→갑)
-    미적용 조건:
-      - 다음 초성이 모음(ㅇ) → 연음 환경, Fish Speech에 위임 (없어→없어)
-      - 다음 초성이 기타 자음 → 비표준 텍스트가 중국어 회귀 유발 가능, 유지 (없다→없다)
-    """
-    chars = list(text)
-    result: list[str] = []
-    for i, ch in enumerate(chars):
-        code = ord(ch) - 0xAC00
-        if code < 0 or code > 11171:
-            result.append(ch)
-            continue
-        jong = code % 28
-        if jong not in _DOUBLE_JONG_SIMPLIFY:
-            result.append(ch)
-            continue
-
-        cho = code // (21 * 28)
-        jung = (code % (21 * 28)) // 28
-        new_jong = _DOUBLE_JONG_SIMPLIFY[jong]
-
-        # 다음 글자가 한글 음절인 경우
-        if i + 1 < len(chars):
-            next_code = ord(chars[i + 1]) - 0xAC00
-            if 0 <= next_code <= 11171:
-                next_cho = next_code // (21 * 28)
-                # ㅇ 초성(모음) → 연음 환경 → 유지
-                if next_cho == 11:
-                    result.append(ch)
-                    continue
-                # ㄴ/ㅁ 초성 → 겹받침 단순화 + 비음화
-                if next_cho in _NASAL_CHOSEONG and new_jong in _NASALIZATION_MAP:
-                    new_jong = _NASALIZATION_MAP[new_jong]
-                    result.append(chr(0xAC00 + cho * 21 * 28 + jung * 28 + new_jong))
-                    continue
-                # 기타 자음 초성 → 유지 (비표준 텍스트 방지)
-                result.append(ch)
-                continue
-
-        # 어말 또는 비한글 문자 앞: 겹받침 → 대표 단자음
-        result.append(chr(0xAC00 + cho * 21 * 28 + jung * 28 + new_jong))
-    return "".join(result)
 
 
 def normalize_for_tts(text: str) -> str:
@@ -328,10 +224,14 @@ def normalize_for_tts(text: str) -> str:
     text = re.sub(r'(\d+)\s*%', lambda m: sino_number(int(m.group(1))) + " 퍼센트", text)
     text = re.sub(r'\d+', convert_standalone_number, text)
 
-    # 3-1. 겹받침 단순화 + 후속 비음화 (Fish Speech G2P 보완)
-    # Fish Speech가 겹받침(ㅄ, ㄺ 등)을 잘못 분리하는 문제를 규칙 기반으로 보완.
-    # 비음화는 겹받침에서 생긴 종성에만 적용 (전역 비음화는 중국어 회귀 유발).
-    text = simplify_double_jongseong(text)
+    # 3-1. 발음 교정 사전 — 비활성화 (2026-03-08)
+    # Fish Speech 1.5는 자체 G2P로 한국어 발음 규칙(경음화·비음화·ㅎ탈락 등)을 처리.
+    # "댓글"→"대끌", "좋아"→"조아" 등 phonetic 변환은 모델 학습 데이터에 없는
+    # 비표준 표기로, 오히려 중국어 회귀 및 발음 왜곡을 유발함.
+    # for spelling, pron in sorted(
+    #     _PRONUNCIATION_MAP.items(), key=lambda x: -len(x[0])
+    # ):
+    #     text = text.replace(spelling, pron)
 
     # 4. 특수문자 정리
     text = text.replace("。", ".").replace("、", ",")   # 중국어/일본어 구두점

@@ -45,13 +45,7 @@ class YouTubeUploader(BaseUploader):
         if creds.expired and creds.refresh_token:
             from google.auth.transport.requests import Request
 
-            try:
-                creds.refresh(Request())
-            except Exception as exc:
-                raise RuntimeError(
-                    "YouTube refresh token이 만료/폐기되었습니다. "
-                    "재인증 필요: python scripts/youtube_auth.py"
-                ) from exc
+            creds.refresh(Request())
             token_path.write_text(creds.to_json())
             logger.info("YouTube 토큰 갱신 완료")
 

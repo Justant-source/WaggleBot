@@ -455,24 +455,6 @@ def render() -> None:
     selected_post_id = selected_post.id
     _pid = selected_post_id
 
-    # 이전 포스트의 session_state 키 정리 (메모리 누수 방지)
-    _prev_pid = st.session_state.get("_editor_active_pid")
-    if _prev_pid is not None and _prev_pid != _pid:
-        _stale_prefixes = (
-            f"bscene_{_prev_pid}_", f"cscene_{_prev_pid}_",
-            f"hook_{_prev_pid}", f"closer_{_prev_pid}",
-            f"title_{_prev_pid}", f"tags_{_prev_pid}", f"mood_{_prev_pid}",
-            f"body_scenes_{_prev_pid}", f"comment_scenes_{_prev_pid}",
-            f"comment_authors_{_prev_pid}", f"scene_valid_{_prev_pid}",
-            f"tts_audio_{_prev_pid}", f"_ai_result_{_prev_pid}",
-            f"_llm_gen_requested_{_prev_pid}",
-            f"style_preset_{_prev_pid}", f"extra_inst_{_prev_pid}",
-        )
-        for _sk in list(st.session_state.keys()):
-            if any(_sk.startswith(p) or _sk == p for p in _stale_prefixes):
-                del st.session_state[_sk]
-    st.session_state["_editor_active_pid"] = _pid
-
     post_labels = [f"[{p.id}] {p.title[:45]}" for p in approved_posts]
     col_sel, col_del = st.columns([8, 2])
     with col_sel:
@@ -912,50 +894,45 @@ def render() -> None:
                     except Exception as exc:
                         st.error(f"확정 실패: {exc}")
 
-    # ── 6. 비동기 작업 상태 모니터 (작업 실행 중일 때만 활성화) ────
-    _any_task_running = (
-        (_llm_task is not None and _llm_task.get("status") == "running")
-        or (_tts_task is not None and _tts_task.get("status") == "running")
-    )
+    # ── 6. 비동기 작업 상태 모니터 (fragment — 2초마다 이 블록만 조용히 갱신) ────
+    @st.fragment(run_every="10s")
+    def _task_status_monitor(pid: int) -> None:
+        """LLM / TTS 작업 완료를 10초 간격으로 감지.
+        완료 시점에만 전체 rerun을 트리거하고, 그 전까지는 이 fragment만 갱신.
+        """
+        _l = get_llm_task(pid)
+        _t = get_tts_task(pid)
 
-    if _any_task_running:
-        @st.fragment(run_every="30s")
-        def _task_status_monitor(pid: int) -> None:
-            """LLM / TTS 작업 완료를 30초 간격으로 감지.
-            완료 시점에만 전체 rerun을 트리거하고, 그 전까지는 이 fragment만 갱신.
-            """
-            _l = get_llm_task(pid)
-            _t = get_tts_task(pid)
+        if _l:
+            if _l["status"] == "done":
+                _inject_ai_result(pid, _l["result"])
+                clear_llm_task(pid)
+                st.session_state.pop(f"_llm_gen_requested_{pid}", None)
+                st.toast("✅ AI 대본 생성 완료!")
+                st.rerun()
+            elif _l["status"] == "error":
+                st.error(f"❌ 대본 생성 실패: {_l.get('error', '알 수 없는 오류')}")
+                clear_llm_task(pid)
+                st.session_state.pop(f"_llm_gen_requested_{pid}", None)
 
-            if _l:
-                if _l["status"] == "done":
-                    _inject_ai_result(pid, _l["result"])
-                    clear_llm_task(pid)
-                    st.session_state.pop(f"_llm_gen_requested_{pid}", None)
-                    st.toast("✅ AI 대본 생성 완료!")
-                    st.rerun()
-                elif _l["status"] == "error":
-                    st.error(f"❌ 대본 생성 실패: {_l.get('error', '알 수 없는 오류')}")
-                    clear_llm_task(pid)
-                    st.session_state.pop(f"_llm_gen_requested_{pid}", None)
+        if _t:
+            if _t["status"] == "done":
+                st.session_state[f"tts_audio_{pid}"] = _t["path"]
+                clear_tts_task(pid)
+                st.toast("✅ TTS 미리듣기 완료!")
+                st.rerun()
+            elif _t["status"] == "error":
+                st.error(f"❌ TTS 실패: {_t.get('error', '알 수 없는 오류')}")
+                clear_tts_task(pid)
 
-            if _t:
-                if _t["status"] == "done":
-                    st.session_state[f"tts_audio_{pid}"] = _t["path"]
-                    clear_tts_task(pid)
-                    st.toast("✅ TTS 미리듣기 완료!")
-                    st.rerun()
-                elif _t["status"] == "error":
-                    st.error(f"❌ TTS 실패: {_t.get('error', '알 수 없는 오류')}")
-                    clear_tts_task(pid)
+        _any_running = (
+            (_l is not None and _l.get("status") == "running")
+            or (_t is not None and _t.get("status") == "running")
+        )
+        if not _any_running:
+            return  # 실행 중인 작업 없음
 
-            _any_running = (
-                (_l is not None and _l.get("status") == "running")
-                or (_t is not None and _t.get("status") == "running")
-            )
-            if not _any_running:
-                return  # 실행 중인 작업 없음
-
+        if _any_running:
             _msgs = []
             if _l and _l["status"] == "running":
                 _msgs.append("🤖 AI 대본")
@@ -963,4 +940,4 @@ def render() -> None:
                 _msgs.append("🎙️ TTS")
             st.caption(f"{'·'.join(_msgs)} 생성 중... (자동 감지)")
 
-        _task_status_monitor(_pid)
+    _task_status_monitor(_pid)

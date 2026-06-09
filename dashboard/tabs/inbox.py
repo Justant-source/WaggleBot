@@ -94,19 +94,6 @@ def render() -> None:
     if "inbox_page" not in st.session_state:
         st.session_state["inbox_page"] = 0
 
-    # 메모리 정리: 무한 성장 방지
-    _AI_CACHE_MAX = 100
-    if len(st.session_state["ai_analysis"]) > _AI_CACHE_MAX:
-        # 오래된 항목부터 제거 (dict 삽입 순서 유지)
-        _excess = len(st.session_state["ai_analysis"]) - _AI_CACHE_MAX
-        for _k in list(st.session_state["ai_analysis"])[:_excess]:
-            del st.session_state["ai_analysis"][_k]
-    _SET_MAX = 200
-    if len(st.session_state["hidden_post_ids"]) > _SET_MAX:
-        st.session_state["hidden_post_ids"] = set()
-    if len(st.session_state["auto_approved_ids"]) > _SET_MAX:
-        st.session_state["auto_approved_ids"] = set()
-
     inbox_cfg = load_pipeline_config()
     auto_approve_enabled = inbox_cfg.get("auto_approve_enabled") == "true"
     auto_threshold = int(inbox_cfg.get("auto_approve_threshold", "80"))
@@ -148,7 +135,7 @@ def render() -> None:
             st.toast(f"🕷️ {_cr['message']}", icon="⚠️")
 
     # 크롤링 진행 중일 때 자동 완료 감지
-    @st.fragment(run_every="15s")
+    @st.fragment(run_every="5s")
     def _crawl_monitor() -> None:
         """크롤링 완료 자동 감지 → 전체 새로고침."""
         if st.session_state.get("crawl_running"):

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Gradle wrapper bootstrap
+GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+GRADLE_OPTS="${GRADLE_OPTS:-}"
+
+set -e
+APP_HOME="$(cd "$(dirname "$0")" && pwd)"
+cd "$APP_HOME"
+
+exec java $GRADLE_OPTS -jar "$GRADLE_USER_HOME/wrapper/dists/gradle-8.8-bin/"*/gradle-8.8/lib/gradle-launcher-*.jar "$@" || true
+
+# Fallback: download if not present
+exec "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" "$@" 2>/dev/null || \
+  java -cp "$GRADLE_USER_HOME/wrapper/dists/gradle-8.8-bin/*/gradle-8.8/lib/*" \
+    org.gradle.launcher.GradleMain "$@"

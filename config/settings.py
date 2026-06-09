@@ -5,7 +5,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+from pathlib import Path as _PathDotenv
+_env_file = _PathDotenv(__file__).resolve().parent.parent / "env" / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
+else:
+    load_dotenv()
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -60,45 +65,11 @@ AI_POLL_INTERVAL = int(os.getenv("AI_POLL_INTERVAL", "10"))
 # CUDA 세마포어 동시성 제한 (2막 TTS+VIDEO 병렬 실행 시 2로 전환 가능, 기본 1 = 순차)
 CUDA_CONCURRENCY = int(os.getenv("CUDA_CONCURRENCY", "1"))
 MAX_RETRY_COUNT = int(os.getenv("MAX_RETRY_COUNT", "3"))
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-# OLLAMA_MODEL 기본값: "qwen2.5:14b"
-#
-# 사용 가능한 모델 옵션 (RTX 3090 24GB 기준):
-# - qwen2.5:7b  (4-bit, ~4.5GB)  — 경량, 빠른 처리
-# - qwen2.5:7b  (8-bit, ~7.0GB)  — 균형잡힌 품질
-# - qwen2.5:14b (4-bit, ~9.0GB)  — 고품질, 경량 양자화
-# - qwen2.5:14b (8-bit, ~14.0GB) — ★ 최고 품질 (Quality-First 권장)
-# 주의: 14b 8-bit 사용 시 TTS/VIDEO와 동시 로드 불가 → 2막 구조 필수
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
-
-
-def get_ollama_host() -> str:
-    """Ollama 호스트를 호출 시점의 환경변수에서 읽는다 (컨테이너 재시작 없이도 반영).
-
-    OLLAMA_HOST 환경변수는 Ollama 서버의 바인드 주소로도 사용되므로
-    스킴·포트가 빠져 있을 수 있다. 클라이언트용으로 보정:
-    - "0.0.0.0"       → "http://localhost:11434"
-    - "0.0.0.0:11434" → "http://localhost:11434"
-    - "myhost"        → "http://myhost:11434"
-    """
-    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-    if not host:
-        return "http://localhost:11434"
-
-    # 스킴이 없으면 추가
-    if not host.startswith(("http://", "https://")):
-        host = f"http://{host}"
-
-    # 0.0.0.0 바인드 주소 → localhost로 변환 (클라이언트 접속용)
-    host = host.replace("://0.0.0.0", "://localhost")
-
-    # 포트가 없으면 기본 포트 추가
-    from urllib.parse import urlparse
-    parsed = urlparse(host)
-    if not parsed.port:
-        host = f"{parsed.scheme}://{parsed.hostname}:11434"
-
-    return host
+# ---------------------------------------------------------------------------
+# LLM Worker (Claude CLI bridge)
+# ---------------------------------------------------------------------------
+LLM_WORKER_URL: str = os.getenv("LLM_WORKER_URL", "http://llm-worker:8090")
+DEFAULT_LLM_MODEL: str = os.getenv("LLM_MODEL", "haiku")
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "media")))
 ASSETS_DIR = Path(os.getenv("ASSETS_DIR", str(_PROJECT_ROOT / "assets")))
 
@@ -134,7 +105,8 @@ _PIPELINE_DEFAULTS: dict[str, str] = {
     # 모델 관련 기본값 — .env의 값을 읽음. 변경 시 .env만 수정하면 됨.
     "tts_engine": os.getenv("TTS_ENGINE", "fish-speech"),
     "tts_voice":  os.getenv("TTS_VOICE",  "yura"),
-    "llm_model":  OLLAMA_MODEL,  # .env의 OLLAMA_MODEL
+    "llm_model":  DEFAULT_LLM_MODEL,  # .env의 LLM_MODEL
+    "llm_model_overrides": "{}",
     "video_resolution": "1080x1920",
     "video_codec": "h264_nvenc",
     "bgm_volume": "0.15",
@@ -366,7 +338,7 @@ VIDEO_GEN_ENABLED: bool = os.getenv("VIDEO_GEN_ENABLED", "false").lower() == "tr
 VIDEO_GEN_TIMEOUT: int = int(os.getenv("VIDEO_GEN_TIMEOUT", "1200"))  # 20분 (RTX 3090 기준)
 VIDEO_GEN_TIMEOUT_DISTILLED: int = int(os.getenv("VIDEO_GEN_TIMEOUT_DISTILLED", "1200"))  # 20분
 # "distilled" | "full" — .env에서 전환. distilled=빠른 테스트, full=고품질 최종본
-VIDEO_WORKFLOW_MODE: str = os.getenv("VIDEO_WORKFLOW_MODE", "full").lower()
+VIDEO_WORKFLOW_MODE: str = os.getenv("VIDEO_WORKFLOW_MODE", "distilled").lower()
 VIDEO_MODEL_FULL: str = "ltx-2-19b-dev-fp8.safetensors"              # 풀 모델 (FP8)
 VIDEO_MODEL_DISTILLED: str = "ltx-2-19b-distilled-fp8.safetensors"   # Distilled (FP8)
 VIDEO_MODEL: str = "ltx2_distilled"  # "ltx2" | "ltx2_distilled"
@@ -379,7 +351,7 @@ VIDEO_STEPS: int = 20
 VIDEO_STEPS_DISTILLED: int = 8
 VIDEO_CFG: float = 3.5
 VIDEO_CFG_DISTILLED: float = 1.0
-VIDEO_I2V_THRESHOLD: float = 0.45    # image_filter 적합성 임계값 (0.6→0.45 완화)
+VIDEO_I2V_THRESHOLD: float = 0.6     # image_filter 적합성 임계값
 VIDEO_I2V_DENOISE: float = 0.75
 VIDEO_MAX_CLIPS_PER_POST: int = 8    # 글당 최대 생성 클립 수
 VIDEO_MAX_RETRY: int = 4             # 씬당 최대 재시도 횟수 (4단계 폴백)

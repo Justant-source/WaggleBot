@@ -1,0 +1,233 @@
+"""dashboard_worker 잡 핸들러 — 기존 Python 함수를 직접 호출."""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from db.models import Job, JobType
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 핸들러 구현
+# ---------------------------------------------------------------------------
+
+def _handle_generate_script(job: Job) -> dict:
+    payload = job.payload or {}
+    post_id = job.post_id
+    model = payload.get("model")
+    extra_instructions = payload.get("extra_instructions")
+    call_type = payload.get("call_type", "generate_script_auto")
+
+    from db.session import SessionLocal
+    from db.models import Post, Content, Comment
+
+    with SessionLocal() as db:
+        post = db.query(Post).filter_by(id=post_id).first()
+        if not post:
+            raise ValueError(f"Post {post_id} not found")
+        comments_raw = (
+            db.query(Comment)
+            .filter_by(post_id=post_id)
+            .order_by(Comment.likes.desc())
+            .limit(5)
+            .all()
+        )
+        comments = [c.content for c in comments_raw]
+        title = post.title
+        body = post.content or ""
+
+    from ai_worker.script.client import generate_script
+
+    script = generate_script(
+        title,
+        body,
+        comments,
+        model=model,
+        extra_instructions=extra_instructions,
+        post_id=post_id,
+        call_type=call_type,
+    )
+
+    with SessionLocal() as db:
+        content = db.query(Content).filter_by(post_id=post_id).first()
+        if content is None:
+            from db.models import Content as ContentModel
+            content = ContentModel(post_id=post_id)
+            db.add(content)
+        content.summary_text = script.to_json()
+        db.commit()
+
+    return {"script_json": script.to_json()}
+
+
+def _handle_tts_preview(job: Job) -> dict:
+    payload = job.payload or {}
+    post_id = job.post_id
+
+    from db.session import SessionLocal
+    from db.models import Content
+    from config.settings import load_pipeline_config, MEDIA_DIR
+
+    cfg = load_pipeline_config()
+    voice = payload.get("voice", cfg.get("tts_voice", "yura"))
+
+    with SessionLocal() as db:
+        content = db.query(Content).filter_by(post_id=post_id).first()
+        if not content or not content.summary_text:
+            raise ValueError("TTS 미리듣기: 대본 없음")
+        from db.models import ScriptData
+        script = ScriptData.from_json(content.summary_text)
+
+    lines = [script.hook]
+    for item in script.body[:3]:
+        if isinstance(item, dict):
+            lines.extend(item.get("lines", []))
+    text = " ".join(lines)
+
+    output_path = Path(MEDIA_DIR) / "tmp" / f"preview_{post_id}.mp3"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    from ai_worker.tts.fish_client import FishSpeechClient
+    client = FishSpeechClient()
+    client.synthesize(text, str(output_path), voice=voice)
+    return {"preview_path": str(output_path)}
+
+
+def _handle_ai_fitness(job: Job) -> dict:
+    post_id = job.post_id
+
+    from db.session import SessionLocal
+    from db.models import Post
+    from ai_worker.script.client import call_ollama_raw
+
+    with SessionLocal() as db:
+        post = db.query(Post).filter_by(id=post_id).first()
+        if not post:
+            raise ValueError(f"Post {post_id} not found")
+        title = post.title
+        body = (post.content or "")[:500]
+
+    prompt = (
+        f"다음 게시글이 유튜브 쇼츠 콘텐츠로 적합한지 분석하세요.\n"
+        f"제목: {title}\n내용 앞부분: {body}\n\n"
+        'JSON으로 응답: {"score": 0~100, "reason": "한 줄 이유", "recommended": true/false}'
+    )
+    raw = call_ollama_raw(prompt, max_tokens=200)
+    return {"raw": raw}
+
+
+def _handle_manual_crawl(job: Job) -> dict:
+    from crawlers.plugin_manager import CrawlerRegistry
+
+    registry = CrawlerRegistry()
+    results = []
+    for crawler_cls in registry.list_crawlers():
+        try:
+            crawler = crawler_cls()
+            count = crawler.run()
+            results.append({"crawler": crawler_cls.__name__, "count": count})
+        except Exception as exc:
+            logger.warning("크롤러 실패 %s: %s", crawler_cls.__name__, exc)
+            results.append({"crawler": crawler_cls.__name__, "error": str(exc)})
+    return {"results": results}
+
+
+def _handle_hd_render(job: Job) -> dict:
+    post_id = job.post_id
+
+    from db.session import SessionLocal
+    from db.models import Post, Content, PostStatus
+    from config.settings import MEDIA_DIR
+
+    with SessionLocal() as db:
+        post = db.query(Post).filter_by(id=post_id).first()
+        content = db.query(Content).filter_by(post_id=post_id).first()
+        if not post or not content:
+            raise ValueError("Post/Content not found")
+
+    output_path = str(Path(MEDIA_DIR) / "videos" / f"{post_id}_FHD.mp4")
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    from ai_worker.renderer.composer import render_final_video
+    render_final_video(post, content, output_path=output_path)
+
+    with SessionLocal() as db:
+        db.query(Content).filter_by(post_id=post_id).update({"video_path": output_path})
+        db.query(Post).filter_by(id=post_id).update({"status": PostStatus.RENDERED})
+        db.commit()
+
+    return {"video_path": output_path}
+
+
+def _handle_upload(job: Job) -> dict:
+    payload = job.payload or {}
+    post_id = job.post_id
+    platform = payload.get("platform", "youtube")
+
+    from db.session import SessionLocal
+    from db.models import Post, Content
+    from uploaders.uploader import upload_post
+
+    with SessionLocal() as db:
+        post = db.query(Post).filter_by(id=post_id).first()
+        content = db.query(Content).filter_by(post_id=post_id).first()
+        result = upload_post(post, content, db, target_platform=platform)
+    return {"platform": platform, "result": result}
+
+
+def _handle_fetch_yt_analytics(job: Job) -> dict:
+    post_id = job.post_id
+
+    from db.session import SessionLocal
+    from db.models import Content
+
+    with SessionLocal() as db:
+        content = db.query(Content).filter_by(post_id=post_id).first()
+        if not content or not content.upload_meta:
+            raise ValueError("upload_meta 없음")
+        video_id = (content.upload_meta or {}).get("youtube", {}).get("video_id")
+    if not video_id:
+        raise ValueError("YouTube video_id 없음")
+
+    from uploaders.youtube import YouTubeUploader
+    uploader = YouTubeUploader()
+    analytics = uploader.fetch_analytics(video_id)
+    return {"analytics": analytics}
+
+
+def _handle_ai_insight(job: Job) -> dict:
+    from analytics.feedback import generate_structured_insights
+    from config.settings import load_pipeline_config
+
+    cfg = load_pipeline_config()
+    model = cfg.get("llm_model", "haiku")
+    insights = generate_structured_insights(model=model)
+    return {"insights": insights}
+
+
+def _handle_feedback_apply(job: Job) -> dict:
+    from analytics.feedback import generate_structured_insights, apply_feedback
+    from config.settings import load_pipeline_config
+
+    cfg = load_pipeline_config()
+    insights = generate_structured_insights(model=cfg.get("llm_model", "haiku"))
+    apply_feedback(insights)
+    return {"applied": True}
+
+
+# ---------------------------------------------------------------------------
+# 핸들러 레지스트리
+# ---------------------------------------------------------------------------
+HANDLERS = {
+    JobType.GENERATE_SCRIPT:    _handle_generate_script,
+    JobType.TTS_PREVIEW:        _handle_tts_preview,
+    JobType.AI_FITNESS:         _handle_ai_fitness,
+    JobType.MANUAL_CRAWL:       _handle_manual_crawl,
+    JobType.HD_RENDER:          _handle_hd_render,
+    JobType.UPLOAD:             _handle_upload,
+    JobType.FETCH_YT_ANALYTICS: _handle_fetch_yt_analytics,
+    JobType.AI_INSIGHT:         _handle_ai_insight,
+    JobType.FEEDBACK_APPLY:     _handle_feedback_apply,
+}
