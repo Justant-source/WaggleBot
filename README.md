@@ -231,63 +231,78 @@ WaggleBot/
 │       ├── done/                          # 완료된 명세 (1~11번)
 │       └── env/
 │           └── ENV_GPU.md
-├── crawlers/
-│   ├── __init__.py                    # 크롤러 자동 등록 (explicit imports)
-│   ├── base.py                        # BaseCrawler (공통 헬퍼 + retry + 스코어링)
-│   ├── nate_pann.py                   # 네이트판
-│   ├── bobaedream.py                  # 뽐뿌
-│   ├── dcinside.py                    # DC인사이드
-│   ├── fmkorea.py                     # FM코리아
-│   ├── plugin_manager.py              # CrawlerRegistry (등록/조회)
-│   └── ADDING_CRAWLER.md             # 신규 크롤러 추가 가이드
-├── db/
-│   ├── models.py                      # Post/Comment/Content/ScriptData + PostStatus
-│   ├── session.py
-│   └── migrations/
-│       ├── runner.py                  # 통합 마이그레이션 러너 (schema_migrations 추적)
-│       ├── 001_images_contents.sql
-│       ├── 002_add_llm_logs.sql
-│       └── 003_add_variant_fields.sql
-├── ai_worker/
-│   ├── main.py                        # 폴링 메인 루프 + Fish Speech 헬스체크
-│   ├── processor.py                   # asyncio 파이프라인 오케스트레이터
-│   ├── gpu_manager.py                 # 2막 VRAM 관리 (LLM/TTS/VIDEO)
-│   ├── pipeline/                      # 8-Phase 콘텐츠 파이프라인
-│   │   ├── content_processor.py       # Phase 1~8 통합 진입점
-│   │   ├── resource_analyzer.py       # Phase 1: 이미지:텍스트 비율 분석
-│   │   ├── llm_chunker.py             # Phase 2: LLM 의미 단위 청킹
-│   │   ├── text_validator.py          # Phase 3: max_chars 검증 + 한국어 분할
-│   │   └── scene_director.py          # Phase 4: 씬 배분 + 감정 태그 + video_mode 할당
-│   ├── video/                         # LTX-2 비디오 생성
-│   │   ├── comfy_client.py            # ComfyUI HTTP/WebSocket 클라이언트
-│   │   ├── prompt_engine.py           # 한국어 → 영어 비디오 프롬프트 (9개 mood)
-│   │   ├── manager.py                 # 씬별 비디오 생성 + 4단계 폴백 재시도
-│   │   ├── image_filter.py            # 이미지 I2V 적합성 판별
-│   │   ├── video_utils.py             # 클립 리사이즈/루프/트림, 프레임 규칙 검증
-│   │   └── workflows/                 # ComfyUI LTX-2 워크플로우 JSON
-│   │       ├── t2v_ltx2.json          # T2V 풀 모델 (20스텝, 1280x720)
-│   │       ├── t2v_ltx2_distilled.json # Distilled (8스텝, CFG=1)
-│   │       ├── i2v_ltx2.json          # I2V (첫 프레임 주입)
-│   │       └── t2v_ltx2_upscale.json  # 2-Stage 업스케일
-│   ├── llm/                           # LLM 호출 / 로깅
-│   │   ├── client.py                  # 쇼츠 대본 생성 + call_ollama_raw()
-│   │   └── logger.py                  # LLM 호출 이력 DB 저장
-│   ├── tts/                           # TTS 엔진
-│   │   ├── fish_client.py             # Fish Speech 1.5 HTTP 클라이언트
-│   │   └── base.py / edge_tts.py / kokoro.py / gptsovits.py  # 레거시 엔진
-│   └── renderer/                      # 영상 / 이미지 렌더링
-│       ├── layout.py                  # FFmpeg 렌더러 (하이브리드 합성: 정적+비디오)
-│       ├── video.py                   # 레거시 렌더러 (프리뷰용)
-│       ├── subtitle.py                # ASS 동적 자막
-│       └── thumbnail.py               # 썸네일 자동 생성
-├── uploaders/
-│   ├── base.py                        # BaseUploader + UploaderRegistry
-│   ├── youtube.py                     # YouTube Shorts 업로더
-│   ├── uploader.py
-│   └── ADDING_UPLOADER.md            # 신규 업로더 추가 가이드
-├── analytics/
-│   ├── collector.py                   # YouTube Analytics 수집
-│   └── feedback.py                    # 성과 기반 LLM 피드백 루프
+├── worker/
+│   ├── Dockerfile                     # 통합 GPU Dockerfile (CUDA 12.1, Python 3.12)
+│   ├── requirements.txt
+│   ├── main.py                        # 크롤러 진입점
+│   ├── scheduler.py
+│   ├── crawlers/
+│   │   ├── __init__.py                # 크롤러 자동 등록 (explicit imports)
+│   │   ├── base.py                    # BaseCrawler (공통 헬퍼 + retry + 스코어링)
+│   │   ├── nate_pann.py               # 네이트판
+│   │   ├── bobaedream.py              # 뽐뿌
+│   │   ├── dcinside.py                # DC인사이드
+│   │   ├── fmkorea.py                 # FM코리아
+│   │   ├── plugin_manager.py          # CrawlerRegistry (등록/조회)
+│   │   └── ADDING_CRAWLER.md         # 신규 크롤러 추가 가이드
+│   ├── db/
+│   │   ├── models.py                  # Post/Comment/Content/ScriptData + PostStatus
+│   │   ├── session.py
+│   │   └── migrations/
+│   │       ├── runner.py              # 통합 마이그레이션 러너 (schema_migrations 추적)
+│   │       ├── 001_images_contents.sql
+│   │       ├── 002_add_llm_logs.sql
+│   │       └── 003_add_variant_fields.sql
+│   ├── ai_worker/
+│   │   ├── main.py                    # 폴링 메인 루프 + Fish Speech 헬스체크
+│   │   ├── processor.py               # asyncio 파이프라인 오케스트레이터
+│   │   ├── gpu_manager.py             # 2막 VRAM 관리 (LLM/TTS/VIDEO)
+│   │   ├── pipeline/                  # 8-Phase 콘텐츠 파이프라인
+│   │   │   ├── content_processor.py   # Phase 1~8 통합 진입점
+│   │   │   ├── resource_analyzer.py   # Phase 1: 이미지:텍스트 비율 분석
+│   │   │   ├── llm_chunker.py         # Phase 2: LLM 의미 단위 청킹
+│   │   │   ├── text_validator.py      # Phase 3: max_chars 검증 + 한국어 분할
+│   │   │   └── scene_director.py      # Phase 4: 씬 배분 + 감정 태그 + video_mode 할당
+│   │   ├── video/                     # LTX-2 비디오 생성
+│   │   │   ├── comfy_client.py        # ComfyUI HTTP/WebSocket 클라이언트
+│   │   │   ├── prompt_engine.py       # 한국어 → 영어 비디오 프롬프트 (9개 mood)
+│   │   │   ├── manager.py             # 씬별 비디오 생성 + 4단계 폴백 재시도
+│   │   │   ├── image_filter.py        # 이미지 I2V 적합성 판별
+│   │   │   ├── video_utils.py         # 클립 리사이즈/루프/트림, 프레임 규칙 검증
+│   │   │   └── workflows/             # ComfyUI LTX-2 워크플로우 JSON
+│   │   │       ├── t2v_ltx2.json      # T2V 풀 모델 (20스텝, 1280x720)
+│   │   │       ├── t2v_ltx2_distilled.json # Distilled (8스텝, CFG=1)
+│   │   │       ├── i2v_ltx2.json      # I2V (첫 프레임 주입)
+│   │   │       └── t2v_ltx2_upscale.json  # 2-Stage 업스케일
+│   │   ├── llm/                       # LLM 호출 / 로깅
+│   │   │   ├── client.py              # 쇼츠 대본 생성 + call_ollama_raw()
+│   │   │   └── logger.py              # LLM 호출 이력 DB 저장
+│   │   ├── tts/                       # TTS 엔진
+│   │   │   ├── fish_client.py         # Fish Speech 1.5 HTTP 클라이언트
+│   │   │   └── base.py / edge_tts.py / kokoro.py / gptsovits.py  # 레거시 엔진
+│   │   └── renderer/                  # 영상 / 이미지 렌더링
+│   │       ├── layout.py              # FFmpeg 렌더러 (하이브리드 합성: 정적+비디오)
+│   │       ├── video.py               # 레거시 렌더러 (프리뷰용)
+│   │       ├── subtitle.py            # ASS 동적 자막
+│   │       └── thumbnail.py           # 썸네일 자동 생성
+│   ├── uploaders/
+│   │   ├── base.py                    # BaseUploader + UploaderRegistry
+│   │   ├── youtube.py                 # YouTube Shorts 업로더
+│   │   ├── uploader.py
+│   │   └── ADDING_UPLOADER.md        # 신규 업로더 추가 가이드
+│   ├── analytics/
+│   │   ├── collector.py               # YouTube Analytics 수집
+│   │   └── feedback.py                # 성과 기반 LLM 피드백 루프
+│   ├── dashboard/
+│   ├── dashboard_worker/
+│   ├── monitoring/
+│   │   ├── alerting.py
+│   │   └── daemon.py
+│   └── test/
+│       ├── test_tts.py                # Fish Speech 단독 테스트
+│       ├── test_scene_policy.py       # Mood 씬 정책 단위 테스트
+│       ├── test_scene_policy_visual.py # 시각적 렌더링 테스트 (PNG/MP4 출력)
+│       └── run_scene_scenarios.py     # 9개 Mood 시나리오 통합 실행
 ├── assets/
 │   ├── backgrounds/                   # 9:16 배경 영상
 │   ├── fonts/
@@ -306,23 +321,12 @@ WaggleBot/
 │   ├── monitoring.py                  # 모니터링/알림 임계값
 │   ├── layout.json                    # 렌더러 레이아웃 제약 (Single Source of Truth)
 │   └── scene_policy.json              # Mood별 씬 정책 (9개 프리셋, 에셋·BGM·레이아웃 매핑)
-├── Dockerfile                         # 통합 GPU Dockerfile (CUDA 12.1, Python 3.12)
-├── Dockerfile.comfyui                 # ComfyUI Docker 이미지 (CUDA 12.6, LTX-2 노드)
-├── scripts/
-│   ├── setup_docker_gpu.sh
-│   ├── download_fish_speech.sh        # Fish Speech 모델 다운로드
-│   └── download_ltx2.sh              # LTX-2 19B + Gemma 3 + 업스케일러 다운로드
-├── test/
-│   ├── test_tts.py                    # Fish Speech 단독 테스트
-│   ├── test_scene_policy.py           # Mood 씬 정책 단위 테스트
-│   ├── test_scene_policy_visual.py    # 시각적 렌더링 테스트 (PNG/MP4 출력)
-│   └── run_scene_scenarios.py         # 9개 Mood 시나리오 통합 실행
-├── monitoring/
-│   ├── alerting.py
-│   └── daemon.py
-├── dashboard.py
-├── scheduler.py
-└── main.py                            # 크롤러 진입점
+├── env/
+│   └── Dockerfile.comfyui             # ComfyUI Docker 이미지 (CUDA 12.6, LTX-2 노드)
+└── scripts/
+    ├── setup_docker_gpu.sh
+    ├── download_fish_speech.sh        # Fish Speech 모델 다운로드
+    └── download_ltx2.sh              # LTX-2 19B + Gemma 3 + 업스케일러 다운로드
 ```
 
 ---

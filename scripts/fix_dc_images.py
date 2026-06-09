@@ -14,6 +14,11 @@ import logging
 import re
 import sys
 import time
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT))
+sys.path.insert(0, str(_PROJECT_ROOT / "worker"))  # db, crawlers 등 worker 패키지
 
 import requests
 from bs4 import BeautifulSoup

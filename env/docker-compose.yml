@@ -21,10 +21,11 @@ services:
   crawler:
     build:
       context: ..
-      dockerfile: env/Dockerfile
+      dockerfile: worker/Dockerfile
     restart: unless-stopped
     volumes:
-      - ../:/app
+      - ../worker:/app
+      - ../config:/app/config
       - /app/venv
       - /app/__pycache__
     depends_on:
@@ -91,7 +92,7 @@ services:
       - ../checkpoints/loras:/comfyui/models/loras
       - ../checkpoints/diffusion_models:/comfyui/models/diffusion_models
       - ../checkpoints/vae:/comfyui/models/vae
-      - ../ai_worker/video/workflows:/comfyui/custom_workflows
+      - ../worker/ai_worker/video/workflows:/comfyui/custom_workflows
       - ../media/tmp/videos:/comfyui/output
     # GGUF Q4 전환 (2026-03-03):
     #   UNet: GGUF Q4(~12.7GB) — --lowvram streaming (FP8 20GB 대비 4x 작은 데이터)
@@ -128,12 +129,14 @@ services:
   ai_worker:
     build:
       context: ..
-      dockerfile: env/Dockerfile
+      dockerfile: worker/Dockerfile
     restart: unless-stopped
     stop_grace_period: 120s
     volumes:
-      - ../:/app
+      - ../worker:/app
+      - ../config:/app/config
       - ../media:/app/media
+      - ../assets:/app/assets
       - /app/venv
       - /app/__pycache__
       # WSL2: libnvidia-encode.so.1 등 NVENC 라이브러리 마운트
@@ -173,10 +176,11 @@ services:
   monitoring:
     build:
       context: ..
-      dockerfile: env/Dockerfile
+      dockerfile: worker/Dockerfile
     restart: unless-stopped
     volumes:
-      - ../:/app
+      - ../worker:/app
+      - ../config:/app/config
       - /app/venv
       - /app/__pycache__
     depends_on:
@@ -204,7 +208,7 @@ services:
 
   telegram-bridge:
     build:
-      context: ../claude-telegram-bridge
+      context: ../telegram
       dockerfile: Dockerfile
     container_name: telegram-bridge
     restart: unless-stopped
@@ -214,7 +218,7 @@ services:
       - ../:/wagglebot:ro
       - ../_request:/wagglebot/_request
       - ../_result:/wagglebot/_result
-      - ../claude-telegram-bridge/data:/app/data
+      - ../telegram/data:/app/data
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       ALLOWED_USER_IDS: ${ALLOWED_USER_IDS}
@@ -227,7 +231,7 @@ services:
 
   llm-worker:
     build:
-      context: ../llm-worker
+      context: ../worker/llm
     container_name: llm-worker
     restart: unless-stopped
     ports:
@@ -281,10 +285,11 @@ services:
   dashboard_worker:
     build:
       context: ..
-      dockerfile: env/Dockerfile
+      dockerfile: worker/Dockerfile
     restart: unless-stopped
     volumes:
-      - ../:/app
+      - ../worker:/app
+      - ../config:/app/config
       - ../media:/app/media
       - /app/venv
       - /app/__pycache__

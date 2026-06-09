@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY env/requirements.txt .
+COPY worker/requirements.txt .
 RUN pip install --no-cache-dir --ignore-installed -r requirements.txt
 
 RUN pip install --no-cache-dir "numpy<2" && \
@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir "numpy<2" && \
     torch==2.2.2+cu121 \
     --index-url https://download.pytorch.org/whl/cu121
 
-COPY . .
+COPY worker/ ./
+COPY config/ ./config/
 
 CMD ["python", "main.py"]

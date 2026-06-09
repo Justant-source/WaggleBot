@@ -1,5 +1,6 @@
 # --- Python & 가상 환경 ---
 venv/
+worker/.venv/
 .env
 env/.env
 __pycache__/
@@ -14,7 +15,7 @@ secrets/
 config/credentials.json
 config/youtube_token.json
 config/tiktok_token.json
-media/*
+media/
 checkpoints/*
 
 # --- Claude AI Agent Team (협업 설정) ---
@@ -32,16 +33,20 @@ _result/
 !.claude/settings.json
 !.claude/skills/
 
-_request/
-claude-telegram-bridge/node_modules/
-claude-telegram-bridge/dist/
-claude-telegram-bridge/data/
-claude-telegram-bridge/.env
+telegram/node_modules/
+telegram/dist/
+telegram/data/
+telegram/.env
 
-test/test_layout_output
-test/test_llm_output
-test/test_tts_output
-test/test_scene_policy_visual_output
+worker/test/test_layout_output
+worker/test/test_llm_output
+worker/test/test_tts_output
+worker/test/test_scene_policy_visual_output
 
 assets
 .venv
+
+# Docker
+worker/venv/
+worker/__pycache__/
+.git/

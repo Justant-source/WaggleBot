@@ -10,6 +10,7 @@ from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
+sys.path.insert(0, str(_PROJECT_ROOT / "worker"))  # uploaders 등 worker 패키지
 
 from config.settings import MEDIA_DIR
 from uploaders.tiktok import TikTokUploader
