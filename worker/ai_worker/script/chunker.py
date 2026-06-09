@@ -1,7 +1,12 @@
 """Phase 2: LLM 청킹 (의미 단위 분절)
 
 ResourceProfile을 기반으로 전략별 프롬프트를 생성하고
-Ollama JSON 모드로 구어체 대본을 분절 생성한다.
+LLM(Claude) JSON 모드로 구어체 대본을 분절 생성한다.
+
+프롬프트는 정적/동적으로 분리된다:
+    - build_chunking_system(): 페르소나·규칙·스키마·완성 예시 (캐시 prefix, 게시글 무관)
+    - _build_chunking_user():  자원 상황 + 실제 입력 (동적 tail)
+    api 백엔드에서 system을 prompt caching 블록으로 전송해 반복 호출 비용을 줄인다.
 
 출력 형식:
     {
@@ -21,7 +26,7 @@ import logging
 
 from ai_worker.llm.transport import call_llm_json, pick_model, resolve_model_id
 from ai_worker.scene.analyzer import ResourceProfile
-from config.settings import MAX_BODY_CHARS, get_llm_constraints_prompt
+from config.settings import MAX_BODY_CHARS, MAX_HOOK_CHARS, get_llm_constraints_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +37,15 @@ _STRATEGY_GUIDE: dict[str, str] = {
 }
 
 
-def create_chunking_prompt(
-    post_content: str,
-    profile: ResourceProfile,
-    *,
-    extended: bool = False,
-) -> str:
-    """ResourceProfile을 반영한 LLM 청킹 프롬프트를 생성한다.
+def build_chunking_system(*, extended: bool = False) -> str:
+    """LLM 청킹의 정적 캐시 prefix(페르소나·규칙·스키마·완성 예시)를 생성한다.
+
+    게시글/프로필 등 동적 변수는 절대 포함하지 않는다 — 캐시 prefix를 바이트 동일하게
+    유지하기 위함. 실제 입력은 _build_chunking_user()의 동적 tail에 들어간다.
 
     Args:
-        extended: True이면 title_suggestion/tags/mood 필드도 출력 형식에 포함한다.
+        extended: True이면 출력 스키마와 완성 예시에 title_suggestion/tags/mood를 포함한다.
     """
-    guide = _STRATEGY_GUIDE.get(profile.strategy, "")
     constraints = get_llm_constraints_prompt()
 
     extended_fields = (
@@ -52,20 +54,69 @@ def create_chunking_prompt(
         f'  "mood": "humor | touching | anger | sadness | horror | info | controversy | daily | shock 중 하나"\n'
         if extended else ""
     )
+    example_extended = (
+        '  "title_suggestion": "내 주차자리 뺏은 옆집의 충격 결말",\n'
+        '  "tags": ["주차빌런", "아파트", "사이다"],\n'
+        '  "mood": "controversy"\n'
+        if extended else ""
+    )
 
     return (
-        "당신은 사람들의 사연을 찰지고 생동감 있게 읽어주는 '썰 전문 유튜브 쇼츠 크리에이터'입니다.\n"
-        "아래 입력을 읽고, 마치 카메라 앞에서 시청자에게 열변을 토하듯 자연스럽고 감정선이 살아있는 대본을 작성하세요.\n"
-        "반드시 JSON 형식으로만 응답해야 하며, 다른 텍스트는 절대 포함하지 마세요.\n\n"
-        "## 입력\n"
-        f"{post_content[:2000]}\n\n"
-        "## 자원 상황\n"
-        f"- 이미지: {profile.image_count}장 / 예상 문장: {profile.estimated_sentences}개\n"
-        f"- 전략: {profile.strategy} — {guide}\n\n"
-        f"{constraints}\n\n"
+        # ── 페르소나 ──
+        "당신은 남의 사연을 친구에게 풀어주듯 찰지게 들려주는 '썰 전문 유튜브 쇼츠 내레이터'입니다.\n"
+        "항상 1인칭 구어체로, 카메라 앞에서 시청자에게 직접 말을 거는 톤으로 대본을 씁니다.\n"
+        "반드시 JSON 형식으로만 응답하며, JSON 외의 텍스트는 절대 포함하지 마세요.\n\n"
+
+        # ── 0. 자연스러움 (가장 중요) ──
+        "## 0. 가장 중요 — 자연스러움 (AI가 쓴 티 제거)\n"
+        "- 실제 사람이 친구한테 썰 풀듯 말하세요. 매끈한 '글'이 아니라 '말'을 쓰는 겁니다.\n"
+        '- "진짜", "와", "아니 글쎄", "근데 있잖아요" 같은 추임새를 자연스럽게 섞으세요.\n'
+        "- 문장 길이와 리듬을 변주하세요. 짧게 툭 끊고, 가끔은 길게 몰아치세요.\n"
+        "- 번역투·뉴스 기사체·AI 요약체 금지. 정보 나열이 아니라 감정이 실린 '이야기'여야 합니다.\n"
+        '  - (X) 뉴스체: "주유소들이 가격을 담합한 것으로 보입니다."\n'
+        '  - (O) 구어체: "아니 이 인간들, 지들끼리 가격 짜고 친 거 우리가 모를 줄 알았나 봐요?"\n\n'
+
+        # ── 1. 자극 수위 = 균형 ──
+        "## 1. 자극 수위 = 균형 (강하되 안전)\n"
+        "- 스크롤을 멈추게 하는 강한 후킹과 궁금증은 최대로 끌어올리세요.\n"
+        "- 단, 욕설·혐오·노골적 표현은 방송용으로 순화해 광고 친화적으로 만드세요(노출 제한 방지).\n"
+        '  - (X) "이 시벨럼들이" → (O) "이 양아치들이"\n'
+        "- 원문의 분노·어이없음·통쾌함 같은 감정은 200% 살리되, 표현만 둥글게 다듬는 겁니다.\n\n"
+
+        # ── 2. 리텐션 설계 ──
+        "## 2. 리텐션 설계 (이탈 방지)\n"
+        f"- [Hook, 0~3초] 명사형 요약 금지. 아래 후킹 공식 중 하나로 첫 줄부터 꽂으세요(최대 {MAX_HOOK_CHARS}자).\n"
+        '  1) 오픈 루프: 결말·정체를 숨겨 궁금하게 — "이거 끝이 진짜 소름입니다"\n'
+        '  2) 궁금증 갭: 빈칸을 만들어 채우고 싶게 — "근데 진짜 충격은 따로 있었어요"\n'
+        '  3) 반전 예고: 뒤집힘을 약속 — "착한 줄 알았던 그 사람의 정체가..."\n'
+        '  4) 극단 수치·단언: 크기로 압도 — "10년 살면서 이런 일은 처음입니다"\n'
+        '- [중간] 클라이맥스 직전에 "근데 진짜는 지금부터예요" 같은 떡밥을 한 번 깔고, 감정을 점층시키세요.\n'
+        "- [Closer] 시청자에게 의견·경험·판단을 묻는 말로 끝내 댓글 참여를 유도하세요.\n"
+        '  - (예) "여러분이라면 어떻게 하실 거예요? 댓글로 알려주세요."\n\n'
+
+        # ── 3. 자막 분할 ──
+        "## 3. 자막 분할 (호흡 단위)\n"
+        "- 기계적으로 자르지 말고, 사람이 말하며 숨 쉬는 '호흡 단위'로 끊으세요.\n"
+        "- 한 줄(lines 요소)은 20자 이내, 의미가 어색하게 끊기지 않게 하세요.\n"
+        '  - (O) "정유사들은" / "다 똑같아"   (X) "정유사들" / "은 다 똑같아"\n'
+        "- 20자를 넘으면 어절 단위로 나눠 같은 항목의 lines에 담고 line_count를 늘리세요.\n\n"
+
+        # ── 4. 블록·댓글·팩트 ──
+        "## 4. 블록·댓글·팩트 규칙\n"
+        '- 댓글을 읽어주는 항목에는 "type": "comment"를 추가하고, 일반 본문 항목은 type을 생략합니다.\n'
+        '- 댓글은 본문과 별도 body 항목으로 분리하고, lines에 "닉네임: 내용" 형태로 인라인하세요.\n'
+        "- 입력에 베스트 댓글이 있으면 반드시 body에 인용하세요.\n"
+        "- 댓글도 한 줄 20자 규칙 적용, 최대 3줄(총 60자 이내). 길면 핵심만 추려 요약하세요.\n"
+        "- 원문 내용을 끝까지 대본화하세요(생략·요약 금지).\n"
+        "- 고유명사·팩트는 그대로 보존하고 환각·오역 금지. 한국어 문맥을 정확히 파악하세요.\n"
+        '  - (예: "정유사는 다 틀린데"의 "틀리다"는 영어 "wrong"이 아니라 "다르다(different)"는 구어 표현)\n'
+        "- mood는 humor | touching | anger | sadness | horror | info | controversy | daily | shock 중 하나.\n"
+        "- body 항목 수는 본문 길이에 비례: 최소 6줄, 최대 30줄(본문 1500자 이상일 때).\n\n"
+
+        # ── 출력 형식 ──
         "## 출력 형식 (JSON)\n"
         "{\n"
-        f'  "hook": "첫 3초 후킹 문장 (최대 {MAX_BODY_CHARS}자)",\n'
+        f'  "hook": "첫 3초 후킹 문장 (최대 {MAX_HOOK_CHARS}자)",\n'
         '  "body": [\n'
         '    {"line_count": 2, "lines": ["20자 이하 줄 1", "20자 이하 줄 2"]},\n'
         '    {"line_count": 1, "lines": ["20자 이하 단일 줄"]},\n'
@@ -74,37 +125,77 @@ def create_chunking_prompt(
         f'  "closer": "마무리 멘트 (최대 {MAX_BODY_CHARS}자)",\n'
         f"{extended_fields}"
         "}\n\n"
-        "## 규칙\n"
-        '1. 블록 타입 분리 (필수): 댓글을 직접 읽어주는 항목에는 "type": "comment" 추가. 일반 본문 항목은 type 필드 생략.\n'
-        "2. 댓글 분리 규정: 댓글은 본문과 별도의 body 항목으로 분리.\n"
-        "3. 자막 분할 및 가독성 (호흡 단위):\n"
-        '   - 대본은 기계적으로 자르지 말고, 사람이 말할 때 숨을 쉬는 "호흡 단위"로 끊어주세요.\n'
-        "   - 1개 문자열은 20자를 넘지 않되, 의미가 어색하게 끊기지 않게 하세요.\n"
-        '     (예: "정유사들은" / "다 똑같아" (O), "정유사들" / "은 다 똑같아" (X))\n'
-        "   - 댓글도 동일한 길이 규칙 적용, 최대 3줄(총 60자 이내). 긴 경우 핵심만 55자 이내로 요약.\n"
-        "4. 본문 끝까지 작성 (생략/요약 절대 금지): 원문 내용을 빠짐없이 대본으로 변환할 것.\n"
-        "5. 베스트 댓글 필수 인용: 입력에 베스트 댓글이 있으면 반드시 body에 포함.\n"
-        "6. 어조 및 톤앤매너 (가장 중요):\n"
-        '   - 딱딱한 요약이나 뉴스 기사처럼 쓰지 마세요. 원문 작성자의 분노, 어이없음 등의 감정을 200% 살리세요.\n'
-        '   - "진짜", "와", "아니 글쎄", "이거 미친 거 아닙니까?" 같은 자연스러운 추임새를 적절히 섞어 실제 사람이 말하는 것처럼 만드세요.\n'
-        '   - (X) 나쁜 예: "주유소들이 가격을 담합합니다. 사람들은 모르지 않을 겁니다."\n'
-        '   - (O) 좋은 예: "이 인간들 지들끼리 가격 담합하는 거, 우리가 모를 줄 알았나 봐요?"\n'
-        "7. 훅(Hook) 작성법:\n"
-        '   - 단순 명사형 요약("주유소 가격 담합 의혹")을 절대 쓰지 마세요.\n'
-        '   - 시청자가 스크롤을 멈출 수 있게 원문의 매운맛을 살린 도발적인 문장을 쓰세요.\n'
-        '   - (예: "기름값 담합하는 양아치 주유소들, 진짜 다 똑같습니다!")\n'
-        "8. 감정 분류: mood 필드는 humor | touching | anger | sadness | horror | info | controversy | daily | shock 중 하나.\n"
-        "9. 고유명사 및 팩트 보존 (환각 및 오역 금지):\n"
-        '   - 한국어 문맥을 정확히 파악하세요. (예: "정유사는 다 틀린데"는 "Wrong"이 아니라 "다르다(Different)"는 뜻.)\n'
-        "   - 고유명사는 그대로 유지.\n"
-        "10. 검열 해제 (Uncensored):\n"
-        '    - 욕설이나 거친 표현도 방송용으로 살짝 순화하거나(예: "이 시벨럼들" -> "이 양아치들") 원문 느낌을 그대로 살려 서사를 완성하세요.\n'
-        "11. body 항목 수: 최소 6줄(본문 10자 이상), 최대 30줄(본문 1500자 이상일 경우), 본문 길이에 비례할 것.\n"
+
+        # ── few-shot 완성 예시 ──
+        "## 완성 예시 (아래 흐름을 그대로 따라 하세요)\n"
+        "[입력 예시]\n"
+        "옆집이 맨날 내 지정 주차자리에 차를 댑니다. 경고장을 붙여도 무시하길래 "
+        "관리실에 신고했더니, 글쎄 그 집이 관리소장 친척이라 아무 조치도 안 해준대요. "
+        "어쩔 수 없이 단지 밖에 차를 대고 다녔는데, 어제 아침에 보니 그 집 차에 누가 "
+        "락카로 낙서를 잔뜩 해놨더라고요. (베스트 댓글 — 분노왕: 사이다네요 자업자득 ㅋㅋ)\n\n"
+        "[이상적 출력]\n"
+        "{\n"
+        '  "hook": "내 주차자리 뺏은 옆집, 결말이 소름이에요",\n'
+        '  "body": [\n'
+        '    {"line_count": 2, "lines": ["옆집이 글쎄", "맨날 내 자리에 주차해요"]},\n'
+        '    {"line_count": 2, "lines": ["경고장 붙여도", "그냥 쌩까더라고요"]},\n'
+        '    {"line_count": 2, "lines": ["빡쳐서 신고했더니", "돌아온 대답이 가관"]},\n'
+        '    {"line_count": 2, "lines": ["글쎄 그 집이", "관리소장 친척이래요"]},\n'
+        '    {"line_count": 2, "lines": ["근데 진짜 반전은", "지금부터예요"]},\n'
+        '    {"line_count": 2, "lines": ["어제 아침에 보니까", "그 집 차에 낙서가"]},\n'
+        '    {"line_count": 1, "lines": ["분노왕: 사이다네요 자업자득 ㅋㅋ"], "type": "comment"}\n'
+        '  ],\n'
+        '  "closer": "여러분이라면 어떻게 하실 거예요?",\n'
+        f"{example_extended}"
+        "}\n\n"
+
+        # ── 길이 제약 ──
+        f"{constraints}\n"
     )
 
 
-def _call_llm_json_sync(prompt: str, model: str) -> dict:
-    return call_llm_json(prompt, model=model, call_type="chunk", timeout=180)
+def _build_chunking_user(post_content: str, profile: ResourceProfile) -> str:
+    """게시글/프로필 기반 동적 tail(자원 상황 + 입력)을 생성한다."""
+    guide = _STRATEGY_GUIDE.get(profile.strategy, "")
+    return (
+        "## 자원 상황\n"
+        f"- 이미지: {profile.image_count}장 / 예상 문장: {profile.estimated_sentences}개\n"
+        f"- 전략: {profile.strategy} — {guide}\n\n"
+        "## 입력\n"
+        f"{post_content[:2000]}\n"
+    )
+
+
+def create_chunking_prompt(
+    post_content: str,
+    profile: ResourceProfile,
+    *,
+    extended: bool = False,
+) -> str:
+    """정적 prefix + 동적 tail을 합친 전체 청킹 프롬프트를 반환한다.
+
+    실제 LLM 호출은 chunk_with_llm()에서 system/user를 분리해 보내지만,
+    로깅·테스트 호환을 위해 이 함수는 합본 문자열을 그대로 제공한다.
+
+    Args:
+        extended: True이면 title_suggestion/tags/mood 필드도 출력 형식에 포함한다.
+    """
+    return (
+        build_chunking_system(extended=extended)
+        + "\n\n"
+        + _build_chunking_user(post_content, profile)
+    )
+
+
+def _call_llm_json_sync(user_prompt: str, system: str, model: str) -> dict:
+    return call_llm_json(
+        user_prompt,
+        model=model,
+        call_type="chunk",
+        timeout=180,
+        system=system,
+        cache_prefix=True,
+    )
 
 
 async def chunk_with_llm(
@@ -128,13 +219,17 @@ async def chunk_with_llm(
         extended=True 시 위에 더해 {"title_suggestion": str, "tags": list[str], "mood": str}
 
     Raises:
-        requests.RequestException: Ollama 통신 오류
+        requests.RequestException: LLM 통신 오류
         json.JSONDecodeError: 응답 파싱 실패
         ValueError: 필수 키 누락
     """
     import asyncio
     from ai_worker.script.logger import LLMCallTimer, log_llm_call
 
+    # 정적 prefix(캐시 대상) + 동적 tail(실제 입력) 분리
+    system = build_chunking_system(extended=extended)
+    user = _build_chunking_user(post_content, profile)
+    # 로그 완전성을 위해 합본 프롬프트를 별도로 보관
     prompt = create_chunking_prompt(post_content, profile, extended=extended)
     logger.info("LLM 청킹 요청: 전략=%s, 본문=%d자, extended=%s", profile.strategy, len(post_content), extended)
 
@@ -146,7 +241,7 @@ async def chunk_with_llm(
     model = pick_model("chunk")
     with LLMCallTimer() as timer:
         try:
-            result = await asyncio.to_thread(_call_llm_json_sync, prompt, model)
+            result = await asyncio.to_thread(_call_llm_json_sync, user, system, model)
             raw_str = json.dumps(result, ensure_ascii=False)
         except Exception as exc:
             success = False

@@ -103,6 +103,8 @@ def _get_worker_url() -> str:
 _ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
 _API_DEFAULT_MAX_TOKENS = 8192
+# json_mode 시 system에 주입하는 JSON 강제 지시문 (캐시 prefix와 동일 블록에 병합)
+_JSON_INSTRUCTION = "Respond ONLY with valid JSON. No markdown, no code fences, no prose."
 
 
 def _get_llm_backend() -> str:
@@ -128,6 +130,35 @@ def _get_anthropic_api_key() -> str | None:
     return None
 
 
+def _get_cache_settings() -> tuple[bool, str]:
+    """pipeline.json에서 프롬프트 캐싱 설정을 읽는다.
+
+    Returns:
+        (enabled, ttl) — enabled는 llm_prompt_cache truthy 여부, ttl은 "5m"|"1h" 등.
+    """
+    try:
+        from config.settings import load_pipeline_config
+        cfg = load_pipeline_config()
+        enabled_raw = cfg.get("llm_prompt_cache", "true")
+        ttl_raw = cfg.get("llm_cache_ttl", "5m")
+    except Exception:
+        enabled_raw, ttl_raw = "true", "5m"
+    enabled = str(enabled_raw).lower() in ("1", "true", "yes", "on")
+    return enabled, str(ttl_raw)
+
+
+def _merge_json_instruction(system_text: str | None, json_mode: bool) -> str | None:
+    """json_mode일 때 JSON 강제 지시문을 system 텍스트 끝에 병합한다.
+
+    system이 없으면 지시문 단독, json_mode가 아니면 system 원본을 그대로 반환.
+    """
+    if not json_mode:
+        return system_text
+    if system_text:
+        return system_text + "\n\n" + _JSON_INSTRUCTION
+    return _JSON_INSTRUCTION
+
+
 def _call_via_api(
     prompt: str,
     *,
@@ -136,6 +167,8 @@ def _call_via_api(
     temperature: float,
     json_mode: bool,
     timeout: int,
+    system: str | None = None,
+    cache_prefix: bool = False,
 ) -> str:
     """Anthropic Messages API 직접 호출. 원시 텍스트 반환."""
     api_key = _get_anthropic_api_key()
@@ -153,8 +186,25 @@ def _call_via_api(
         "temperature": temperature,
         "messages": [{"role": "user", "content": prompt}],
     }
-    if json_mode:
-        body["system"] = "Respond ONLY with valid JSON. No markdown, no code fences, no prose."
+    # system(정적 캐시 prefix) 구성:
+    #   캐싱 활성(= api + system 존재 + cache_prefix=True + llm_prompt_cache truthy) →
+    #     cache_control 블록 list, 아니면(또는 system 없으면) 평문 문자열.
+    #   json_mode 지시문은 _merge_json_instruction으로 같은 블록 끝에 병합.
+    caching_active = False
+    ttl = "5m"
+    if system and cache_prefix:
+        cache_enabled, ttl = _get_cache_settings()
+        caching_active = cache_enabled
+    sys_text = _merge_json_instruction(system, json_mode)
+    if caching_active:
+        cache_control: dict = {"type": "ephemeral"}
+        if ttl == "1h":
+            cache_control = {"type": "ephemeral", "ttl": "1h"}
+        body["system"] = [
+            {"type": "text", "text": sys_text, "cache_control": cache_control}
+        ]
+    elif sys_text is not None:
+        body["system"] = sys_text
     headers = {
         "x-api-key": api_key,
         "anthropic-version": _ANTHROPIC_VERSION,
@@ -174,6 +224,18 @@ def _call_via_api(
         raise RuntimeError("Anthropic API 사용량 한도 초과(429) — 잠시 후 재시도하세요.")
     resp.raise_for_status()
     data = resp.json()
+    # 프롬프트 캐싱 효과 관측용 usage 로깅 (필드 없으면 무시, 예외 절대 금지)
+    try:
+        usage = data.get("usage", {}) or {}
+        logger.debug(
+            "API usage: cache_read=%s cache_creation=%s input=%s output=%s",
+            usage.get("cache_read_input_tokens"),
+            usage.get("cache_creation_input_tokens"),
+            usage.get("input_tokens"),
+            usage.get("output_tokens"),
+        )
+    except Exception:
+        pass
     parts = data.get("content", []) or []
     text = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
     return text.strip()
@@ -189,12 +251,18 @@ def call_llm(
     call_type: str = "raw",
     timeout: int = 120,
     post_id: int | None = None,
+    system: str | None = None,
+    cache_prefix: bool = False,
 ) -> str:
     """LLM 호출. 원시 텍스트 반환.
 
     백엔드는 대시보드 설정(llm_backend)에 따라 전환:
       - "cli": llm-worker(claude CLI 브릿지) — temperature/max_tokens는 advisory
       - "api": Anthropic API 직접 호출
+
+    system은 정적 캐시 prefix(페르소나/규칙/스키마/예시), prompt는 동적 tail(실제 입력).
+    api 백엔드 + cache_prefix=True + 캐싱 활성 시 system을 prompt caching 블록으로 전송.
+    cli 백엔드는 cache_control 미지원 → system을 prompt 앞에 합쳐 전송(캐싱 no-op).
     """
     resolved_model = resolve_model_id(pick_model(call_type, model))
 
@@ -207,10 +275,14 @@ def call_llm(
             temperature=temperature,
             json_mode=json_mode,
             timeout=timeout,
+            system=system,
+            cache_prefix=cache_prefix,
         )
 
+    # cli 백엔드: cache_control 미지원 → system을 prompt 앞에 병합(캐싱 no-op).
+    combined_prompt = (system + "\n\n" + prompt) if system else prompt
     payload = {
-        "prompt": prompt,
+        "prompt": combined_prompt,
         "model": resolved_model,
         "jsonMode": json_mode,
         "maxTokens": max_tokens,
@@ -238,8 +310,13 @@ def call_llm_json(
     call_type: str = "chunk",
     timeout: int = 180,
     post_id: int | None = None,
+    system: str | None = None,
+    cache_prefix: bool = False,
 ) -> dict:
-    """JSON 모드 llm-worker 호출. dict 반환."""
+    """JSON 모드 LLM 호출. dict 반환.
+
+    system/cache_prefix는 call_llm으로 그대로 전달(api 백엔드 프롬프트 캐싱 지원).
+    """
     import re
     raw = call_llm(
         prompt,
@@ -248,6 +325,8 @@ def call_llm_json(
         call_type=call_type,
         timeout=timeout,
         post_id=post_id,
+        system=system,
+        cache_prefix=cache_prefix,
     )
     try:
         return json.loads(raw)

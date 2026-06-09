@@ -26,7 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from db.models import Comment, LLMLog, Post
 from db.session import SessionLocal
-from ai_worker.script.client import generate_script, _SCRIPT_PROMPT_V2
+from ai_worker.script.client import generate_script, _SCRIPT_SYSTEM, _SCRIPT_USER_TMPL
 
 logging.basicConfig(
     level=logging.INFO,
@@ -218,7 +218,7 @@ def run() -> None:
 
             # 프롬프트 직접 빌드 (LLMLog 의존 없이 캡처)
             body_str = post.content or ""
-            prompt_text = _SCRIPT_PROMPT_V2.format(
+            prompt_text = _SCRIPT_SYSTEM + "\n\n" + _SCRIPT_USER_TMPL.format(
                 title=post.title,
                 body=body_str[:3000],
                 comments="\n".join(f"- {c}" for c in comment_texts),

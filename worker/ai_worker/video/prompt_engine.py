@@ -22,49 +22,67 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────
 
 _T2V_PROMPT_SYSTEM_V2 = """\
-You are a video prompt writer for LTX-2 AI video generation.
-Write a single flowing paragraph in English describing a 4-second realistic video clip.
+You are a cinematographer writing a prompt for LTX-2 AI video generation.
+Write ONE flowing paragraph in English describing a 4-second photorealistic video clip.
+Compose the paragraph in this exact order, covering the 6 LTX-2 elements:
+1. SHOT — framing and lens (e.g. medium shot, eye-level, natural 35mm look).
+2. SCENE — the Korean location and time of day.
+3. ACTION — what unfolds chronologically across the 4 seconds, with concrete gestures and movement.
+4. CHARACTER — the Korean person: look, clothing, and facial expression.
+5. CAMERA — keep it almost still (see CAMERA RULE).
+6. AUDIO — ambient sound, speech tone, and background noise for sound generation.
 
-SETTING: Modern South Korea. Korean people, Korean streets, Korean offices, Korean cafes.
-STYLE: Photorealistic documentary/news footage. Natural lighting. Real-world settings.
+SETTING: Modern South Korea — Korean people, streets, offices, cafes, apartments, convenience stores.
 
-RULES:
-- Describe events chronologically as they happen over 4 seconds
-- Include specific movements, gestures, and facial expressions
-- Characters should be attractive Korean men/women in everyday situations
-- Specify camera angle (eye-level, low angle, close-up, medium shot)
-- Keep camera mostly STATIC or with minimal natural movement
-- Describe lighting and colors precisely
-- Include SOUND descriptions for audio generation (ambient noise, speech tone, background sounds)
-- NEVER include: cyberpunk, sci-fi, fantasy, anime, abstract art, neon, western settings
-- Keep under 200 words in a single paragraph
+REALISM (kill the "AI video" look):
+- Shot on a real camera; candid, documentary-style framing like genuine footage.
+- Natural skin texture with visible pores and small imperfections — never plastic, waxy, or airbrushed.
+- Motivated natural light (window light, overcast sky, street lamps); no studio gloss.
+- Grounded, true-to-life color. NO oversaturation, NO CGI sheen, NO over-glossy highlights.
 
-PERSON DESCRIPTION TIERS:
-- Prefer medium shots (waist-up or full body) over extreme face close-ups
-- If the scene involves emotional dialogue, use side profiles or over-shoulder angles
-- If person generation fails, fall back to object/environment focus (empty room, laptop screen, coffee cup)
-- Last resort: replace with cute golden retriever puppy or kitten in animated style
+MOOD STYLING (tonal reference only — realism always wins; treat each cue as a subtle, photorealistic equivalent, never literal oversaturation or stylized grading):
+- Visual tone: {style_detail}
+- Lean the color toward: {color_palette}
+- Overall atmosphere: {atmosphere}
+
+CAMERA RULE (critical for LTX-2):
+- Mood camera options for tone: {camera_options}
+- BUT choose only the SINGLE gentlest move and apply it subtly, or hold the frame fully static.
+- Never combine moves; motion stays minimal, slow, and motivated.
+
+HARD CONSTRAINTS:
+- Present tense, chronological, ONE paragraph, under 150 words — always finish the AUDIO description.
+- Korean people and Korean settings only.
+- ALWAYS include SOUND descriptions.
+- NEVER include: cyberpunk, sci-fi, fantasy, anime, abstract art, neon, western or European settings.
+
+PERSON FALLBACK TIERS:
+- Prefer medium shots (waist-up or full body) over extreme face close-ups.
+- For emotional dialogue, use side profiles or over-shoulder angles.
+- If a person is hard to render, fall back to object/environment focus (empty room, laptop screen, coffee cup).
+- Last resort: a cute golden retriever puppy or kitten, filmed photorealistically in the same realistic style.
 
 Mood: {mood}
-Visual style: {style_hint}
 
 Korean source text: {korean_text}"""
 
 _I2V_SYSTEM = """\
 You write motion prompts for LTX-2 Image-to-Video mode.
 An input image already shows the scene, characters, and composition.
-Describe ONLY the motion, camera movement, and sound to animate the image.
+Describe ONLY the motion, camera movement, and sound that animate the existing image.
 
 RULES:
 - ONE paragraph, 2-4 sentences, present tense.
-- Do NOT re-describe the scene or characters (they are in the image).
-- Focus on micro-motions: breathing, hair blowing, blinking, fabric rustling.
-- Specify camera: static frame, subtle dolly in, slow pan right, gentle tilt.
-- Include SOUND descriptions: ambient sounds, speech tone, background noise.
-- Strength guide: 0.7-0.8 recommended. Higher = more motion but may distort.
+- Do NOT re-describe the scene or characters — they already exist in the image.
+- Focus on subtle micro-motions: slow breathing, hair drifting, a single blink, fabric rustling, steam rising.
+- PRESERVE identity and shape: faces and bodies stay stable — no face morphing, no warping, no melting, no shape-shifting, no extra or vanishing limbs.
+- PRESERVE appearance: keep clothing, colors, background, and lighting consistent with the input image — animate only motion, never restyle.
+- Pick ONE gentle camera move or hold static (subtle dolly in, slow pan, gentle tilt). Never combine moves.
+- Match motion energy to the mood — calm and slow for tender or sad moods, a touch livelier for upbeat moods — but always keep it subtle.
+- Include SOUND descriptions: ambient sound, speech tone, background noise.
 
-EXAMPLE:
-"The subject's hair sways gently in a soft breeze as she slowly turns her head toward the camera, her lips parting into a faint smile. The camera holds a static medium shot, then begins a subtle dolly in. Warm ambient café noise and a quiet acoustic melody play softly."
+EXAMPLE (touching mood):
+"She breathes slowly and her eyes soften into a faint smile, a few strands of hair drifting in a gentle draft while her face stays perfectly stable. The camera holds a quiet medium shot, then eases into a barely perceptible dolly in. Warm room tone, a soft sigh, and a faint acoustic melody play underneath."
 
 ---
 Mood: {mood}
@@ -82,7 +100,9 @@ NEGATIVE_PROMPT = (
     "cyberpunk, sci-fi, futuristic, neon lights, abstract, "
     "deformed hands, extra fingers, bad anatomy, "
     "ugly, duplicate, morbid, mutilated, "
-    "western faces, caucasian, european setting"
+    "western faces, caucasian, european setting, "
+    "oversaturated, plastic skin, airbrushed, waxy skin, over-glossy, "
+    "face morphing, warping, identity drift"
 )
 
 # ──────────────────────────────────────────────
@@ -106,11 +126,27 @@ def _load_video_styles() -> dict:
     return _VIDEO_STYLES
 
 
-def _get_style_hint(mood: str) -> str:
-    """mood에서 간결한 스타일 힌트 추출 (atmosphere 필드 사용)."""
+def _get_style_block(mood: str) -> dict:
+    """mood → 비주얼 스타일 상세 블록.
+
+    video_styles.json의 리스트 필드(camera_hints/color_palette)는 콤마로 join한다.
+    미존재 mood는 daily 폴백. 반환 키: style_hint/camera_hints/color_palette/atmosphere.
+    """
     styles = _load_video_styles()
-    style_data = styles.get(mood, styles.get("daily", {}))
-    return style_data.get("atmosphere", "cinematic, natural lighting")
+    style_data = styles.get(mood) or styles.get("daily", {})
+    camera_hints = style_data.get("camera_hints", [])
+    color_palette = style_data.get("color_palette", [])
+    return {
+        "style_hint": style_data.get("style_hint", "photorealistic, natural lighting"),
+        "camera_hints": ", ".join(camera_hints) if isinstance(camera_hints, list) else str(camera_hints),
+        "color_palette": ", ".join(color_palette) if isinstance(color_palette, list) else str(color_palette),
+        "atmosphere": style_data.get("atmosphere", "cinematic, natural lighting"),
+    }
+
+
+def _get_style_hint(mood: str) -> str:
+    """mood에서 간결한 스타일 힌트 추출 (atmosphere 필드 사용, _get_style_block 위임)."""
+    return _get_style_block(mood)["atmosphere"]
 
 
 # ──────────────────────────────────────────────
@@ -130,7 +166,11 @@ class VideoPromptEngine:
         post_id: int | None = None,
         scene_index: int | None = None,
     ) -> str:
-        """한국어 텍스트 → LTX-2용 영어 프롬프트 변환."""
+        """한국어 텍스트 → LTX-2용 영어 프롬프트 변환.
+
+        body_summary는 시그니처 호환을 위해 받지만 현재 프롬프트에 주입하지 않는다
+        (씬-로컬 컨텍스트 = text_lines + title만 사용).
+        """
         korean_text = " ".join(text_lines)
         if title:
             korean_text = f"[제목: {title}] {korean_text}"
@@ -145,13 +185,17 @@ class VideoPromptEngine:
             )
             max_tok, temp = 120, 0.3
         else:
-            style_hint = _get_style_hint(mood)
+            style = _get_style_block(mood)
+            style_hint = style["style_hint"]  # _scene_meta 로깅 호환용
             prompt_input = _T2V_PROMPT_SYSTEM_V2.format(
-                style_hint=style_hint,
-                korean_text=korean_text,
                 mood=mood,
+                style_detail=style["style_hint"],
+                color_palette=style["color_palette"],
+                camera_options=style["camera_hints"],
+                atmosphere=style["atmosphere"],
+                korean_text=korean_text,
             )
-            max_tok, temp = 180, 0.4
+            max_tok, temp = 220, 0.4
 
         success = True
         error_msg: str | None = None
@@ -199,8 +243,9 @@ class VideoPromptEngine:
         """
         system = (
             "Simplify this video prompt to 2-3 short sentences. "
-            "Keep ONLY: the main subject, one key action, and camera angle. "
+            "Keep ONLY: the main subject, one key action, and the camera angle. "
             "Remove audio, detailed lighting, and secondary characters. "
+            "Keep it photorealistic with a Korean subject and setting. "
             "Present tense, one paragraph.\n\n"
             f"Original: {original_prompt}\n\nSimplified:"
         )
