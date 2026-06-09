@@ -107,6 +107,8 @@ _PIPELINE_DEFAULTS: dict[str, str] = {
     "tts_voice":  os.getenv("TTS_VOICE",  "yura"),
     "llm_model":  DEFAULT_LLM_MODEL,  # .env의 LLM_MODEL
     "llm_model_overrides": "{}",
+    # LLM 백엔드: "cli"(llm-worker claude CLI 브릿지) | "api"(Anthropic API 직접)
+    "llm_backend": os.getenv("LLM_BACKEND", "cli"),
     "video_resolution": "1080x1920",
     "video_codec": "h264_nvenc",
     "bgm_volume": "0.15",

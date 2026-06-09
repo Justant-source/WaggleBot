@@ -11,12 +11,28 @@ import { Button } from '@/components/ui/button'
 import type { Post } from '@/lib/types'
 import { useInboxStore } from '@/lib/store/inboxStore'
 import { usePollingJob } from '@/lib/hooks/usePollingJob'
-import { Loader2, RefreshCw, CheckCheck, XCircle } from 'lucide-react'
+import { Loader2, RefreshCw, CheckCheck, X, Eye, Image as ImageIcon } from 'lucide-react'
+
+interface PostStats { views?: number; likes?: number; comments_count?: number }
+
+function getTier(score: number) {
+  if (score >= 80) return 'tier1'
+  if (score >= 30) return 'tier2'
+  return 'tier3'
+}
+
+function tierBadge(score: number) {
+  const t = getTier(score)
+  if (t === 'tier1') return <Badge variant="success">상위</Badge>
+  if (t === 'tier2') return <Badge variant="warning">중위</Badge>
+  return <Badge variant="outline">하위</Badge>
+}
 
 export default function InboxPage() {
   const [data, setData] = useState<{ posts: Post[]; total: number; counts: { tier1: number; tier2: number; tier3: number } } | null>(null)
   const [loading, setLoading] = useState(true)
   const [crawlJobId, setCrawlJobId] = useState<number | null>(null)
+  const [detail, setDetail] = useState<Post | null>(null)
   const { page, selectedIds, toggleSelect, clearSelection, setPage } = useInboxStore()
 
   const crawlJob = usePollingJob(crawlJobId, (id) => inboxApi.pollJob(id))
@@ -38,12 +54,12 @@ export default function InboxPage() {
   }, [crawlJob.status])
 
   const handleApprove = async (id: number) => {
-    try { await inboxApi.approve(id); toast.success('승인됨'); load() }
+    try { await inboxApi.approve(id); toast.success('승인됨'); setDetail(null); load() }
     catch { toast.error('승인 실패') }
   }
 
   const handleDecline = async (id: number) => {
-    try { await inboxApi.decline(id); toast.success('거절됨'); load() }
+    try { await inboxApi.decline(id); toast.success('거절됨'); setDetail(null); load() }
     catch { toast.error('거절 실패') }
   }
 
@@ -59,19 +75,6 @@ export default function InboxPage() {
     const res = await inboxApi.triggerCrawl()
     setCrawlJobId(res.jobId)
     toast.info('크롤링 시작...')
-  }
-
-  const getTier = (score: number) => {
-    if (score >= 80) return 'tier1'
-    if (score >= 30) return 'tier2'
-    return 'tier3'
-  }
-
-  const tierBadge = (score: number) => {
-    const t = getTier(score)
-    if (t === 'tier1') return <Badge variant="success">상위</Badge>
-    if (t === 'tier2') return <Badge variant="warning">중위</Badge>
-    return <Badge variant="outline">하위</Badge>
   }
 
   const totalPages = data ? Math.ceil(data.total / 20) : 1
@@ -115,27 +118,50 @@ export default function InboxPage() {
                   <th className="px-3 py-2 text-left w-16">사이트</th>
                   <th className="px-3 py-2 text-right w-20">점수</th>
                   <th className="px-3 py-2 text-left w-16">티어</th>
-                  <th className="px-3 py-2 text-center w-32">액션</th>
+                  <th className="px-3 py-2 text-center w-40">액션</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {data?.posts.map((post) => (
-                  <tr key={post.id} className="hover:bg-gray-50">
-                    <td className="px-3 py-2">
-                      <input type="checkbox" checked={selectedIds.has(post.id)} onChange={() => toggleSelect(post.id)} />
-                    </td>
-                    <td className="px-3 py-2 font-medium text-gray-900 max-w-xs truncate">{post.title}</td>
-                    <td className="px-3 py-2 text-gray-500">{post.siteCode}</td>
-                    <td className="px-3 py-2 text-right font-mono">{Math.round(post.engagementScore)}</td>
-                    <td className="px-3 py-2">{tierBadge(post.engagementScore)}</td>
-                    <td className="px-3 py-2">
-                      <div className="flex justify-center gap-1">
-                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleApprove(post.id)}>승인</Button>
-                        <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => handleDecline(post.id)}>거절</Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {data?.posts.map((post) => {
+                  const stats = (post.stats ?? {}) as PostStats
+                  const imgCount = Array.isArray(post.images) ? post.images.length : 0
+                  return (
+                    <tr key={post.id} className="hover:bg-gray-50">
+                      <td className="px-3 py-2">
+                        <input type="checkbox" checked={selectedIds.has(post.id)} onChange={() => toggleSelect(post.id)} />
+                      </td>
+                      <td className="px-3 py-2 max-w-md">
+                        <button
+                          onClick={() => setDetail(post)}
+                          className="group flex items-center gap-2 text-left font-medium text-gray-900 hover:text-blue-600"
+                          title="내용 보기"
+                        >
+                          <span className="truncate">{post.title}</span>
+                          {imgCount > 0 && (
+                            <span className="flex shrink-0 items-center gap-0.5 text-xs text-gray-400">
+                              <ImageIcon className="h-3 w-3" />{imgCount}
+                            </span>
+                          )}
+                        </button>
+                        <div className="mt-0.5 text-xs text-gray-400">
+                          조회 {stats.views ?? 0} · 추천 {stats.likes ?? 0} · 댓글 {stats.comments_count ?? 0}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-gray-500">{post.siteCode}</td>
+                      <td className="px-3 py-2 text-right font-mono">{Math.round(post.engagementScore)}</td>
+                      <td className="px-3 py-2">{tierBadge(post.engagementScore)}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex justify-center gap-1">
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setDetail(post)}>
+                            <Eye className="mr-1 h-3 w-3" />보기
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleApprove(post.id)}>승인</Button>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => handleDecline(post.id)}>거절</Button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
             <div className="px-4 py-3">
@@ -144,6 +170,108 @@ export default function InboxPage() {
           </div>
         )}
       </AdminSection>
+
+      <PostDetailDrawer
+        post={detail}
+        onClose={() => setDetail(null)}
+        onApprove={handleApprove}
+        onDecline={handleDecline}
+      />
+    </div>
+  )
+}
+
+function PostDetailDrawer({
+  post, onClose, onApprove, onDecline,
+}: {
+  post: Post | null
+  onClose: () => void
+  onApprove: (id: number) => void
+  onDecline: (id: number) => void
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    if (post) window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [post, onClose])
+
+  if (!post) return null
+
+  const stats = (post.stats ?? {}) as PostStats
+  const images = Array.isArray(post.images) ? (post.images as string[]) : []
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      {/* backdrop */}
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+
+      {/* panel */}
+      <div className="relative flex h-full w-full max-w-2xl flex-col bg-white shadow-xl">
+        {/* header */}
+        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{post.siteCode}</Badge>
+              {tierBadge(post.engagementScore)}
+              <span className="text-xs text-gray-400">점수 {Math.round(post.engagementScore)}</span>
+            </div>
+            <h2 className="text-lg font-semibold leading-snug text-gray-900">{post.title}</h2>
+          </div>
+          <button onClick={onClose} className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700" title="닫기 (Esc)">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* meta */}
+        <div className="flex flex-wrap gap-x-6 gap-y-1 border-b border-gray-100 px-6 py-3 text-sm text-gray-500">
+          <span>조회 <b className="text-gray-700">{stats.views ?? 0}</b></span>
+          <span>추천 <b className="text-gray-700">{stats.likes ?? 0}</b></span>
+          <span>댓글 <b className="text-gray-700">{stats.comments_count ?? 0}</b></span>
+          <span>수집 {post.createdAt ? new Date(post.createdAt).toLocaleString('ko-KR') : '-'}</span>
+        </div>
+
+        {/* body (scrollable) */}
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {post.content ? (
+            <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-gray-800">
+              {post.content}
+            </p>
+          ) : (
+            <p className="text-sm text-gray-400">본문 내용이 없습니다.</p>
+          )}
+
+          {images.length > 0 && (
+            <div className="mt-6">
+              <div className="mb-2 flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-gray-400">
+                <ImageIcon className="h-3.5 w-3.5" /> 이미지 {images.length}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {images.map((src, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <a key={i} href={src} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-gray-200">
+                    <img
+                      src={src}
+                      alt={`이미지 ${i + 1}`}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      className="h-auto w-full object-cover"
+                      onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none' }}
+                    />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* footer actions */}
+        <div className="flex justify-end gap-2 border-t border-gray-200 px-6 py-4">
+          <Button variant="ghost" className="text-red-600" onClick={() => onDecline(post.id)}>거절</Button>
+          <Button onClick={() => onApprove(post.id)}>
+            <CheckCheck className="mr-1 h-4 w-4" /> 승인 (대본 생성)
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

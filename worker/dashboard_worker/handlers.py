@@ -119,19 +119,27 @@ def _handle_ai_fitness(job: Job) -> dict:
 
 
 def _handle_manual_crawl(job: Job) -> dict:
+    import crawlers  # noqa: F401 — 크롤러 자동 등록 (데코레이터)
     from crawlers.plugin_manager import CrawlerRegistry
+    from config.settings import ENABLED_CRAWLERS
+    from db.session import SessionLocal
+    from db.models import Post
 
-    registry = CrawlerRegistry()
+    enabled = [s.strip() for s in ENABLED_CRAWLERS if s.strip()]
     results = []
-    for crawler_cls in registry.list_crawlers():
-        try:
-            crawler = crawler_cls()
-            count = crawler.run()
-            results.append({"crawler": crawler_cls.__name__, "count": count})
-        except Exception as exc:
-            logger.warning("크롤러 실패 %s: %s", crawler_cls.__name__, exc)
-            results.append({"crawler": crawler_cls.__name__, "error": str(exc)})
-    return {"results": results}
+    with SessionLocal() as session:
+        before = session.query(Post).count()
+        for site_code in enabled:
+            try:
+                crawler = CrawlerRegistry.get_crawler(site_code)
+                crawler.run(session)
+                results.append({"crawler": site_code, "ok": True})
+            except Exception as exc:
+                logger.warning("크롤러 실패 %s: %s", site_code, exc)
+                results.append({"crawler": site_code, "error": str(exc)})
+        after = session.query(Post).count()
+
+    return {"results": results, "new_posts": after - before, "total_posts": after}
 
 
 def _handle_hd_render(job: Job) -> dict:

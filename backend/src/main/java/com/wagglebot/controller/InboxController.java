@@ -34,10 +34,13 @@ public class InboxController {
         body.put("total", posts.getTotalElements());
         body.put("page", page);
         body.put("size", size);
+        long tier1 = postRepo.countByStatusAndScoreGte(PostStatus.COLLECTED, 80.0);
+        long tier2 = postRepo.countByStatusAndScoreBetween(PostStatus.COLLECTED, 30.0, 80.0);
+        long totalCollected = posts.getTotalElements();
         body.put("counts", Map.of(
-            "tier1", posts.getContent().stream().filter(p -> p.getEngagementScore() >= 80).count(),
-            "tier2", posts.getContent().stream().filter(p -> p.getEngagementScore() >= 30 && p.getEngagementScore() < 80).count(),
-            "tier3", posts.getContent().stream().filter(p -> p.getEngagementScore() < 30).count()
+            "tier1", tier1,
+            "tier2", tier2,
+            "tier3", Math.max(0L, totalCollected - tier1 - tier2)
         ));
         return ResponseEntity.ok(body);
     }

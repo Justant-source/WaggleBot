@@ -10,9 +10,10 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
-import { Loader2, CheckCircle, XCircle } from 'lucide-react'
+import { Loader2, CheckCircle, XCircle, KeyRound } from 'lucide-react'
 
 const schema = z.object({
+  llm_backend: z.enum(['cli', 'api']),
   llm_model: z.enum(['haiku', 'sonnet']),
   tts_voice: z.string().min(1),
   auto_approve_threshold: z.coerce.number().min(0).max(100),
@@ -27,21 +28,32 @@ export default function SettingsPage() {
   const [llmHealthStatus, setLlmHealthStatus] = useState<'unknown' | 'ok' | 'error'>('unknown')
   const [llmHealthChecking, setLlmHealthChecking] = useState(false)
 
-  const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormData>({
+  // Anthropic API 키 (credentials.json — gitignore됨, 별도 엔드포인트)
+  const [apiKey, setApiKey] = useState('')
+  const [apiKeyMasked, setApiKeyMasked] = useState<string | null>(null)
+  const [savingKey, setSavingKey] = useState(false)
+
+  const { register, handleSubmit, setValue, watch } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { llm_model: 'haiku', tts_voice: 'yura', auto_approve_threshold: 80, max_chars_per_line: 20 },
+    defaultValues: { llm_backend: 'cli', llm_model: 'haiku', tts_voice: 'yura', auto_approve_threshold: 80, max_chars_per_line: 20 },
   })
 
+  const llmBackend = watch('llm_backend')
   const llmModel = watch('llm_model')
 
   useEffect(() => {
     settingsApi.get().then((cfg) => {
+      if (cfg.llm_backend === 'cli' || cfg.llm_backend === 'api') setValue('llm_backend', cfg.llm_backend)
       if (cfg.llm_model === 'haiku' || cfg.llm_model === 'sonnet') setValue('llm_model', cfg.llm_model)
       if (cfg.tts_voice) setValue('tts_voice', String(cfg.tts_voice))
       if (cfg.auto_approve_threshold) setValue('auto_approve_threshold', Number(cfg.auto_approve_threshold))
       if (cfg.max_chars_per_line) setValue('max_chars_per_line', Number(cfg.max_chars_per_line))
       setLoading(false)
     })
+    settingsApi.getCredentials().then((creds) => {
+      const v = creds?.anthropic_api_key
+      if (typeof v === 'string' && v.length > 0) setApiKeyMasked(v)
+    }).catch(() => {})
   }, [])
 
   const onSubmit = async (data: FormData) => {
@@ -49,6 +61,18 @@ export default function SettingsPage() {
     try { await settingsApi.save(data); toast.success('설정 저장됨') }
     catch { toast.error('저장 실패') }
     finally { setSaving(false) }
+  }
+
+  const saveApiKey = async () => {
+    if (!apiKey.trim()) { toast.error('API 키를 입력하세요'); return }
+    setSavingKey(true)
+    try {
+      await settingsApi.saveCredentials({ anthropic_api_key: apiKey.trim() })
+      toast.success('API 키 저장됨 (config/credentials.json)')
+      setApiKeyMasked(apiKey.trim().slice(0, 2) + '***')
+      setApiKey('')
+    } catch { toast.error('API 키 저장 실패') }
+    finally { setSavingKey(false) }
   }
 
   const checkLlmHealth = async () => {
@@ -70,6 +94,55 @@ export default function SettingsPage() {
           {saving && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} 저장
         </Button>
       </div>
+
+      <AdminSection title="AI 대본 생성 백엔드">
+        <div className="max-w-xl space-y-4">
+          <div>
+            <Label className="mb-1 block">LLM 호출 방식</Label>
+            <Select value={llmBackend} onValueChange={(v) => setValue('llm_backend', v as 'cli' | 'api')}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cli">Claude CLI 브릿지 (llm-worker · 구독)</SelectItem>
+                <SelectItem value="api">Claude API (Anthropic API 키 · 종량제)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-xs text-gray-400">
+              CLI 브릿지는 Claude 구독(llm-worker)을 사용합니다. 한도 소진 시 <b>Claude API</b>로 전환하세요.
+              저장 후 새 작업부터 즉시 반영됩니다.
+            </p>
+          </div>
+
+          {llmBackend === 'api' && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <Label className="mb-1 flex items-center gap-1.5 text-amber-900">
+                <KeyRound className="h-4 w-4" /> Anthropic API 키
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={apiKeyMasked ? `저장됨 (${apiKeyMasked}) — 변경 시 새 키 입력` : 'sk-ant-...'}
+                  autoComplete="off"
+                />
+                <Button type="button" onClick={saveApiKey} disabled={savingKey}>
+                  {savingKey && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} 키 저장
+                </Button>
+              </div>
+              <p className="mt-2 text-xs text-amber-800">
+                키는 <code className="rounded bg-amber-100 px-1">config/credentials.json</code> 에 저장됩니다
+                (<b>.gitignore 처리되어 git에 커밋되지 않음</b>). 화면에는 항상 마스킹되어 표시됩니다.
+                <br />
+                대안: <code className="rounded bg-amber-100 px-1">env/.env</code> 에{' '}
+                <code className="rounded bg-amber-100 px-1">ANTHROPIC_API_KEY=sk-ant-...</code> 로 설정해도 됩니다 (env/.env도 gitignore됨).
+                {apiKeyMasked && <span className="ml-1 font-medium text-green-700">· 현재 키 설정됨 ✓</span>}
+              </p>
+            </div>
+          )}
+        </div>
+      </AdminSection>
 
       <AdminSection title="LLM 모델">
         <div className="max-w-sm space-y-4">

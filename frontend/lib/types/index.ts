@@ -76,6 +76,7 @@ export interface Job {
 }
 
 export interface PipelineSettings {
+  llm_backend: 'cli' | 'api'
   llm_model: string
   llm_model_overrides: string
   tts_engine: string

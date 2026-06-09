@@ -35,7 +35,8 @@ public class SettingsService {
         "tts_voice", "yura",
         "auto_approve_threshold", 80,
         "max_chars_per_line", 20,
-        "max_body_items", 23
+        "max_body_items", 23,
+        "llm_backend", "cli"
     );
 
     public SettingsService(@Value("${app.config-dir:/app/config}") String configDirStr) {
@@ -58,7 +59,18 @@ public class SettingsService {
     }
 
     public void savePipelineConfig(Map<String, Object> config) throws IOException {
-        atomicWrite(configDir.resolve("pipeline.json"), MAPPER.writeValueAsString(config));
+        // 부분 저장이 다른 키(llm_backend, llm_model_overrides 등)를 지우지 않도록 기존 파일과 병합
+        Path path = configDir.resolve("pipeline.json");
+        Map<String, Object> merged = new HashMap<>();
+        if (Files.exists(path)) {
+            try {
+                merged.putAll(MAPPER.readValue(Files.readString(path, StandardCharsets.UTF_8), MAP_REF));
+            } catch (IOException e) {
+                log.warn("pipeline.json 병합 로드 실패, 덮어쓰기로 진행: {}", e.getMessage());
+            }
+        }
+        merged.putAll(config);
+        atomicWrite(path, MAPPER.writeValueAsString(merged));
     }
 
     public Map<String, Object> loadCredentialsConfig() {
@@ -73,7 +85,13 @@ public class SettingsService {
     }
 
     public void saveCredentialsConfig(Map<String, Object> creds) throws IOException {
-        atomicWrite(configDir.resolve("credentials.json"), MAPPER.writeValueAsString(creds));
+        // 기존 시크릿과 병합 + 마스킹("***")/빈 값은 무시(실제 키 보존)
+        Map<String, Object> merged = loadCredentialsConfig();
+        creds.forEach((k, v) -> {
+            if (v instanceof String s && (s.isBlank() || s.contains("***"))) return;
+            merged.put(k, v);
+        });
+        atomicWrite(configDir.resolve("credentials.json"), MAPPER.writeValueAsString(merged));
     }
 
     private void atomicWrite(Path target, String content) throws IOException {
