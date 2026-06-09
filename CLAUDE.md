@@ -114,6 +114,20 @@ with SessionLocal() as db:  # DB 항상 with 블록
 - **haiku/sonnet 라우팅**: `pick_model(call_type)` — chunk/generate_script/scene_director/feedback → sonnet; video_prompt/translate/comment_summarize → haiku. `config/pipeline.json`의 `llm_model_overrides`로 override 가능.
 - **dashboard_worker**: `jobs` 테이블 폴링 데몬. Java backend가 enqueue, Python이 execute.
 
+## 상세 문서 (docs/)
+
+프로젝트 전체 context는 아래 문서에 상세 기술되어 있음. 작업 전 해당 문서를 참조할 것.
+
+| 문서 | 내용 |
+|------|------|
+| [`docs/architecture.md`](docs/architecture.md) | 시스템 전체 구조, 서비스 흐름도, 기술 스택, Post 상태 전이, VRAM 배분 (Mermaid) |
+| [`docs/pipeline.md`](docs/pipeline.md) | 8-Phase AI 파이프라인 상세, Phase별 입출력, LLM 모델 라우팅, 4단계 폴백, 피드백 루프 (Mermaid) |
+| [`docs/database.md`](docs/database.md) | DB 스키마 ER 다이어그램, 테이블 컬럼 상세, ScriptData JSON 구조, Repository 메서드, SQLAlchemy 패턴 (Mermaid) |
+| [`docs/api.md`](docs/api.md) | llm-worker REST API 완전 명세, ClaudeCliInvoker 시퀀스, backend API 계획, Fish Speech/ComfyUI API |
+| [`docs/services.md`](docs/services.md) | Docker 서비스별 포트/볼륨/환경변수/의존성, 시작 순서, 공유 볼륨 맵 (Mermaid) |
+| [`docs/config.md`](docs/config.md) | settings.py 변수 전체 테이블, pipeline.json 키 설명, scene_policy.json, layout.json, .env 핵심 변수 |
+| [`docs/implementation-status.md`](docs/implementation-status.md) | 구현 완료 vs 미구현 현황, 다음 구현 우선순위 |
+
 ## docs/arch/ 문서
 
 - `docs/arch/done/` — 완료된 과거 스펙
