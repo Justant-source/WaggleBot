@@ -32,31 +32,36 @@ Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만 실행.
 | 크롤러 | `worker/crawlers/` — base.py (retry + 스코어링), nate_pann, bobaedream, dcinside, fmkorea, plugin_manager |
 | DB | `worker/db/models.py` (Post/Comment/Content/LLMLog/ScriptData/PostStatus), `worker/db/session.py`, `worker/db/migrations/` |
 | AI 워커 | `worker/ai_worker/core/main.py` (진입점), `worker/ai_worker/core/processor.py` (루프), `worker/ai_worker/core/gpu_manager.py` |
-| LLM | `worker/ai_worker/llm/transport.py` (call_llm, pick_model, resolve_model_id), `worker/ai_worker/script/client.py` (call_ollama_raw, generate_script), `worker/ai_worker/script/logger.py` |
+| LLM | `worker/ai_worker/llm/transport.py` (call_llm/call_llm_raw, pick_model, resolve_model_id — **CLI·API 백엔드 전환**), `worker/ai_worker/script/client.py` (generate_script, call_ollama_raw=레거시 별칭→transport), `worker/ai_worker/script/logger.py` |
+| LLM 게이트웨이 | `worker/llm/` — llm-worker(Spring Boot, `claude` CLI subprocess 브릿지). CLI 백엔드일 때만 경유 |
 | TTS | `worker/ai_worker/tts/` — fish_client.py (Fish Speech HTTP), normalizer.py (한국어 전처리), number_reader.py (숫자 읽기) |
 | 비디오 | `worker/ai_worker/video/` — manager.py (오케스트레이션), comfy_client.py (ComfyUI 통신), prompt_engine.py (한→영 프롬프트), image_filter.py (I2V 적합성), video_utils.py (FFmpeg 후처리) |
 | 렌더링 | `worker/ai_worker/renderer/` — composer.py (진입점), layout.py (오케스트레이터), _frames.py / _tts.py / _encode.py (내부 모듈), thumbnail.py |
 | 파이프라인 | `worker/ai_worker/pipeline/` — content_processor.py (Phase 1~8 통합); 씬 관련: `scene/`(director, validator, analyzer), 청킹: `script/chunker.py` |
 | 업로더 | `worker/uploaders/` — base.py (UploaderRegistry), youtube.py, uploader.py |
-| 대시보드 | `frontend/` (Next.js 14 UI) + `backend/` (Spring Boot API) + `worker/dashboard_worker/` (jobs 폴링 데몬) |
+| 대시보드 | `frontend/` (Next.js 14 UI: inbox/editor/gallery/analytics/settings/llm-logs/progress) + `backend/` (Spring Boot API + Flyway 마이그레이션) + `worker/dashboard_worker/` (jobs 폴링 데몬) |
 | 분석 | `worker/analytics/collector.py`, `feedback.py` (성과→LLM 인사이트→feedback_config.json→대본 주입) |
 | 모니터링 | `worker/monitoring/alerting.py`, `daemon.py` |
+| 텔레그램 | `telegram/` — 모바일 작업 승인/모니터링 브리지 봇 (Node/TS, 선택) |
 | 설정 | `config/settings.py` (허브), `crawler.py`, `monitoring.py`, `layout.json`, `scene_policy.json`, `video_styles.json` |
 
 ## Docker 서비스 구성
 
-| 서비스 | 역할 | 포트 |
+Compose 파일·환경변수는 `env/`에 위치. 실행: `docker compose -f env/docker-compose.yml up -d`.
+
+| 서비스 | 역할 | 포트 (host:container) |
 |--------|------|------|
 | `db` | MariaDB 11 | 3306 |
-| `llm-worker` | claude CLI 게이트웨이 (haiku/sonnet) | 8090 |
+| `llm-worker` | claude CLI 게이트웨이 (Spring Boot, haiku/sonnet/opus) — CLI 백엔드일 때만 | 8090 |
 | `crawler` | 크롤링 루프 | — |
-| `backend` | Spring Boot 3.3 REST API | 8080 |
+| `backend` | Spring Boot 3.3 REST API + Flyway | 8080 |
 | `frontend` | Next.js 14 대시보드 | 3000 |
 | `dashboard_worker` | jobs 테이블 폴링 데몬 | — |
-| `fish-speech` | TTS (zero-shot 클로닝) | 8080 |
+| `fish-speech` | TTS (zero-shot 클로닝) | 8082:8080 |
 | `comfyui` | LTX-2 비디오 생성 | 8188 |
 | `ai_worker` | 8-Phase 파이프라인 | — |
 | `monitoring` | 헬스체크/알림 | — |
+| `telegram-bridge` | 텔레그램 작업 승인/모니터링 브리지 (선택) | 3847 |
 
 ## 하드 제약 (절대 위반 금지)
 
@@ -81,11 +86,11 @@ with SessionLocal() as db:  # DB 항상 with 블록
 ```
 
 - `logging.getLogger(__name__)` — print 금지
-- 절대경로 import. ai_worker는 **패키지 경로**: `from ai_worker.script.client import call_ollama_raw`
+- 절대경로 import. ai_worker는 **패키지 경로**: `from ai_worker.llm.transport import call_llm`
 - `pathlib.Path` 필수 — os.path 금지
 - 설정은 `config/` 경유 — 로직 내 `os.getenv()` 금지
 - 타입힌트 모든 함수 필수, 가드절로 중첩 최소화
-- LLM 직접 호출 금지 → `worker/ai_worker/llm/transport.py`의 `call_llm()` / `call_llm_raw()` 사용; Ollama 미사용
+- LLM 직접 호출 금지 → `worker/ai_worker/llm/transport.py`의 `call_llm()` / `call_llm_raw()` 사용. **Ollama/qwen2.5 미사용** — Claude(CLI 또는 API)만. `call_ollama_raw`는 transport로 위임하는 레거시 별칭일 뿐
 - ScriptData는 `from db.models import ScriptData` (canonical 위치)
 - 사이트 목록 하드코딩 금지 → `CrawlerRegistry.list_crawlers()` 동적 조회
 - `ai_worker/video`는 `ai_worker/tts` 모듈을 절대 import 금지 — TTS와 비디오는 독립 파이프라인
@@ -110,8 +115,9 @@ with SessionLocal() as db:  # DB 항상 with 블록
 - **플러그인**: 크롤러 `worker/crawlers/ADDING_CRAWLER.md`, 업로더 `worker/uploaders/ADDING_UPLOADER.md` 참조.
 - **설정 분리**: `config/crawler.py`, `config/monitoring.py`. settings.py에서 re-export.
 - **로그**: `docker compose logs --tail 50 ai_worker`
-- **llm-worker**: `POST :8090/v1/invoke` — claude CLI subprocess 게이트웨이. `temperature`/`max_tokens`는 advisory(claude CLI 미지원). `~/.claude` 마운트 인증(구독).
-- **haiku/sonnet 라우팅**: `pick_model(call_type)` — chunk/generate_script/scene_director/feedback → sonnet; video_prompt/translate/comment_summarize → haiku. `config/pipeline.json`의 `llm_model_overrides`로 override 가능.
+- **LLM 백엔드 (cli|api)**: `pipeline.json`의 `llm_backend` 또는 env `LLM_BACKEND`로 전환. `cli`=llm-worker(claude CLI 브릿지, 구독 인증), `api`=Anthropic Messages API 직접(`ANTHROPIC_API_KEY` → 없으면 `config/credentials.json`의 `anthropic_api_key`). transport.py의 `call_llm()`이 백엔드 분기 처리.
+- **llm-worker**: `POST :8090/v1/invoke` — claude CLI subprocess 게이트웨이(소스 `worker/llm/`, Spring Boot). `temperature`/`max_tokens`는 advisory(claude CLI 미지원). `~/.claude` 마운트 인증.
+- **haiku/sonnet/opus 라우팅**: `pick_model(call_type)` — chunk/generate_script/scene_director/feedback → sonnet; video_prompt/translate/comment_summarize → haiku. `config/pipeline.json`의 `llm_model_overrides`로 call_type별 override 가능.
 - **dashboard_worker**: `jobs` 테이블 폴링 데몬. Java backend가 enqueue, Python이 execute.
 
 ## 상세 문서 (docs/)

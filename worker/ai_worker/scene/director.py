@@ -482,8 +482,7 @@ def _call_scene_director_llm(
     Returns:
         파싱된 LLM 출력 dict 또는 실패 시 None
     """
-    from ai_worker.script.client import call_ollama_raw
-    from config.settings import OLLAMA_MODEL
+    from ai_worker.llm.transport import call_llm, pick_model, resolve_model_id
 
     constraints = llm_input["constraints"]
     system_prompt = _SCENE_DIRECTOR_SYSTEM_PROMPT.format(
@@ -503,10 +502,12 @@ def _call_scene_director_llm(
 
     try:
         with LLMCallTimer() as timer:
-            raw = call_ollama_raw(
+            raw = call_llm(
                 prompt=full_prompt,
                 max_tokens=2048,
+                call_type="scene_director",
                 timeout=timeout,
+                post_id=post_id,
             )
     except Exception as exc:
         success = False
@@ -548,7 +549,7 @@ def _call_scene_director_llm(
     log_llm_call(
         call_type="scene_director",
         post_id=post_id,
-        model_name=OLLAMA_MODEL,
+        model_name=resolve_model_id(pick_model("scene_director")),
         prompt_text=full_prompt,
         raw_response=raw,
         parsed_result=parsed_for_log,

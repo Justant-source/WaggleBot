@@ -143,6 +143,8 @@ services:
       - /usr/lib/wsl/lib:/usr/lib/wsl/lib:ro
     environment:
       LLM_WORKER_URL: "http://llm-worker:8090"
+      # LLM 백엔드 api 선택 시 사용. 비우면 config/credentials.json 의 키 사용
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: all
       # WSL2: NVENC 라이브러리 경로
@@ -231,7 +233,7 @@ services:
 
   llm-worker:
     build:
-      context: ../llm-worker
+      context: ../worker/llm
     container_name: llm-worker
     restart: unless-stopped
     ports:
@@ -301,6 +303,8 @@ services:
     environment:
       DATABASE_URL: "mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot"
       LLM_WORKER_URL: "http://llm-worker:8090"
+      # LLM 백엔드 api 선택 시 사용. 비우면 config/credentials.json 의 키 사용
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       FISH_SPEECH_URL: "http://fish-speech:8080"
       MEDIA_DIR: "/app/media"
     command: python -m dashboard_worker.main

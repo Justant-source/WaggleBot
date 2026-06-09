@@ -3,6 +3,8 @@
 > 커뮤니티 인기 게시글을 자동으로 수집하여 유튜브 쇼츠 영상으로 변환하는 AI 파이프라인
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-6DB33F.svg)](https://spring.io/)
+[![Next.js](https://img.shields.io/badge/Next.js-14-000000.svg)](https://nextjs.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://www.docker.com/)
 [![GPU](https://img.shields.io/badge/GPU-NVIDIA%20RTX%203090-76B900.svg)](https://www.nvidia.com/)
 
@@ -10,49 +12,72 @@
 
 ## 프로젝트 개요
 
-커뮤니티 게시글을 크롤링하고, LLM으로 쇼츠 대본을 생성한 뒤, TTS와 FFmpeg로 9:16 영상을 자동 생성하는 완전 자동화 시스템.
+커뮤니티 게시글을 크롤링하고, **Claude LLM**으로 쇼츠 대본을 생성한 뒤, TTS·LTX-2 비디오·FFmpeg로 9:16 영상을 자동 생성하여 YouTube에 업로드하는 완전 자동화 시스템.
 
 ### 주요 기능
 
 - **자동 크롤링**: 네이트판·뽐뿌·DC인사이드·FM코리아 인기 게시글 수집 + 시간감쇠 인기도 스코어링
-- **AI 대본**: Ollama LLM 기반 쇼츠 특화 3막 구조 대본 (hook/body/closer)
+- **AI 대본**: Claude(haiku/sonnet/opus) 기반 8-Phase 파이프라인 — 의미 단위 청킹 → 씬 배분 → 감정 태그
 - **TTS**: Fish Speech 1.5 (zero-shot 음성 클로닝, 감정 태그 지원)
 - **Mood 기반 씬 연출**: 9가지 감성 톤(humor/touching/horror 등) 프리셋 → 비주얼·BGM·TTS 감정 자동 배분
-- **영상 렌더링**: FFmpeg + NVENC GPU 가속, ASS 동적 자막, 장면 전환, 썸네일 자동 생성
-- **대시보드**: Streamlit 기반 수신함/편집실/갤러리/분석 탭
-- **자동 업로드**: YouTube Shorts + YouTube Analytics 성과 추적
+- **비디오 생성**: LTX-2 19B (ComfyUI, T2V/I2V, 720p) — `VIDEO_GEN_ENABLED=true`일 때 활성
+- **영상 렌더링**: FFmpeg + NVENC GPU 가속, ASS 동적 자막, 정적+비디오 하이브리드 합성, 썸네일 자동 생성
+- **대시보드**: Next.js 14 어드민 UI(수신함/편집실/갤러리/분석/설정/LLM 로그/진행상황) + Spring Boot REST API
+- **자동 업로드**: YouTube Shorts + YouTube Analytics 성과 추적 → LLM 피드백 루프
+- **텔레그램 브리지**: 모바일에서 작업 승인/모니터링 (선택)
 
 ### 시스템 플로우
 
 ```
 크롤링 → 스코어링 → 수신함 검수 → 편집실(대본수정/TTS미리듣기)
-→ AI워커(LLM → TTS → 렌더링 → 썸네일) → 갤러리 → YouTube 업로드 → 성과 분석
+→ AI워커(8-Phase: 청킹 → 씬 배분 → TTS → 비디오 → 렌더링 → 썸네일)
+→ 갤러리 → YouTube 업로드 → 성과 분석 → LLM 피드백
 ```
+
+### 8-Phase 파이프라인
+
+```
+Phase 1   analyze_resources    이미지:텍스트 비율 분석 (ResourceProfile)
+Phase 2   chunk_with_llm       LLM 의미 단위 청킹 (raw script)
+Phase 3   validate_and_fix     max_chars 검증 + 한국어 분할
+Phase 4   SceneDirector        씬 배분 + 감정 태그 (list[SceneDecision])
+Phase 4.5 assign_video_modes   씬별 t2v/i2v 모드 할당
+Phase 5   TTS 생성             Fish Speech (scene.text_lines)
+Phase 6   video_prompt 생성    한국어 → 영어 프롬프트
+Phase 7   video_clip 생성      ComfyUI LTX-2 클립
+Phase 8   FFmpeg 렌더링        최종 9:16 영상 + 썸네일
+```
+
+> Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만 실행됩니다.
 
 ### 기술 스택
 
 | 분류 | 기술 |
 |------|------|
-| 언어 | Python 3.12 |
-| LLM | Ollama (`qwen2.5:14b` 8-bit / `qwen2.5:7b` 폴백) |
+| 워커 | Python 3.12 (크롤러 · 8-Phase AI 파이프라인 · 업로더 · 분석 · 모니터링) |
+| LLM | **Claude** — `haiku` / `sonnet` / `opus`, call_type별 자동 라우팅 |
+| LLM 백엔드 | **CLI**(llm-worker Spring Boot 게이트웨이 + `claude` CLI, 구독 인증) 또는 **API**(Anthropic API, `ANTHROPIC_API_KEY`) — 대시보드에서 전환 |
 | TTS | Fish Speech 1.5 (zero-shot 클로닝, `fishaudio/fish-speech:v1.5.1`) |
-| 비디오 | LTX-2 19B (ComfyUI, T2V/I2V, 720p 오디오 동시 생성) |
-| DB | MariaDB 11.x + SQLAlchemy ORM |
-| 영상 | FFmpeg (h264_nvenc GPU 가속) |
-| 웹 | Streamlit Dashboard |
-| 인프라 | Docker Compose (RTX 3090 GPU) |
+| 비디오 | LTX-2 19B (ComfyUI, T2V/I2V, 720p) — GGUF Q4 UNet + Gemma 3 텍스트 인코더 |
+| DB | MariaDB 11 + SQLAlchemy ORM(Python) + Flyway 마이그레이션(backend) |
+| 영상 | FFmpeg (`h264_nvenc` GPU 가속) |
+| 백엔드 | Spring Boot 3.3 (Java) REST API |
+| 프론트 | Next.js 14 + TypeScript 어드민 대시보드 |
+| 인프라 | Docker Compose (RTX 3090 24GB GPU) |
+
+> **Ollama / qwen2.5는 더 이상 사용하지 않습니다.** 모든 LLM 호출은 `worker/ai_worker/llm/transport.py`의 `call_llm()`을 통해 Claude(CLI 또는 API)로 라우팅됩니다.
 
 ---
 
 ## 설치 가이드
 
-**RTX 3090 24GB 이상** NVIDIA GPU 환경을 지원합니다. 설치 가이드: [docs/arch/env/ENV_GPU.md](docs/arch/env/ENV_GPU.md)
+**RTX 3090 24GB 이상** NVIDIA GPU 환경을 지원합니다. GPU 환경 설정: [docs/arch/env/ENV_GPU.md](docs/arch/env/ENV_GPU.md)
 
 ### 1. WSL2 + Ubuntu 설치
 
 ```powershell
 # PowerShell (관리자 권한)
-wsl --install -d Ubuntu-22.04
+wsl --install -d Ubuntu-24.04
 ```
 
 ### 2. Docker + NVIDIA Container Toolkit
@@ -72,27 +97,37 @@ sudo usermod -aG docker $USER && newgrp docker
 bash scripts/setup_docker_gpu.sh
 ```
 
-### 3. Ollama 설치 및 설정
+### 3. Claude LLM 백엔드 설정
+
+LLM 백엔드는 두 가지 중 하나를 선택합니다 (대시보드 설정 또는 `.env`의 `LLM_BACKEND`로 전환).
+
+**(A) CLI 백엔드 — 기본값.** `llm-worker` 컨테이너가 호스트의 `~/.claude` 인증을 마운트해 `claude` CLI를 subprocess로 호출합니다 (Claude 구독 사용, 추가 API 과금 없음).
 
 ```bash
-curl -fsSL https://ollama.com/install.sh | sh
+# 호스트에 Claude Code(CLI) 설치 후 1회 로그인 → ~/.claude 생성
+claude   # 로그인 진행
 
-sudo systemctl edit ollama.service
-# [Service]
-# Environment="OLLAMA_HOST=0.0.0.0"
-
-sudo systemctl daemon-reload && sudo systemctl restart ollama
-ollama pull qwen2.5:14b
+# .env 에서 마운트 경로 지정 (기본: /home/<user>/.claude)
+# CLAUDE_HOST_CONFIG_DIR=/home/justant/.claude
 ```
+
+**(B) API 백엔드.** Anthropic API를 직접 호출합니다.
+
+```bash
+# .env 에 키 입력 (또는 config/credentials.json 의 anthropic_api_key)
+# ANTHROPIC_API_KEY=sk-ant-...
+# LLM_BACKEND=api
+```
+
+> 모델 라우팅: `chunk`/`generate_script`/`scene_director`/`feedback` → **sonnet**,
+> `video_prompt`/`translate`/`comment_summarize` → **haiku**.
+> `config/pipeline.json`의 `llm_model_overrides`로 call_type별 override 가능합니다.
 
 ### 4. Fish Speech 모델 다운로드
 
 ```bash
-# HuggingFace CLI 설치 (없는 경우)
-pip install huggingface_hub
-
-# 모델 다운로드 (~1.4GB)
-bash scripts/download_fish_speech.sh
+pip install huggingface_hub          # 없는 경우
+bash scripts/download_fish_speech.sh # 모델 다운로드 (~1.4GB)
 ```
 
 다운로드 후 구조 확인:
@@ -103,7 +138,7 @@ checkpoints/fish-speech-1.5/
 └── (기타 config 파일)
 ```
 
-### 4-1. LTX-2 모델 다운로드
+### 5. LTX-2 모델 다운로드 (비디오 생성 사용 시)
 
 ```bash
 # LTX-2 19B 모델 + Gemma 3 텍스트 인코더 + 업스케일러 (~20GB+)
@@ -113,22 +148,16 @@ bash scripts/download_ltx2.sh
 다운로드 후 구조 확인:
 ```
 checkpoints/
-├── ltx-2/
-│   ├── ltx-2-19b-dev-fp8.safetensors        ← 메인 체크포인트 (FP8)
-│   └── ltx-2-19b-distilled.safetensors      ← Distilled (8스텝 고속)
-├── text_encoders/
-│   └── gemma-3-12b-it-qat-q4_0-unquantized/ ← Gemma 3 텍스트 인코더
-├── latent_upscale_models/
-│   ├── ltx-2-spatial-upscaler-x2-1.0.safetensors
-│   └── ltx-2-temporal-upscaler-x2-1.0.safetensors
-└── loras/
-    └── ltx-2-19b-distilled-lora-384.safetensors
+├── ltx-2/                                   ← 메인 + Distilled 체크포인트
+├── text_encoders/                           ← Gemma 3 12B 텍스트 인코더
+├── latent_upscale_models/                   ← Spatial/Temporal 업스케일러
+├── loras/                                    ← Distilled LoRA
+├── diffusion_models/  vae/                   ← GGUF UNet / VAE
 ```
 
-### 참조 오디오 준비
+### 6. 참조 오디오 준비
 
-Fish Speech는 **zero-shot 음성 클로닝** 방식입니다.
-원하는 목소리의 WAV 파일을 준비하세요.
+Fish Speech는 **zero-shot 음성 클로닝** 방식입니다. 원하는 목소리의 WAV 파일을 준비하세요.
 
 ```
 assets/voices/
@@ -142,65 +171,63 @@ VOICE_REFERENCE_TEXTS = {
 }
 ```
 
-### 5. 프로젝트 설정 및 실행
+### 7. 환경 변수 설정 및 실행
+
+Docker Compose 정의와 환경 변수는 모두 `env/` 디렉터리에 있습니다.
 
 ```bash
 git clone https://github.com/justant/WaggleBot.git
 cd WaggleBot
 
-# .env 최소 설정
-nano .env
-# DB_ROOT_PASSWORD=...
-# DB_PASSWORD=...
-# HF_TOKEN=hf_...
-# OLLAMA_MODEL=qwen2.5:14b
+# 환경 변수 설정
+cp env/.env.example env/.env
+nano env/.env
+#   MARIADB_ROOT_PASSWORD=...
+#   MARIADB_PASSWORD=...
+#   LLM_BACKEND=cli            # 또는 api
+#   CLAUDE_HOST_CONFIG_DIR=/home/<user>/.claude   # CLI 백엔드
+#   ANTHROPIC_API_KEY=sk-ant-...                   # API 백엔드
+#   VIDEO_GEN_ENABLED=false    # 비디오 생성 토글
 
-# 실행
-docker compose up -d
-docker compose ps
+# 실행 (compose 파일이 env/ 에 있으므로 -f 로 지정)
+docker compose -f env/docker-compose.yml up -d
+docker compose -f env/docker-compose.yml ps
 ```
 
-대시보드: **http://localhost:8501**
+대시보드(어드민): **http://localhost:3000/admin** &nbsp;·&nbsp; 백엔드 API: **http://localhost:8080**
 
-### 6. DB 스키마 초기화 (최초 1회)
+### 8. DB 스키마
 
-```bash
-docker compose exec dashboard python -c "from db.session import init_db; init_db(); print('DB 초기화 완료')"
-```
+DB 스키마는 **Spring Boot backend가 기동 시 Flyway 마이그레이션을 자동 적용**합니다
+(`backend/src/main/resources/db/migration/` — `V1__jobs_table.sql`, `V2__base_schema.sql` …).
+별도의 수동 초기화 단계는 필요하지 않습니다.
 
-생성되는 테이블: `posts`, `comments`, `contents`
-
-### 7. DB 마이그레이션 (스키마 변경 시)
-
-신규 마이그레이션이 추가된 경우 아래 명령을 실행합니다.
-이미 적용된 마이그레이션은 자동으로 건너뜁니다.
-
-```bash
-docker compose exec dashboard python -m db.migrations.runner
-```
+생성되는 주요 테이블: `posts`, `comments`, `contents`, `jobs`, `llm_logs`.
 
 ---
 
 ## 사용법
 
-### 대시보드 탭 구성
+### 대시보드 구성 (`/admin`)
 
-| 탭 | 역할 |
+| 페이지 | 역할 |
 |----|------|
-| **수신함** | 크롤링된 게시글 스코어 기반 추천 → 배치 승인/거절 |
-| **편집실** | AI 대본 미리보기/수정, TTS 미리듣기, 제목·태그 편집 |
-| **갤러리** | 저해상도 프리뷰 → 고화질 렌더링 → 업로드 스케줄링 |
-| **분석** | YouTube 성과(조회수/유지율), 생산성 지표, AI 인사이트 |
-| **설정** | 파이프라인 설정, 자동 승인 임계값, 자막 스타일 프리셋 |
+| **수신함** (inbox) | 크롤링된 게시글 스코어 기반 추천 → 배치 승인/거절 |
+| **편집실** (editor) | AI 대본 미리보기/수정, TTS 미리듣기, 제목·태그 편집 |
+| **갤러리** (gallery) | 저해상도 프리뷰 → 고화질 렌더링 → 업로드 스케줄링 |
+| **분석** (analytics) | YouTube 성과(조회수/유지율), 생산성 지표, AI 인사이트 |
+| **설정** (settings) | 파이프라인 설정, LLM 백엔드·모델, 자동 승인 임계값, 자막 스타일 |
+| **LLM 로그** (llm-logs) | LLM 호출 이력/응답 추적 |
+| **진행상황** (progress) | 파이프라인 실시간 처리 단계 모니터링 |
 
 ### 영상 생성 흐름
 
 ```
 수신함 승인 → 편집실(대본 수정)
-→ 1막: LLM 대본/프롬프트 생성(qwen2.5:14b, ~30초) → VRAM 해제
-→ 2막: Fish Speech TTS(~10초) → VRAM 해제
-     → LTX-2 비디오 클립 생성(ComfyUI, 씬당 1~3분) → VRAM 해제
-→ FFmpeg 하이브리드 렌더링(정적+비디오 합성, ~1-2분) → 썸네일 생성
+→ Phase 1~4: Claude 대본/씬 생성(sonnet, llm-worker 또는 API)
+→ Phase 5: Fish Speech TTS(~10초) → VRAM 해제
+→ Phase 6~7: LTX-2 비디오 클립 생성(ComfyUI, 씬당 1~3분) → VRAM 해제
+→ Phase 8: FFmpeg 하이브리드 렌더링(정적+비디오 합성) → 썸네일 생성
 → 갤러리 확인 → 업로드
 ```
 
@@ -220,113 +247,87 @@ VOICE_REFERENCE_TEXTS = {
 
 ---
 
+## Docker 서비스 구성
+
+| 서비스 | 역할 | 포트 (host:container) |
+|--------|------|------|
+| `db` | MariaDB 11 | 3306:3306 |
+| `crawler` | 크롤링 루프 (`python main.py`) | — |
+| `fish-speech` | TTS (zero-shot 클로닝) | 8082:8080 |
+| `comfyui` | LTX-2 비디오 생성 | 8188:8188 |
+| `ai_worker` | 8-Phase 파이프라인 (`ai_worker.core.main`) | — |
+| `monitoring` | 헬스체크/알림 데몬 | — |
+| `llm-worker` | Claude CLI 게이트웨이 (Spring Boot) | 8090:8090 |
+| `backend` | Spring Boot 3.3 REST API | 8080:8080 |
+| `frontend` | Next.js 14 대시보드 | 3000:3000 |
+| `dashboard_worker` | `jobs` 테이블 폴링 실행 데몬 | — |
+| `telegram-bridge` | 텔레그램 봇 브리지 (선택) | 3847:3847 |
+
+> `dashboard_worker`는 Java backend가 `jobs` 테이블에 enqueue한 작업을 Python이 폴링·실행합니다.
+> `llm-worker`는 `POST :8090/v1/invoke`로 호출되는 `claude` CLI subprocess 게이트웨이입니다
+> (소스: `worker/llm/`, `~/.claude` 마운트 인증).
+
+---
+
 ## 프로젝트 구조
 
 ```
 WaggleBot/
-├── CLAUDE.md                          # AI 개발 규칙 (코딩 컨벤션, 제약사항)
-├── docker-compose.yml                 # RTX 3090 GPU 환경 (fish-speech + ComfyUI 포함)
-├── docs/
-│   └── arch/
-│       ├── done/                          # 완료된 명세 (1~11번)
-│       └── env/
-│           └── ENV_GPU.md
-├── worker/
-│   ├── Dockerfile                     # 통합 GPU Dockerfile (CUDA 12.1, Python 3.12)
-│   ├── requirements.txt
+├── CLAUDE.md                          # AI 개발 규칙 (코딩 컨벤션, 하드 제약)
+├── README.md
+├── env/                               # ★ Docker Compose 단위
+│   ├── docker-compose.yml             # 11개 서비스 정의 (RTX 3090 GPU)
+│   ├── .env / .env.example
+│   └── Dockerfile.comfyui             # ComfyUI 이미지 (CUDA, LTX-2 노드)
+├── backend/                           # Spring Boot 3.3 REST API (Java)
+│   └── src/main/
+│       ├── java/com/wagglebot/
+│       │   ├── controller/            # Inbox/Editor/Gallery/Analytics/Settings/Progress/LlmLog/Media
+│       │   ├── domain/  job/  settings/  config/  common/  exception/
+│       └── resources/db/migration/    # Flyway (V1__jobs_table, V2__base_schema, …)
+├── frontend/                          # Next.js 14 어드민 대시보드 (TypeScript)
+│   ├── app/(admin)/admin/             # inbox / editor / gallery / analytics / settings / llm-logs / progress
+│   └── lib/                           # types, API 클라이언트
+├── worker/                            # Python 워커 모노레포
+│   ├── Dockerfile                     # 통합 GPU Dockerfile (CUDA, Python 3.12)
 │   ├── main.py                        # 크롤러 진입점
-│   ├── scheduler.py
-│   ├── crawlers/
-│   │   ├── __init__.py                # 크롤러 자동 등록 (explicit imports)
-│   │   ├── base.py                    # BaseCrawler (공통 헬퍼 + retry + 스코어링)
-│   │   ├── nate_pann.py               # 네이트판
-│   │   ├── bobaedream.py              # 뽐뿌
-│   │   ├── dcinside.py                # DC인사이드
-│   │   ├── fmkorea.py                 # FM코리아
-│   │   ├── plugin_manager.py          # CrawlerRegistry (등록/조회)
-│   │   └── ADDING_CRAWLER.md         # 신규 크롤러 추가 가이드
+│   ├── crawlers/                      # base(retry+스코어링) · nate_pann · bobaedream · dcinside · fmkorea · plugin_manager
 │   ├── db/
-│   │   ├── models.py                  # Post/Comment/Content/ScriptData + PostStatus
+│   │   ├── models.py                  # Post/Comment/Content/LLMLog/ScriptData + PostStatus
 │   │   ├── session.py
-│   │   └── migrations/
-│   │       ├── runner.py              # 통합 마이그레이션 러너 (schema_migrations 추적)
-│   │       ├── 001_images_contents.sql
-│   │       ├── 002_add_llm_logs.sql
-│   │       └── 003_add_variant_fields.sql
-│   ├── ai_worker/
-│   │   ├── main.py                    # 폴링 메인 루프 + Fish Speech 헬스체크
-│   │   ├── processor.py               # asyncio 파이프라인 오케스트레이터
-│   │   ├── gpu_manager.py             # 2막 VRAM 관리 (LLM/TTS/VIDEO)
-│   │   ├── pipeline/                  # 8-Phase 콘텐츠 파이프라인
-│   │   │   ├── content_processor.py   # Phase 1~8 통합 진입점
-│   │   │   ├── resource_analyzer.py   # Phase 1: 이미지:텍스트 비율 분석
-│   │   │   ├── llm_chunker.py         # Phase 2: LLM 의미 단위 청킹
-│   │   │   ├── text_validator.py      # Phase 3: max_chars 검증 + 한국어 분할
-│   │   │   └── scene_director.py      # Phase 4: 씬 배분 + 감정 태그 + video_mode 할당
-│   │   ├── video/                     # LTX-2 비디오 생성
-│   │   │   ├── comfy_client.py        # ComfyUI HTTP/WebSocket 클라이언트
-│   │   │   ├── prompt_engine.py       # 한국어 → 영어 비디오 프롬프트 (9개 mood)
-│   │   │   ├── manager.py             # 씬별 비디오 생성 + 4단계 폴백 재시도
-│   │   │   ├── image_filter.py        # 이미지 I2V 적합성 판별
-│   │   │   ├── video_utils.py         # 클립 리사이즈/루프/트림, 프레임 규칙 검증
-│   │   │   └── workflows/             # ComfyUI LTX-2 워크플로우 JSON
-│   │   │       ├── t2v_ltx2.json      # T2V 풀 모델 (20스텝, 1280x720)
-│   │   │       ├── t2v_ltx2_distilled.json # Distilled (8스텝, CFG=1)
-│   │   │       ├── i2v_ltx2.json      # I2V (첫 프레임 주입)
-│   │   │       └── t2v_ltx2_upscale.json  # 2-Stage 업스케일
-│   │   ├── llm/                       # LLM 호출 / 로깅
-│   │   │   ├── client.py              # 쇼츠 대본 생성 + call_ollama_raw()
-│   │   │   └── logger.py              # LLM 호출 이력 DB 저장
-│   │   ├── tts/                       # TTS 엔진
-│   │   │   ├── fish_client.py         # Fish Speech 1.5 HTTP 클라이언트
-│   │   │   └── base.py / edge_tts.py / kokoro.py / gptsovits.py  # 레거시 엔진
-│   │   └── renderer/                  # 영상 / 이미지 렌더링
-│   │       ├── layout.py              # FFmpeg 렌더러 (하이브리드 합성: 정적+비디오)
-│   │       ├── video.py               # 레거시 렌더러 (프리뷰용)
-│   │       ├── subtitle.py            # ASS 동적 자막
-│   │       └── thumbnail.py           # 썸네일 자동 생성
-│   ├── uploaders/
-│   │   ├── base.py                    # BaseUploader + UploaderRegistry
-│   │   ├── youtube.py                 # YouTube Shorts 업로더
-│   │   ├── uploader.py
-│   │   └── ADDING_UPLOADER.md        # 신규 업로더 추가 가이드
-│   ├── analytics/
-│   │   ├── collector.py               # YouTube Analytics 수집
-│   │   └── feedback.py                # 성과 기반 LLM 피드백 루프
-│   ├── dashboard/
-│   ├── dashboard_worker/
-│   ├── monitoring/
-│   │   ├── alerting.py
-│   │   └── daemon.py
+│   │   └── migrations/                # (레거시) Python 마이그레이션 러너
+│   ├── ai_worker/                     # 8-Phase AI 파이프라인 (패키지 경로 import)
+│   │   ├── core/                      # main(진입점) · processor(루프) · gpu_manager · shutdown
+│   │   ├── llm/transport.py           # call_llm / pick_model / resolve_model_id (CLI·API 백엔드)
+│   │   ├── script/                    # client · chunker · normalizer · parser · logger
+│   │   ├── scene/                     # director · validator · analyzer
+│   │   ├── pipeline/content_processor.py  # Phase 1~8 통합 진입점
+│   │   ├── tts/                       # fish_client · normalizer · number_reader
+│   │   ├── video/                     # manager · comfy_client · prompt_engine · image_filter · video_utils · workflows/
+│   │   └── renderer/                  # composer(진입점) · layout · _frames · _tts · _encode · thumbnail
+│   ├── llm/                           # ★ llm-worker 게이트웨이 (Spring Boot, claude CLI 브릿지)
+│   ├── uploaders/                     # base(UploaderRegistry) · youtube · uploader
+│   ├── analytics/                     # collector(YouTube Analytics) · feedback(LLM 피드백 루프)
+│   ├── dashboard_worker/              # jobs 테이블 폴링 실행 데몬
+│   ├── monitoring/                    # alerting · daemon
 │   └── test/
-│       ├── test_tts.py                # Fish Speech 단독 테스트
-│       ├── test_scene_policy.py       # Mood 씬 정책 단위 테스트
-│       ├── test_scene_policy_visual.py # 시각적 렌더링 테스트 (PNG/MP4 출력)
-│       └── run_scene_scenarios.py     # 9개 Mood 시나리오 통합 실행
+├── telegram/                          # 텔레그램 브리지 봇 (Node/TypeScript)
+├── config/                            # 설정 허브
+│   ├── settings.py                    # 전역 설정 (도메인 모듈 re-export)
+│   ├── crawler.py / monitoring.py     # 도메인별 설정
+│   ├── pipeline.json                  # 런타임 파이프라인 설정 (대시보드 편집)
+│   ├── credentials.json               # API 키 / OAuth 토큰
+│   ├── layout.json                    # 렌더러 레이아웃 (Single Source of Truth)
+│   ├── scene_policy.json              # Mood별 씬 정책 (9개 프리셋)
+│   └── video_styles.json              # Mood별 비주얼 스타일
 ├── assets/
-│   ├── backgrounds/                   # 9:16 배경 영상
-│   ├── fonts/
-│   ├── image/                         # Mood별 Intro/Outro 이미지 (anger/controversy/daily/horror/humor/info/sadness/shock/touching)
+│   ├── backgrounds/  fonts/  image/   # 배경 영상 · 폰트 · Mood Intro/Outro
 │   ├── bgm/                           # Mood별 BGM (9개 카테고리)
-│   └── voices/                        # Fish Speech 참조 오디오 (WAV)
-├── checkpoints/
-│   ├── fish-speech-1.5/               # Fish Speech 1.5 모델 파일
-│   ├── ltx-2/                         # LTX-2 19B FP8 체크포인트 (Full + Distilled)
-│   ├── text_encoders/                 # Gemma 3 12B 텍스트 인코더 (Q4)
-│   ├── latent_upscale_models/         # LTX-2 Spatial/Temporal 업스케일러
-│   └── loras/                         # LTX-2 Distilled LoRA
-├── config/
-│   ├── settings.py                    # 전역 설정 허브 (도메인별 모듈 re-export)
-│   ├── crawler.py                     # 크롤러 설정 (USER_AGENTS, REQUEST_HEADERS 등)
-│   ├── monitoring.py                  # 모니터링/알림 임계값
-│   ├── layout.json                    # 렌더러 레이아웃 제약 (Single Source of Truth)
-│   └── scene_policy.json              # Mood별 씬 정책 (9개 프리셋, 에셋·BGM·레이아웃 매핑)
-├── env/
-│   └── Dockerfile.comfyui             # ComfyUI Docker 이미지 (CUDA 12.6, LTX-2 노드)
-└── scripts/
-    ├── setup_docker_gpu.sh
-    ├── download_fish_speech.sh        # Fish Speech 모델 다운로드
-    └── download_ltx2.sh              # LTX-2 19B + Gemma 3 + 업스케일러 다운로드
+│   ├── voices/                        # Fish Speech 참조 오디오 (WAV)
+│   └── media/                         # 생성물 (tmp/videos 등, ComfyUI 공유 볼륨)
+├── checkpoints/                       # 모델 파일 (Fish Speech / LTX-2 / Gemma 3 / 업스케일러)
+├── scripts/                           # setup_docker_gpu · download_fish_speech · download_ltx2 · youtube_auth · tiktok_auth
+└── docs/                              # 상세 문서 (architecture / pipeline / database / api / services / config)
 ```
 
 ---
@@ -335,9 +336,10 @@ WaggleBot/
 
 ```bash
 # 항상 --tail 옵션 사용 (토큰/메모리 낭비 방지)
-docker compose logs --tail 50 ai_worker
-docker compose logs --tail 50 fish-speech
-docker compose logs --tail 50 crawler
+docker compose -f env/docker-compose.yml logs --tail 50 ai_worker
+docker compose -f env/docker-compose.yml logs --tail 50 llm-worker
+docker compose -f env/docker-compose.yml logs --tail 50 fish-speech
+docker compose -f env/docker-compose.yml logs --tail 50 crawler
 
 # GPU 사용 현황
 nvidia-smi
@@ -345,6 +347,14 @@ nvidia-smi
 
 ---
 
-## TTS
+## 상세 문서
 
-Fish Speech 1.5 컨테이너가 `docker-compose.yml`에 포함되어 있으며, zero-shot 음성 클로닝을 통해 TTS 오디오를 생성합니다.
+| 문서 | 내용 |
+|------|------|
+| [`docs/architecture.md`](docs/architecture.md) | 시스템 전체 구조, 서비스 흐름도, 기술 스택, Post 상태 전이, VRAM 배분 |
+| [`docs/pipeline.md`](docs/pipeline.md) | 8-Phase AI 파이프라인 상세, LLM 모델 라우팅, 4단계 폴백, 피드백 루프 |
+| [`docs/database.md`](docs/database.md) | DB 스키마 ER, 테이블 컬럼, ScriptData JSON 구조, SQLAlchemy 패턴 |
+| [`docs/api.md`](docs/api.md) | llm-worker REST API 명세, Fish Speech / ComfyUI API |
+| [`docs/services.md`](docs/services.md) | Docker 서비스별 포트/볼륨/환경변수/의존성, 시작 순서 |
+| [`docs/config.md`](docs/config.md) | settings.py 변수, pipeline.json / scene_policy.json / layout.json 키 설명 |
+| [`docs/implementation-status.md`](docs/implementation-status.md) | 구현 완료 vs 미구현 현황 |
