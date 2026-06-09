@@ -6,4 +6,3 @@ from ai_worker.scene.director import (  # noqa: F401
     filter_itv_candidates, validate_adjacency, validate_llm_output,
 )
 from ai_worker.scene.validator import validate_and_fix, smart_split_korean  # noqa: F401
-from ai_worker.scene.strategy import SceneMix  # noqa: F401

@@ -70,7 +70,7 @@ MAX_RETRY_COUNT = int(os.getenv("MAX_RETRY_COUNT", "3"))
 # ---------------------------------------------------------------------------
 LLM_WORKER_URL: str = os.getenv("LLM_WORKER_URL", "http://llm-worker:8090")
 DEFAULT_LLM_MODEL: str = os.getenv("LLM_MODEL", "haiku")
-MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "media")))
+MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "assets" / "media")))
 ASSETS_DIR = Path(os.getenv("ASSETS_DIR", str(_PROJECT_ROOT / "assets")))
 
 # TTS 엔진별 목소리 프리셋

@@ -42,14 +42,13 @@ ai_worker/
 │   ├── normalizer.py        #   ensure_comments(), split_comment_lines()
 │   ├── chunker.py           #   chunk_with_llm() — Phase 2 LLM 의미 단위 청킹
 │   ├── logger.py            #   LLMCallTimer, log_llm_call() → llm_logs 테이블
-│   └── settings.yaml        #   Ollama 파라미터, 품질 기준, 프롬프트 버전
+│   └── settings.yaml        #   LLM 파라미터, 품질 기준, 프롬프트 버전
 │
 ├── scene/                   # 씬 분석·배분·검증
 │   ├── __init__.py
 │   ├── analyzer.py          #   Phase 1: analyze_resources() → ResourceProfile
 │   ├── director.py          #   Phase 4+4.5: SceneDirector + assign_video_modes()
 │   ├── validator.py         #   Phase 3: validate_and_fix() + smart_split_korean()
-│   ├── strategy.py          #   SceneMix 데이터클래스 (씬 구성 전략)
 │   └── settings.yaml        #   전략 임계값, 스택 크기, 강조 키워드
 │
 ├── tts/                     # TTS 음성 합성 (Fish Speech)
@@ -76,8 +75,7 @@ ai_worker/
 │   ├── _frames.py           #   PIL 프레임 렌더러 (intro/image_text/text_only/outro)
 │   ├── _tts.py              #   TTS 청크 생성·병합 (FFmpeg concat)
 │   ├── _encode.py           #   FFmpeg 인코딩·세그먼트 (h264_nvenc)
-│   ├── subtitle.py          #   ASS 동적 자막 (4 mood 프리셋)
-│   ├── thumbnail.py         #   YouTube 썸네일 1280×720 (4 스타일)
+│   └── thumbnail.py         #   YouTube 썸네일 1280×720 (4 스타일)
 │   └── settings.yaml        #   코덱, 품질, FPS, 오디오, 썸네일
 │
 ├── pipeline/                # Phase 1~7 오케스트레이션
@@ -261,11 +259,11 @@ COLLECTED → EDITING → APPROVED → PROCESSING → PREVIEW_RENDERED → RENDE
 
 ### script/ — LLM 클라이언트 + 대본 파싱
 
-Ollama HTTP 통신, 대본 생성, JSON 파싱·복구, 댓글 정규화, 호출 로깅.
+Claude(llm-worker) HTTP 통신, 대본 생성, JSON 파싱·복구, 댓글 정규화, 호출 로깅.
 
 | 파일 | 핵심 기능 |
 |------|----------|
-| `client.py` | `generate_script()` → ScriptData, `call_ollama_raw()` → 원시 텍스트 |
+| `client.py` | `generate_script()` → ScriptData, `call_ollama_raw()` (= `call_llm` 래퍼) → 원시 텍스트 |
 | `parser.py` | `parse_script_json()` — 3단계 JSON 파싱 (loads → repair → regex) |
 | `normalizer.py` | `ensure_comments()` — LLM 댓글 누락 시 자동 주입, `split_comment_lines()` |
 | `chunker.py` | `chunk_with_llm()` — Phase 2 LLM 의미 단위 청킹 |
@@ -284,7 +282,6 @@ Phase 1(자원 분석), 3(텍스트 검증), 4+4.5(씬 배분) 실행 주체.
 | `analyzer.py` | 1 | `analyze_resources()` → `ResourceProfile` (이미지:텍스트 비율) |
 | `validator.py` | 3 | `validate_and_fix()` + `smart_split_korean()` (5단계 자연 분할) |
 | `director.py` | 4, 4.5 | `SceneDirector.direct()` + `assign_video_modes()` (I2V/T2V) |
-| `strategy.py` | — | `SceneMix` 데이터클래스 (향후 LLM 씬 구성 전략용) |
 
 **SceneDecision**: 씬의 모든 정보를 담는 데이터클래스 — type, text_lines, image_url, mood, video_mode, video_prompt, video_clip_path 등 15+ 필드.
 
@@ -327,7 +324,6 @@ Phase 8 실행 주체. `layout.py` 오케스트레이터가 3개 내부 모듈(`
 | `_frames.py` | PIL 프레임 렌더러 (intro/image_text/text_only/image_only/outro) |
 | `_tts.py` | TTS 청크 생성·병합 (`_generate_tts_chunks`, `_merge_chunks`) |
 | `_encode.py` | FFmpeg 인코딩 (`_render_video_segment`, `_render_static_segment`, `_resolve_codec`) |
-| `subtitle.py` | ASS 동적 자막 (4 mood 프리셋 + 글자 수 비례 타이밍) |
 | `thumbnail.py` | YouTube 썸네일 1280×720 (4 스타일: dramatic/question/funny/news) |
 
 **렌더링 파이프라인**: 문장 구조화 → 베이스 프레임 → 이미지 다운로드 → TTS 생성 → 청크 병합 → 줄바꿈 → PIL 프레임 → 비디오/정적 세그먼트 → concat → FFmpeg 인코딩
@@ -353,9 +349,10 @@ ComfyUI 서버에 LTX-2 워크플로우를 제출하여 T2V/I2V 비디오 클립
 
 ---
 
-### llm/ — deprecated
+### llm/ — deprecated (하위호환 re-export)
 
-`ai_worker.script`으로 이전 완료. `__init__.py`가 `DeprecationWarning`과 함께 re-export를 제공하여 기존 import 경로를 유지한다. 모든 외부 참조 수정 후 삭제 예정.
+`ai_worker.script`으로 이전 완료. `__init__.py`가 `DeprecationWarning`과 함께 re-export를 제공한다.
+신규 코드는 반드시 `from ai_worker.script.client import call_ollama_raw`를 사용할 것.
 
 ---
 
@@ -389,7 +386,6 @@ ComfyUI 서버에 LTX-2 워크플로우를 제출하여 T2V/I2V 비디오 클립
               ├── scene/analyzer ─────────── (standalone)
               ├── scene/validator ────────── (standalone)
               ├── scene/director ─────────── video/image_filter
-              └── scene/strategy ─────────── (standalone)
               │
               ▼
          ai_worker/pipeline
@@ -407,7 +403,6 @@ ComfyUI 서버에 LTX-2 워크플로우를 제출하여 T2V/I2V 비디오 클립
               ├── _frames.py ────────────── layout (_load_font, lazy import)
               ├── _tts.py ───────────────── (standalone)
               ├── _encode.py ────────────── (standalone)
-              ├── subtitle.py ───────────── (standalone)
               └── thumbnail.py ──────────── (standalone)
               │
               ▼
@@ -425,7 +420,7 @@ ComfyUI 서버에 LTX-2 워크플로우를 제출하여 T2V/I2V 비디오 클립
 | `video/` ↛ `tts/` | 비디오 모듈은 TTS 모듈을 절대 import하지 않음 |
 | `tts/` ↛ `video/` | TTS 모듈은 비디오 모듈을 절대 import하지 않음 |
 | `_frames.py` → `layout.py` | lazy import만 허용 (함수 내부에서 `_load_font` import) |
-| Ollama HTTP | `script/client.py`의 `call_ollama_raw()` / `generate_script()`만 사용 |
+| Claude HTTP | `script/client.py`의 `call_ollama_raw()` (= call_llm 래퍼) / `generate_script()`만 사용 |
 | 설정 | `config/settings.py` 경유 — 로직 내 `os.getenv()` 금지 |
 | 파일 경로 | `pathlib.Path` 필수 — `os.path` 금지 |
 | 로깅 | `logging.getLogger(__name__)` — `print()` 금지 |
@@ -440,10 +435,9 @@ RTX 3090 24GB에서 모든 AI 모델을 운영하기 위한 2막 구조.
 
 ```
 ┌─── 1막: LLM (Phase 1~6) ──────────────────────────────────────┐
-│  Ollama qwen2.5:14b 8-bit (~14GB)                              │
+│  Claude claude CLI (llm-worker, HTTP :8090) — VRAM 없음        │
 │  ├── Phase 2: LLM 청킹 (대본 생성)                             │
 │  └── Phase 6: 비디오 프롬프트 (한→영 변환)                      │
-│  ※ Ollama 서버 프로세스 — ai_worker VRAM 직접 점유 아님         │
 └────────────────────────────────────────────────────────────────┘
           │
           ▼  _clear_vram_for_video()
@@ -460,7 +454,7 @@ RTX 3090 24GB에서 모든 AI 모델을 운영하기 위한 2막 구조.
 | 제약 | 값 |
 |------|-----|
 | 동시 모델 합계 상한 | 20GB (24GB - 4GB 안전마진) |
-| LLM VRAM | ~14GB (qwen2.5:14b 8-bit) |
+| LLM VRAM | 0GB (Claude API — llm-worker 컨테이너, 원격 실행) |
 | TTS VRAM | ~5GB (Fish Speech 1.5) |
 | VIDEO VRAM | ~12GB (LTX-2 GGUF Q4 + ComfyUI --lowvram) |
 
@@ -540,8 +534,8 @@ core/main.py
 | **워커** | `AI_POLL_INTERVAL` | 10 (초) |
 | | `CUDA_CONCURRENCY` | 1 |
 | | `MAX_RETRY_COUNT` | 3 |
-| **LLM** | `OLLAMA_HOST` | `http://localhost:11434` |
-| | `OLLAMA_MODEL` | `qwen2.5:14b` |
+| **LLM** | `LLM_WORKER_URL` | `http://llm-worker:8090` |
+| | `LLM_DEFAULT_MODEL` | `haiku` / `sonnet` |
 | **TTS** | `FISH_SPEECH_URL` | `http://fish-speech:8080` |
 | | `VOICE_DEFAULT` | `"default"` |
 | **비디오** | `VIDEO_GEN_ENABLED` | `false` |
@@ -593,7 +587,9 @@ services:
   db:             # MariaDB 11 (3306)
   fish-speech:    # TTS 서버 (8080) — ~5GB VRAM
   comfyui:        # LTX-2 비디오 생성 (8188) — ~12.7GB VRAM (--lowvram)
-  dashboard:      # Streamlit UI (8501)
+  backend:        # Spring Boot API (8080)
+  frontend:       # Next.js 14 대시보드 (3000)
+  dashboard_worker: # jobs 폴링 데몬
   crawler:        # 크롤링 루프
   monitoring:     # 헬스체크/알림
 ```
@@ -609,7 +605,7 @@ services:
 
 | 서비스 | 프로토콜 | 사용 Phase |
 |--------|---------|-----------|
-| Ollama | HTTP `POST /api/generate` | Phase 2, 6 |
+| llm-worker (Claude) | HTTP `POST :8090/v1/invoke` | Phase 2, 6 |
 | Fish Speech | HTTP `POST /v1/tts` | Phase 5 |
 | ComfyUI | HTTP `POST /prompt` + polling | Phase 7 |
 | MariaDB | SQLAlchemy | 전 Phase (상태 관리) |

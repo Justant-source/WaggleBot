@@ -15,7 +15,6 @@ ai_worker/renderer/
 ├── _tts.py        # TTS 청크 생성/병합 — 5 함수 (137줄)
 ├── _encode.py     # FFmpeg 인코딩 — 6 함수 (175줄)
 ├── composer.py    # 렌더링 진입점 — compose_video/compose_thumbnail (68줄)
-├── subtitle.py    # ASS 동적 자막 생성 (315줄)
 ├── thumbnail.py   # YouTube 썸네일 생성 1280×720 (447줄)
 ├── settings.yaml  # 도메인별 설정
 └── README.md      # (이 파일)
@@ -174,30 +173,6 @@ TTS 오디오 청크의 생성, 캐싱, 병합을 담당.
 ```python
 def compose_video(post, scenes, output_path=None, **kwargs) -> Path: ...
 def compose_thumbnail(hook_text, images, output_path, style="dramatic") -> Path: ...
-```
-
-### subtitle.py (315줄) — ASS 자막 생성
-
-| 함수 | 역할 |
-|------|------|
-| `build_ass(hook, body, closer, duration, mood, fontname, width, height)` | ASS 자막 문자열 생성 |
-| `write_ass_file(...)` | ASS 파일 UTF-8-BOM 저장 |
-| `get_comment_timings(hook, body, closer, duration)` | 댓글 구간 (start, end) 타이밍 |
-
-**스타일 프리셋 (4종 mood):**
-
-| mood | 특징 |
-|------|------|
-| `funny` (기본) | outline + shadow |
-| `shocking` | 빨간 아웃라인 강조 |
-| `serious` | 반투명 배경 (뉴스 스타일) |
-| `heartwarming` | 부드러운 노란 강조 |
-
-**3막 자막 구조:**
-```
-1막 Hook    → 강한 페이드인 (Hook 스타일)
-2막 Body    → 댓글 → CommentBubble(상단), 본문 → Default(하단)
-3막 Closer  → 긴 페이드아웃 (Closer 스타일)
 ```
 
 ### thumbnail.py (447줄) — 썸네일 생성

@@ -1,5 +1,6 @@
 package com.wagglebot.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.wagglebot.common.PostStatus;
 import com.wagglebot.common.converter.JsonNodeConverter;
@@ -54,6 +55,7 @@ public class Post {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    @JsonIgnore
     @OneToMany(mappedBy = "post", fetch = FetchType.LAZY)
     private List<Comment> comments;
 }

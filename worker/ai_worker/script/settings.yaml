@@ -1,4 +1,4 @@
-# ── Ollama 호출 파라미터 ──
+# ── LLM(Claude) 호출 파라미터 ──
 generation:
   num_predict: 2048
   temperature: 0.7

@@ -15,8 +15,11 @@ secrets/
 config/credentials.json
 config/youtube_token.json
 config/tiktok_token.json
-media/
 checkpoints/*
+
+# NVIDIA 드라이버가 자동 생성하는 UMD 로그 디렉토리
+NVIDIA Corporation/
+fix_nvidia_junction.bat
 
 # --- Claude AI Agent Team (협업 설정) ---
 # 1. 임시 제안서 및 개인 로컬 보안 설정은 제외

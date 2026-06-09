@@ -31,14 +31,14 @@ Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만 실행.
 |------|------|
 | 크롤러 | `worker/crawlers/` — base.py (retry + 스코어링), nate_pann, bobaedream, dcinside, fmkorea, plugin_manager |
 | DB | `worker/db/models.py` (Post/Comment/Content/LLMLog/ScriptData/PostStatus), `worker/db/session.py`, `worker/db/migrations/` |
-| AI 워커 | `worker/ai_worker/processor.py` (루프), `worker/ai_worker/main.py` (진입점), `gpu_manager.py` |
+| AI 워커 | `worker/ai_worker/core/main.py` (진입점), `worker/ai_worker/core/processor.py` (루프), `worker/ai_worker/core/gpu_manager.py` |
 | LLM | `worker/ai_worker/llm/transport.py` (call_llm, pick_model, resolve_model_id), `worker/ai_worker/script/client.py` (call_ollama_raw, generate_script), `worker/ai_worker/script/logger.py` |
-| TTS | `worker/ai_worker/tts/` (base, fish_client, edge_tts, kokoro, gptsovits) |
+| TTS | `worker/ai_worker/tts/` — fish_client.py (Fish Speech HTTP), normalizer.py (한국어 전처리), number_reader.py (숫자 읽기) |
 | 비디오 | `worker/ai_worker/video/` — manager.py (오케스트레이션), comfy_client.py (ComfyUI 통신), prompt_engine.py (한→영 프롬프트), image_filter.py (I2V 적합성), video_utils.py (FFmpeg 후처리) |
-| 렌더링 | `worker/ai_worker/renderer/` — layout.py (하이브리드 합성), video.py (레거시/프리뷰), subtitle.py (ASS 자막), thumbnail.py |
-| 파이프라인 | `worker/ai_worker/pipeline/` — content_processor (Phase 1~8 통합), scene_director, text_validator, llm_chunker, resource_analyzer |
+| 렌더링 | `worker/ai_worker/renderer/` — composer.py (진입점), layout.py (오케스트레이터), _frames.py / _tts.py / _encode.py (내부 모듈), thumbnail.py |
+| 파이프라인 | `worker/ai_worker/pipeline/` — content_processor.py (Phase 1~8 통합); 씬 관련: `scene/`(director, validator, analyzer), 청킹: `script/chunker.py` |
 | 업로더 | `worker/uploaders/` — base.py (UploaderRegistry), youtube.py, uploader.py |
-| 대시보드 | `worker/dashboard/app.py` (수신함/편집실/갤러리/분석/설정) |
+| 대시보드 | `frontend/` (Next.js 14 UI) + `backend/` (Spring Boot API) + `worker/dashboard_worker/` (jobs 폴링 데몬) |
 | 분석 | `worker/analytics/collector.py`, `feedback.py` (성과→LLM 인사이트→feedback_config.json→대본 주입) |
 | 모니터링 | `worker/monitoring/alerting.py`, `daemon.py` |
 | 설정 | `config/settings.py` (허브), `crawler.py`, `monitoring.py`, `layout.json`, `scene_policy.json`, `video_styles.json` |
@@ -81,7 +81,7 @@ with SessionLocal() as db:  # DB 항상 with 블록
 ```
 
 - `logging.getLogger(__name__)` — print 금지
-- 절대경로 import. ai_worker는 **패키지 경로**: `from ai_worker.llm.client import call_ollama_raw`
+- 절대경로 import. ai_worker는 **패키지 경로**: `from ai_worker.script.client import call_ollama_raw`
 - `pathlib.Path` 필수 — os.path 금지
 - 설정은 `config/` 경유 — 로직 내 `os.getenv()` 금지
 - 타입힌트 모든 함수 필수, 가드절로 중첩 최소화

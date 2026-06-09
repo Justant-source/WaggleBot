@@ -93,7 +93,7 @@ services:
       - ../checkpoints/diffusion_models:/comfyui/models/diffusion_models
       - ../checkpoints/vae:/comfyui/models/vae
       - ../worker/ai_worker/video/workflows:/comfyui/custom_workflows
-      - ../media/tmp/videos:/comfyui/output
+      - ../assets/media/tmp/videos:/comfyui/output
     # GGUF Q4 전환 (2026-03-03):
     #   UNet: GGUF Q4(~12.7GB) — --lowvram streaming (FP8 20GB 대비 4x 작은 데이터)
     #   텍스트 인코더: Gemma 3 12B BF16 — CPU 실행 (max_length=256으로 ~3분)
@@ -135,7 +135,7 @@ services:
     volumes:
       - ../worker:/app
       - ../config:/app/config
-      - ../media:/app/media
+      - ../assets/media:/app/media
       - ../assets:/app/assets
       - /app/venv
       - /app/__pycache__
@@ -231,7 +231,7 @@ services:
 
   llm-worker:
     build:
-      context: ../worker/llm
+      context: ../llm-worker
     container_name: llm-worker
     restart: unless-stopped
     ports:
@@ -262,7 +262,7 @@ services:
         condition: service_healthy
     volumes:
       - ../config:/app/config
-      - ../media:/app/media
+      - ../assets/media:/app/media
     environment:
       SPRING_DATASOURCE_URL: "jdbc:mariadb://db:3306/wagglebot"
       SPRING_DATASOURCE_USERNAME: "wagglebot"
@@ -290,7 +290,7 @@ services:
     volumes:
       - ../worker:/app
       - ../config:/app/config
-      - ../media:/app/media
+      - ../assets/media:/app/media
       - /app/venv
       - /app/__pycache__
     depends_on:
