@@ -28,15 +28,18 @@ public class SettingsService {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP_REF = new TypeReference<>() {};
 
-    private static final Map<String, Object> DEFAULTS = Map.of(
-        "llm_model", "haiku",
-        "llm_model_overrides", "{}",
-        "tts_engine", "fish-speech",
-        "tts_voice", "yura",
-        "auto_approve_threshold", 80,
-        "max_chars_per_line", 20,
-        "max_body_items", 23,
-        "llm_backend", "cli"
+    private static final Map<String, Object> DEFAULTS = Map.ofEntries(
+        Map.entry("llm_model", "haiku"),
+        Map.entry("llm_model_overrides", "{}"),
+        Map.entry("llm_backend", "cli"),
+        Map.entry("llm_api_base_url", "https://api.anthropic.com/v1"),
+        Map.entry("tts_engine", "fish-speech"),
+        Map.entry("tts_voice", "yura"),
+        Map.entry("auto_approve_enabled", "false"),
+        Map.entry("auto_approve_threshold", "80"),
+        Map.entry("auto_upload", "false"),
+        Map.entry("use_content_processor", "false"),
+        Map.entry("max_chars_per_line", "20")
     );
 
     public SettingsService(@Value("${app.config-dir:/app/config}") String configDirStr) {

@@ -66,6 +66,7 @@ export type JobStatus = 'PENDING' | 'RUNNING' | 'DONE' | 'ERROR'
 export type JobType =
   | 'GENERATE_SCRIPT' | 'TTS_PREVIEW' | 'AI_FITNESS' | 'MANUAL_CRAWL'
   | 'HD_RENDER' | 'UPLOAD' | 'FETCH_YT_ANALYTICS' | 'AI_INSIGHT' | 'FEEDBACK_APPLY'
+  | 'AB_CREATE' | 'AB_EVALUATE' | 'AB_APPLY_WINNER'
 
 export interface Job {
   id: number
@@ -83,9 +84,11 @@ export interface PipelineSettings {
   llm_model_overrides: string
   tts_engine: string
   tts_voice: string
-  auto_approve_threshold: number
-  max_chars_per_line: number
-  max_body_items: number
+  auto_approve_enabled: string | boolean
+  auto_approve_threshold: number | string
+  auto_upload: string | boolean
+  max_chars_per_line: number | string
+  max_body_items: number | string
   [key: string]: unknown
 }
 

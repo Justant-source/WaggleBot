@@ -41,11 +41,13 @@ export default function EditorDetailPage({ params }: { params: { postId: string 
     if (ttsJob.status === 'DONE') {
       const path = ttsJob.result?.preview_path as string
       if (path && audioRef.current) {
-        audioRef.current.src = `/media/tmp/preview_${id}.mp3?t=${Date.now()}`
+        const webPath = `/media/${path.replace('/app/media/', '')}?t=${Date.now()}`
+        audioRef.current.src = webPath
         audioRef.current.play()
       }
       toast.success('TTS 미리듣기 준비 완료')
     }
+    if (ttsJob.status === 'ERROR') toast.error('TTS 생성 실패')
   }, [ttsJob.status])
 
   const handleSave = async () => {
