@@ -98,8 +98,10 @@ env/
 {
   "tts_engine": "fish-speech",
   "tts_voice": "yura",
+  "llm_backend": "cli",
   "llm_model": "haiku",
   "llm_model_overrides": {},
+  "llm_api_base_url": "https://api.anthropic.com",
   "video_resolution": "1080x1920",
   "video_codec": "h264_nvenc",
   "bgm_volume": "0.15",
@@ -189,8 +191,14 @@ Docker Compose가 `env/.env`에서 읽음. Python은 `settings.py`에서 `load_d
 MARIADB_ROOT_PASSWORD=wagglebot_root
 MARIADB_PASSWORD=wagglebot
 
-# Claude CLI 인증 (llm-worker)
+# LLM 백엔드 선택 (cli | api)
+LLM_BACKEND=cli                            # cli=llm-worker CLI 게이트웨이, api=Anthropic API 직접
+
+# CLI 백엔드 인증 (llm-worker)
 CLAUDE_HOST_CONFIG_DIR=/home/justant/.claude
+
+# API 백엔드 인증 (LLM_BACKEND=api 시 사용. 없으면 credentials.json의 anthropic_api_key)
+ANTHROPIC_API_KEY=sk-ant-...
 
 # AI Worker
 VIDEO_GEN_ENABLED=false
@@ -201,7 +209,6 @@ LLM_MODEL=haiku
 # Telegram
 TELEGRAM_BOT_TOKEN=...
 ALLOWED_USER_IDS=...
-ANTHROPIC_API_KEY=...
 
 # 알림
 SLACK_WEBHOOK_URL=

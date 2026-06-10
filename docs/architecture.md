@@ -35,9 +35,10 @@ flowchart TD
         DW[dashboard_worker<br/>Jobs 폴링 데몬]
     end
 
-    subgraph LLM["LLM 게이트웨이"]
+    subgraph LLM["LLM 백엔드 (cli 또는 api)"]
         LLM_W[llm-worker<br/>Java :8090<br/>Claude CLI subprocess]
         CLAUDE_CLI[Claude CLI<br/>haiku / sonnet]
+        ANTHROPIC_API[Anthropic API<br/>직접 호출]
     end
 
     subgraph GPU_Services["GPU 서비스 (RTX 3090)"]
@@ -118,8 +119,8 @@ stateDiagram-v2
     PREVIEW_RENDERED --> DECLINED : 거절
     RENDERED --> UPLOADED : YouTube 업로드 완료
     RENDERED --> FAILED : 업로드 실패
-    PROCESSING --> FAILED : 파이프라인 실패
-    FAILED --> APPROVED : 재시도 (retryCount++)
+    PROCESSING --> FAILED : 파이프라인 실패 (last_error 저장)
+    FAILED --> APPROVED : 재시도 (retryCount++, last_error 초기화)
 ```
 
 ## GPU VRAM 배분 (RTX 3090 24GB)
@@ -139,7 +140,7 @@ pie title VRAM 사용 배분 (~17GB / 24GB)
 | **백엔드** | Java 21, Spring Boot 3.3, MariaDB 11, Flyway |
 | **프론트엔드** | Next.js 14 (App Router), TypeScript |
 | **LLM 게이트웨이** | Java 21, Spring Boot 3.3, Claude CLI subprocess |
-| **LLM** | Claude haiku-4-5 / sonnet-4-6 (Anthropic 구독) |
+| **LLM** | Claude haiku-4-5 / sonnet-4-6 — CLI 백엔드(구독) 또는 API 백엔드(`ANTHROPIC_API_KEY`) |
 | **TTS** | Fish Speech v1.5.1 (zero-shot 클로닝) |
 | **비디오** | ComfyUI + LTX-2 19B FP8/GGUF Q4 |
 | **렌더링** | FFmpeg (h264_nvenc) |

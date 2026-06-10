@@ -17,6 +17,7 @@ erDiagram
         ENUM status
         DOUBLE engagement_score
         INT retry_count
+        VARCHAR(1000) last_error
         DATETIME created_at
         DATETIME updated_at
     }
@@ -96,6 +97,7 @@ erDiagram
 | `status` | ENUM | `COLLECTED→EDITING→APPROVED→PROCESSING→PREVIEW_RENDERED→RENDERED→UPLOADED` |
 | `engagement_score` | DOUBLE | 스코어링: `조회×0.1 + 좋아요×2.0 + 댓글×1.5 + 베스트공감×0.5`, 6시간 반감기 |
 | `retry_count` | INT | 파이프라인 재시도 횟수 (MAX=3) |
+| `last_error` | VARCHAR(1000) | 마지막 파이프라인 실패 원인 (`repr(exc)[:1000]`). 재시도 시 NULL 초기화 |
 
 **인덱스:** `status + engagement_score DESC` (처리 대기 조회용)
 
@@ -184,6 +186,7 @@ LLM 호출 이력. 디버깅/비용 분석용.
 // PostRepository
 List<Post> findByStatusOrderByEngagementScoreDesc(PostStatus status);
 long countByStatus(PostStatus status);
+List<Post> findTop20ByStatusOrderByUpdatedAtDesc(PostStatus status);  // FAILED 최근 20건
 
 // ContentRepository
 Optional<Content> findByPostId(Long postId);

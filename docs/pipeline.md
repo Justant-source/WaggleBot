@@ -36,7 +36,7 @@ flowchart TD
         P5[Fish Speech / Edge TTS<br/>→ scene.text_lines<br/>text + audio 경로]
     end
 
-    subgraph Phase6["Phase 6: video_prompt 생성"]
+    subgraph Phase56["Phase 5 ∥ Phase 6 (VIDEO_GEN_ENABLED일 때 병렬)"]
         P6{VIDEO_GEN_ENABLED?}
         P6Y[한국어 → 영어 프롬프트 변환<br/>→ scene.video_prompt<br/>모델: haiku]
         P6N[스킵]
@@ -57,9 +57,8 @@ flowchart TD
     P1 --> P2 --> P3 --> P4 --> P45
     P45 --> P45Y & P45N
     P45Y & P45N --> P5
-    P5 --> P6
-    P6 --> P6Y & P6N
-    P6Y & P6N --> P7
+    P45Y & P45N --> P6
+    P5 & P6 --> P7
     P7 --> P7Y & P7N
     P7Y & P7N --> P8 --> END
 ```
@@ -107,18 +106,25 @@ flowchart TD
 - `image_filter` 점수 ≥ `VIDEO_I2V_THRESHOLD(0.6)` → `i2v` (Image-to-Video)
 - 미만 → `t2v` (Text-to-Video)
 
-### Phase 5 — TTS 생성
-- Fish Speech 1.5 (`http://fish-speech:8080`) 또는 Edge TTS
+### Phase 5 & 6 — TTS 생성 ∥ video_prompt 생성 (병렬 실행)
+
+`VIDEO_GEN_ENABLED=true`일 때 두 Phase가 `asyncio.gather`로 동시 실행된다.
+Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므로 안전하게 병렬화 가능.
+
+**Phase 5 — TTS 생성**
+- Fish Speech 1.5 (`http://fish-speech:8080`)
 - `config/settings.py`의 `VOICE_PRESETS`로 참조 오디오 선택
 - 결과: `scene.text_lines = [{"text": "...", "audio": "/path/to/audio.wav"}]`
-- `CUDA_CONCURRENCY=1` (기본 순차 처리)
+- Fish Speech 워밍업 센티널 (`MEDIA_DIR/tmp/fish_warmup_state.json`): 6시간 이내 재시작 시 풀 워밍업(9회 요청) 스킵
 
-### Phase 6 — video_prompt 생성
+**Phase 6 — video_prompt 생성**
 `VIDEO_GEN_ENABLED=true`일 때만 실행.
-- **모델**: `haiku` (call_type: `video_prompt`)
+- **모델**: `haiku` (call_type: `video_prompt`) — 원격 LLM, GPU 미접촉 → 스레드 풀에서 실행
 - 씬 텍스트를 영어 비디오 프롬프트로 변환
 - `config/video_styles.json`의 mood별 스타일 적용
 - 결과: `scene.video_prompt` (영문)
+
+**하트비트 (`_touch_post`)**: 각 Phase 경계에서 `posts.updated_at` 갱신. 프론트엔드 progress 페이지에서 15분 이상 미갱신 시 "응답 없음" 배지 표시.
 
 ### Phase 7 — video_clip 생성
 `VIDEO_GEN_ENABLED=true`일 때만 실행.

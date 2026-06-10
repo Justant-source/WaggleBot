@@ -5,7 +5,7 @@
 | 서비스 | Base URL | 역할 |
 |--------|----------|------|
 | `llm-worker` | `http://llm-worker:8090` | Claude CLI 게이트웨이 (완전 구현) |
-| `backend` | `http://backend:8080` | Spring Boot REST API (구현 예정) |
+| `backend` | `http://backend:8080` | Spring Boot REST API (완전 구현) |
 | `fish-speech` | `http://fish-speech:8080` | TTS 서비스 (외부 이미지) |
 | `comfyui` | `http://comfyui:8188` | 비디오 생성 (외부 이미지) |
 
@@ -122,55 +122,78 @@ flowchart LR
 
 ---
 
-## backend API (:8080) — 구현 예정
+## backend API (:8080) — 구현 완료
 
-계획된 REST 엔드포인트 (Spring Boot Controller 미구현):
+Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 
-### Posts
-
-| Method | Path | 설명 |
-|--------|------|------|
-| `GET` | `/api/posts` | 게시글 목록 (status 필터, 페이지네이션) |
-| `GET` | `/api/posts/{id}` | 게시글 상세 + content |
-| `PATCH` | `/api/posts/{id}/status` | 상태 변경 (APPROVED/DECLINED) |
-| `GET` | `/api/posts/{id}/comments` | 댓글 목록 |
-
-### Contents
+### Inbox (`/api/inbox`)
 
 | Method | Path | 설명 |
 |--------|------|------|
-| `GET` | `/api/contents/{postId}` | 콘텐츠 조회 (ScriptData 포함) |
-| `PUT` | `/api/contents/{postId}/script` | 대본 수동 편집 |
-| `POST` | `/api/contents/{postId}/approve` | 최종 승인 → 업로드 큐 등록 |
+| `GET` | `/api/inbox` | COLLECTED 게시글 목록 (engagementScore 내림차순, 페이지네이션) + tier1/2/3 카운트 |
+| `POST` | `/api/inbox/{id}/approve` | COLLECTED → EDITING + GENERATE_SCRIPT Job 생성 |
+| `POST` | `/api/inbox/{id}/decline` | → DECLINED |
+| `POST` | `/api/inbox/batch` | 배치 승인/거절. 응답: `{processed, failed:[{id,error}], action}` |
+| `POST` | `/api/inbox/{id}/analyze` | AI_FITNESS Job 생성 (게시글 적합성 분석) |
+| `POST` | `/api/inbox/crawl` | MANUAL_CRAWL Job 생성 |
+| `GET` | `/api/inbox/jobs/{jobId}` | Job 상태 폴링 |
 
-### Jobs
-
-| Method | Path | 설명 |
-|--------|------|------|
-| `POST` | `/api/jobs` | 작업 생성 (dashboard_worker 큐 등록) |
-| `GET` | `/api/jobs/{id}` | 작업 상태 조회 |
-
-### LLM Logs
+### Editor (`/api/editor`)
 
 | Method | Path | 설명 |
 |--------|------|------|
-| `GET` | `/api/llm-logs` | LLM 호출 이력 (callType/postId 필터) |
+| `GET` | `/api/editor` | EDITING 게시글 목록 |
+| `GET` | `/api/editor/{id}` | 게시글 + ScriptData + 설정 제약값 |
+| `PUT` | `/api/editor/{id}/script` | 대본 수동 저장 (ScriptDataDto) |
+| `POST` | `/api/editor/{id}/generate` | GENERATE_SCRIPT Job 생성 (model/extra_instructions 선택) |
+| `POST` | `/api/editor/{id}/tts-preview` | TTS_PREVIEW Job 생성 |
+| `POST` | `/api/editor/{id}/confirm` | EDITING → APPROVED (최종 확인) |
+| `GET` | `/api/editor/jobs/{jobId}` | Job 상태 폴링 |
 
-### Analytics
+### Gallery (`/api/gallery`)
 
 | Method | Path | 설명 |
 |--------|------|------|
-| `GET` | `/api/analytics/summary` | 상태별 게시글 수, 성공률 |
-| `GET` | `/api/analytics/performance` | YouTube 성과 지표 집계 |
+| `GET` | `/api/gallery` | PREVIEW_RENDERED/RENDERED/UPLOADED 게시글 목록 (updatedAt 내림차순) + Content |
+| `POST` | `/api/gallery/{id}/hd-render` | HD_RENDER Job 생성 |
+| `POST` | `/api/gallery/{id}/upload` | UPLOAD Job 생성 (platform 선택) |
 
-### Settings
+### Progress (`/api/progress`)
 
 | Method | Path | 설명 |
 |--------|------|------|
-| `GET` | `/api/settings/pipeline` | pipeline.json 조회 |
-| `PUT` | `/api/settings/pipeline` | pipeline.json 저장 |
-| `GET` | `/api/settings/credentials` | 플랫폼 인증 정보 조회 |
-| `PUT` | `/api/settings/credentials` | 플랫폼 인증 정보 저장 |
+| `GET` | `/api/progress` | 전체 상태별 카운트 + PROCESSING 목록 + FAILED 목록(최근 20건, lastError 포함) |
+| `POST` | `/api/progress/{id}/retry` | FAILED → APPROVED, retryCount++, lastError=null |
+
+### Analytics (`/api/analytics`)
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `GET` | `/api/analytics/funnel` | 상태별 게시글 카운트 |
+| `POST` | `/api/analytics/youtube/fetch` | FETCH_YT_ANALYTICS Job 생성 |
+| `POST` | `/api/analytics/insights` | AI_INSIGHT Job 생성 (LLM 인사이트) |
+| `POST` | `/api/analytics/feedback/apply` | FEEDBACK_APPLY Job 생성 |
+| `GET` | `/api/analytics/jobs/{jobId}` | Job 상태 폴링 |
+
+### LLM Logs (`/api/llm-logs`)
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `GET` | `/api/llm-logs` | LLM 호출 이력 (callType/postId/success 필터, createdAt 내림차순, 페이지네이션) |
+| `GET` | `/api/llm-logs/{id}` | 단건 조회 |
+
+### Settings (`/api/settings`)
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `GET` | `/api/settings` | pipeline.json 전체 조회 |
+| `PUT` | `/api/settings` | pipeline.json 저장 |
+| `GET` | `/api/settings/credentials` | 인증 정보 조회 (시크릿 마스킹) |
+| `PUT` | `/api/settings/credentials` | 인증 정보 저장 |
+
+### Media (`/api/media`)
+
+정적 파일 서빙 — `/app/media/` 경로의 오디오/비디오/썸네일 파일을 HTTP로 노출.
 
 ---
 

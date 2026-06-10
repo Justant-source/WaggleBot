@@ -71,7 +71,7 @@ Phase 8   FFmpeg 렌더링        최종 9:16 영상 + 썸네일
 
 ## 설치 가이드
 
-**RTX 3090 24GB 이상** NVIDIA GPU 환경을 지원합니다. GPU 환경 설정: [docs/arch/env/ENV_GPU.md](docs/arch/env/ENV_GPU.md)
+**RTX 3090 24GB 이상** NVIDIA GPU 환경을 지원합니다.
 
 ### 1. WSL2 + Ubuntu 설치
 
@@ -176,7 +176,7 @@ VOICE_REFERENCE_TEXTS = {
 Docker Compose 정의와 환경 변수는 모두 `env/` 디렉터리에 있습니다.
 
 ```bash
-git clone https://github.com/justant/WaggleBot.git
+git clone https://github.com/Justant-source/WaggleBot.git
 cd WaggleBot
 
 # 환경 변수 설정
@@ -358,3 +358,4 @@ nvidia-smi
 | [`docs/services.md`](docs/services.md) | Docker 서비스별 포트/볼륨/환경변수/의존성, 시작 순서 |
 | [`docs/config.md`](docs/config.md) | settings.py 변수, pipeline.json / scene_policy.json / layout.json 키 설명 |
 | [`docs/implementation-status.md`](docs/implementation-status.md) | 구현 완료 vs 미구현 현황 |
+| [`docs/improvements.md`](docs/improvements.md) | 구조 개선 작업 설계 컨텍스트 (2026-06-10) |
