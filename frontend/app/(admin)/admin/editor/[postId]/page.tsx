@@ -68,23 +68,31 @@ export default function EditorDetailPage({ params }: { params: { postId: string 
 
   const handleSave = async () => {
     if (!script) return
-    await editorApi.saveScript(id, script)
-    markClean(); toast.success('저장됨')
+    try {
+      await editorApi.saveScript(id, script)
+      markClean(); toast.success('저장됨')
+    } catch { toast.error('저장 실패') }
   }
 
   const handleGenerate = async (instructions: string) => {
-    const res = await editorApi.generate(id, instructions ? { extra_instructions: instructions } : undefined)
-    setGenerateJobId(res.jobId); toast.info('대본 생성 중...')
+    try {
+      const res = await editorApi.generate(id, instructions ? { extra_instructions: instructions } : undefined)
+      setGenerateJobId(res.jobId); toast.info('대본 생성 중...')
+    } catch { toast.error('대본 생성 요청 실패') }
   }
 
   const handleTtsPreview = async () => {
-    const res = await editorApi.ttsPreview(id, selectedVoice ? { voice: selectedVoice } : undefined)
-    setTtsJobId(res.jobId); toast.info('TTS 생성 중...')
+    try {
+      const res = await editorApi.ttsPreview(id, selectedVoice ? { voice: selectedVoice } : undefined)
+      setTtsJobId(res.jobId); toast.info('TTS 생성 중...')
+    } catch { toast.error('TTS 미리듣기 요청 실패') }
   }
 
   const handleConfirm = async () => {
-    await editorApi.confirm(id)
-    toast.success('확정됨 — APPROVED 상태로 전환')
+    try {
+      await editorApi.confirm(id)
+      toast.success('확정됨 — APPROVED 상태로 전환')
+    } catch { toast.error('확정 실패') }
   }
 
   const handleVoiceSelect = async (key: string | null) => {
