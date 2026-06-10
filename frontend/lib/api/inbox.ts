@@ -10,7 +10,7 @@ interface InboxListResponse {
 }
 
 export const inboxApi = {
-  list: (params?: { page?: number; size?: number }) =>
+  list: (params?: { page?: number; size?: number; siteCode?: string; q?: string; tier?: string }) =>
     get<InboxListResponse>('/api/inbox', params as Record<string, unknown>),
   approve: (id: number) => post<{ postId: number; status: string; jobId: number }>(`/api/inbox/${id}/approve`),
   decline: (id: number) => post<{ postId: number; status: string }>(`/api/inbox/${id}/decline`),

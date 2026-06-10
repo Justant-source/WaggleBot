@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { inboxApi } from '@/lib/api/inbox'
 import { AdminSection } from '@/components/admin/AdminSection'
@@ -8,10 +8,14 @@ import { AdminPagination } from '@/components/admin/AdminPagination'
 import { AdminStatCard } from '@/components/admin/AdminStatCard'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { Post } from '@/lib/types'
 import { useInboxStore } from '@/lib/store/inboxStore'
 import { usePollingJob } from '@/lib/hooks/usePollingJob'
-import { Loader2, RefreshCw, CheckCheck, X, Eye, Image as ImageIcon } from 'lucide-react'
+import { Loader2, RefreshCw, CheckCheck, X, Eye, Image as ImageIcon, Search } from 'lucide-react'
+
+const SITE_CODES = ['nate_pann', 'bobaedream', 'dcinside', 'fmkorea']
 
 interface PostStats { views?: number; likes?: number; comments_count?: number }
 
@@ -33,6 +37,11 @@ export default function InboxPage() {
   const [loading, setLoading] = useState(true)
   const [crawlJobId, setCrawlJobId] = useState<number | null>(null)
   const [detail, setDetail] = useState<Post | null>(null)
+  const [siteFilter, setSiteFilter] = useState('all')
+  const [tierFilter, setTierFilter] = useState('all')
+  const [searchInput, setSearchInput] = useState('')
+  const [activeQ, setActiveQ] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
   const { page, selectedIds, toggleSelect, clearSelection, setPage } = useInboxStore()
 
   const crawlJob = usePollingJob(crawlJobId, (id) => inboxApi.pollJob(id))
@@ -40,13 +49,29 @@ export default function InboxPage() {
   const load = async () => {
     try {
       setLoading(true)
-      const res = await inboxApi.list({ page, size: 20 })
+      const res = await inboxApi.list({
+        page,
+        size: 20,
+        siteCode: siteFilter !== 'all' ? siteFilter : undefined,
+        tier: tierFilter !== 'all' ? tierFilter : undefined,
+        q: activeQ.trim() || undefined,
+      })
       setData(res)
     } catch { toast.error('수신함 로드 실패') }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [page])
+  useEffect(() => { load() }, [page, siteFilter, tierFilter, activeQ])
+
+  const handleFilterChange = () => {
+    setPage(0)
+    clearSelection()
+  }
+
+  const handleSearch = () => {
+    setActiveQ(searchInput.trim())
+    handleFilterChange()
+  }
 
   useEffect(() => {
     if (crawlJob.status === 'DONE') { toast.success('크롤링 완료'); load() }
@@ -102,12 +127,63 @@ export default function InboxPage() {
       </div>
 
       {data && (
-        <div className="mb-6 grid grid-cols-3 gap-4">
+        <div className="mb-4 grid grid-cols-3 gap-4">
           <AdminStatCard label="상위 (≥80)" value={data.counts.tier1} />
           <AdminStatCard label="중위 (30~79)" value={data.counts.tier2} />
           <AdminStatCard label="하위 (<30)" value={data.counts.tier3} />
         </div>
       )}
+
+      {/* 필터 바 */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Select value={siteFilter} onValueChange={(v) => { setSiteFilter(v); handleFilterChange() }}>
+          <SelectTrigger className="h-8 w-36 text-xs">
+            <SelectValue placeholder="전체 사이트" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">전체 사이트</SelectItem>
+            {SITE_CODES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={tierFilter} onValueChange={(v) => { setTierFilter(v); handleFilterChange() }}>
+          <SelectTrigger className="h-8 w-28 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">전체 티어</SelectItem>
+            <SelectItem value="tier1">상위 (≥80)</SelectItem>
+            <SelectItem value="tier2">중위 (30~79)</SelectItem>
+            <SelectItem value="tier3">하위 (&lt;30)</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="flex flex-1 gap-1">
+          <Input
+            ref={searchRef}
+            className="h-8 max-w-xs text-xs"
+            placeholder="제목 검색..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSearch() }}
+          />
+          <Button size="sm" variant="outline" className="h-8 px-2" onClick={handleSearch}>
+            <Search className="h-3.5 w-3.5" />
+          </Button>
+          {(siteFilter !== 'all' || tierFilter !== 'all' || activeQ) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 px-2 text-xs text-gray-500"
+              onClick={() => {
+                setSiteFilter('all'); setTierFilter('all')
+                setSearchInput(''); setActiveQ('')
+                handleFilterChange()
+              }}
+            >
+              초기화
+            </Button>
+          )}
+        </div>
+      </div>
 
       <AdminSection title="게시글 목록">
         {loading ? (

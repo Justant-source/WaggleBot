@@ -22,11 +22,28 @@ public class InboxController {
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(
         @RequestParam(defaultValue = "0") int page,
-        @RequestParam(defaultValue = "20") int size
+        @RequestParam(defaultValue = "20") int size,
+        @RequestParam(required = false) String siteCode,
+        @RequestParam(required = false) String q,
+        @RequestParam(required = false) String tier
     ) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("engagementScore").descending());
         Page<Post> posts = postRepo.findAll(
-            (root, q, cb) -> cb.equal(root.get("status"), PostStatus.COLLECTED),
+            (root, query, cb) -> {
+                var predicates = new ArrayList<jakarta.persistence.criteria.Predicate>();
+                predicates.add(cb.equal(root.get("status"), PostStatus.COLLECTED));
+                if (siteCode != null && !siteCode.isBlank())
+                    predicates.add(cb.equal(root.get("siteCode"), siteCode));
+                if (q != null && !q.isBlank())
+                    predicates.add(cb.like(cb.lower(root.get("title")), "%" + q.toLowerCase() + "%"));
+                if ("tier1".equals(tier))
+                    predicates.add(cb.greaterThanOrEqualTo(root.get("engagementScore"), 80.0));
+                else if ("tier2".equals(tier))
+                    predicates.add(cb.between(root.get("engagementScore"), 30.0, 79.99));
+                else if ("tier3".equals(tier))
+                    predicates.add(cb.lessThan(root.get("engagementScore"), 30.0));
+                return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
+            },
             pageable
         );
         Map<String, Object> body = new LinkedHashMap<>();
@@ -34,13 +51,13 @@ public class InboxController {
         body.put("total", posts.getTotalElements());
         body.put("page", page);
         body.put("size", size);
-        long tier1 = postRepo.countByStatusAndScoreGte(PostStatus.COLLECTED, 80.0);
-        long tier2 = postRepo.countByStatusAndScoreBetween(PostStatus.COLLECTED, 30.0, 80.0);
-        long totalCollected = posts.getTotalElements();
+        long tier1Count = postRepo.countByStatusAndScoreGte(PostStatus.COLLECTED, 80.0);
+        long tier2Count = postRepo.countByStatusAndScoreBetween(PostStatus.COLLECTED, 30.0, 80.0);
+        long totalCollected = postRepo.countByStatus(PostStatus.COLLECTED);
         body.put("counts", Map.of(
-            "tier1", tier1,
-            "tier2", tier2,
-            "tier3", Math.max(0L, totalCollected - tier1 - tier2)
+            "tier1", tier1Count,
+            "tier2", tier2Count,
+            "tier3", Math.max(0L, totalCollected - tier1Count - tier2Count)
         ));
         return ResponseEntity.ok(body);
     }

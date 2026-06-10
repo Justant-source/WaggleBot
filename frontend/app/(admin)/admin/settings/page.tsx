@@ -58,6 +58,7 @@ export default function SettingsPage() {
 
   const llmBackend = watch('llm_backend')
   const llmModel = watch('llm_model')
+  const ttsVoice = watch('tts_voice')
   const autoApproveEnabled = watch('auto_approve_enabled')
   const autoUpload = watch('auto_upload')
 
@@ -234,9 +235,24 @@ export default function SettingsPage() {
       </AdminSection>
 
       <AdminSection title="TTS">
-        <div className="max-w-sm">
-          <Label className="mb-1 block">목소리</Label>
-          <Input {...register('tts_voice')} placeholder="yura" />
+        <div className="max-w-sm space-y-4">
+          <div>
+            <Label className="mb-1 block">목소리</Label>
+            <Select value={ttsVoice} onValueChange={(v) => setValue('tts_voice', v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">기본 남성 내레이터</SelectItem>
+                <SelectItem value="anna">Anna (여, 친근한 내레이션)</SelectItem>
+                <SelectItem value="han">Han (남, 자연스러운 대화체)</SelectItem>
+                <SelectItem value="krys">Krys (여, 뉴스/정보 전달형)</SelectItem>
+                <SelectItem value="sunny">Sunny (여, 따뜻한 내레이션)</SelectItem>
+                <SelectItem value="yohan">Yohan (남, 깊이 있는 내레이션)</SelectItem>
+                <SelectItem value="yura">Yura (여, 활기찬 대화체)</SelectItem>
+                <SelectItem value="manbo">Manbo (여, 유쾌한 대화체)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-xs text-gray-400">Fish Speech 목소리 프리셋.</p>
+          </div>
         </div>
       </AdminSection>
 

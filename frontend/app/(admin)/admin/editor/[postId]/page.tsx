@@ -102,6 +102,34 @@ export default function EditorDetailPage({ params }: { params: { postId: string 
               onChange={(e) => updateField('hook', e.target.value)}
             />
           </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-500">Body ({script.body.length}개 항목)</label>
+            <div className="space-y-2">
+              {script.body.map((item, idx) => (
+                <div key={idx} className="rounded border border-gray-200 p-2">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${item.type === 'comment' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {item.type === 'comment' ? `댓글${item.author ? ` · ${item.author}` : ''}` : `본문 ${idx + 1}`}
+                    </span>
+                  </div>
+                  <textarea
+                    className="w-full rounded border border-gray-100 bg-gray-50 p-1.5 text-xs leading-relaxed"
+                    rows={Math.max(2, item.lines.length)}
+                    value={item.lines.join('\n')}
+                    onChange={(e) => {
+                      const newLines = e.target.value.split('\n')
+                      const newBody = script.body.map((b, i) =>
+                        i === idx ? { ...b, lines: newLines, lineCount: newLines.length } : b
+                      )
+                      updateField('body', newBody)
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div>
             <label className="text-xs font-medium text-gray-500">Closer</label>
             <textarea
