@@ -27,13 +27,14 @@ logger = logging.getLogger(__name__)
 
 # 모듈 레벨 워크플로우 JSON 캐시 — 동일 파일을 한 번만 로드한다.
 _workflow_cache: dict[str, dict] = {}
+_workflow_mtime: dict[str, float] = {}
 
 
 def _load_workflow(path: str | Path) -> dict:
     """워크플로우 JSON 파일을 캐시에서 로드한다.
 
-    최초 접근 시에만 디스크에서 읽고 이후에는 캐시된 사본을 반환한다.
-    deepcopy를 사용하여 호출자가 반환된 dict를 수정해도 캐시가 오염되지 않는다.
+    파일 mtime이 변경되면 캐시를 자동 무효화하므로 프로세스 재시작 없이도
+    워크플로우 수정이 즉시 반영된다.
 
     Args:
         path: 워크플로우 JSON 파일 경로
@@ -45,12 +46,14 @@ def _load_workflow(path: str | Path) -> dict:
         FileNotFoundError: 파일이 존재하지 않을 때
     """
     key = str(path)
-    if key not in _workflow_cache:
-        p = Path(path)
-        if not p.exists():
-            raise FileNotFoundError(f"워크플로우 파일 없음: {p}")
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"워크플로우 파일 없음: {p}")
+    current_mtime = p.stat().st_mtime
+    if key not in _workflow_cache or _workflow_mtime.get(key) != current_mtime:
         _workflow_cache[key] = json.loads(p.read_text(encoding="utf-8"))
-        logger.debug("[comfy] 워크플로우 캐시 등록: %s", p.name)
+        _workflow_mtime[key] = current_mtime
+        logger.debug("[comfy] 워크플로우 캐시 등록/갱신: %s", p.name)
     return copy.deepcopy(_workflow_cache[key])
 
 

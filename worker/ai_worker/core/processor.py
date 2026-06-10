@@ -281,6 +281,15 @@ class RobustProcessor:
                 from analytics.feedback import load_feedback_config
                 fb = load_feedback_config()
                 extra_instructions = fb.get("extra_instructions") or None
+                # mood_weights에서 가중치 1.1 초과 mood를 선호 힌트로 주입
+                mood_weights: dict = fb.get("mood_weights") or {}
+                preferred = sorted(
+                    [m for m, w in mood_weights.items() if float(w) > 1.1],
+                    key=lambda m: -float(mood_weights[m]),
+                )
+                if preferred:
+                    hint = f"성과 분석 기반 선호 mood: {', '.join(preferred[:3])}."
+                    extra_instructions = f"{extra_instructions}\n{hint}" if extra_instructions else hint
             except Exception:
                 logger.debug("feedback_config 로드 실패 — 무시", exc_info=True)
 

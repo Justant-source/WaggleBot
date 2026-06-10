@@ -10,4 +10,6 @@ import java.util.Optional;
 public interface JobRepository extends JpaRepository<Job, Long> {
     Optional<Job> findTopByStatusOrderByCreatedAtAsc(JobStatus status);
     List<Job> findByPostIdAndJobTypeOrderByCreatedAtDesc(Long postId, JobType jobType);
+    boolean existsByPostIdAndJobTypeAndStatusIn(Long postId, JobType jobType, List<JobStatus> statuses);
+    Optional<Job> findTopByPostIdAndJobTypeAndStatusInOrderByCreatedAtDesc(Long postId, JobType jobType, List<JobStatus> statuses);
 }

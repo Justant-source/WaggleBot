@@ -44,4 +44,8 @@ public class JobService {
         return jobRepository.findById(jobId)
             .orElseThrow(() -> new IllegalArgumentException("Job not found: " + jobId));
     }
+
+    public java.util.Optional<Job> findActiveJob(JobType jobType, Long postId, java.util.List<JobStatus> statuses) {
+        return jobRepository.findTopByPostIdAndJobTypeAndStatusInOrderByCreatedAtDesc(postId, jobType, statuses);
+    }
 }

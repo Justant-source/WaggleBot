@@ -1,6 +1,6 @@
 # WaggleBot — 구현 현황
 
-현재 코드베이스의 구현 완료/미완료 상태 정리. (2026-06-10 기준)
+현재 코드베이스의 구현 완료/미완료 상태 정리. (2026-06-11 기준)
 
 ## 전체 현황 요약
 
@@ -177,6 +177,16 @@ telegram/
 
 ---
 
+## 버그 픽스 이력 (2026-06-11 기준)
+
+3배치 버그 픽스 완료 (c655a4b 기준):
+
+| 배치 | 커밋 | 주요 수정 |
+|------|------|------|
+| 1차 | `0d2162f` | SceneDirector mood 미전달 3곳, _MOOD_TO_STYLE 9종 확장, LlmLog 복합 필터, HD_RENDER ImportError |
+| 2차 | `a96cdfc` | TTS 캐시 손상 폴백, 0-duration 프레임 필터, post None 검사, 타이머 누수 |
+| 3차 | `c655a4b` | TTS URL 오독, subprocess timeout, hash 충돌, migration DDL 원자성, llm-logs 경쟁 조건 |
+
 ## 다음 개선 우선순위
 
 현 상태로 전체 파이프라인이 동작 가능하며 아래는 선택적 개선 항목:
@@ -186,7 +196,19 @@ flowchart TD
     A[✅ telegram-bridge<br/>모바일 승인/모니터링] --> B
     B[✅ A/B 테스트<br/>variant_group/config 활성화 + 파이프라인 통합] --> C
     C[✅ 자동 승인<br/>auto_approve_enabled/threshold 구현] --> D
-    D[✅ 성과 피드백 루프<br/>YouTube Analytics → LLM 자동 적용]
+    D[✅ 성과 피드백 루프<br/>YouTube Analytics → LLM 자동 적용] --> E
+    E[✅ mood_weights 피드백 주입<br/>extra_instructions에 선호 mood 힌트 병합] --> F
+    F[✅ HD 렌더 중복 방지<br/>PENDING/IN_PROGRESS Job 재사용] --> G
+    G[✅ ComfyUI 워크플로우 mtime 캐시<br/>파일 수정 시 자동 무효화]
 ```
 
-모든 선택적 개선 항목 구현 완료.
+현재 선택적 개선 항목 모두 구현 완료.
+
+### 장기 개선 후보 (미구현)
+
+| 항목 | 설명 |
+|------|------|
+| 크롤러 사이트 추가 | 인스티즈, 더쿠, MLB파크 등 (ADDING_CRAWLER.md 참조) |
+| VRAM 누수 모니터링 | 장기 운영 시 nvidia-smi 주기적 로그 + 임계치 경보 |
+| 대시보드 다크모드 | Sidebar 토글 버튼 연결 (ThemeProvider 미구현) |
+| TTS 보이스 UI | settings에서 Fish Speech 기준 보이스 선택 |
