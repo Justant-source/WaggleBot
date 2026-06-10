@@ -20,8 +20,8 @@ from db.session import SessionLocal, init_db
 logger = logging.getLogger(__name__)
 
 
-def _mark_post_failed(post_id: int) -> None:
-    """예외 발생 시 post를 FAILED로 안전하게 마킹한다."""
+def _mark_post_failed(post_id: int, error: str = "") -> None:
+    """예외 발생 시 post를 FAILED로 안전하게 마킹하고 last_error를 기록한다."""
     try:
         with SessionLocal() as session:
             post = session.query(Post).filter_by(id=post_id).first()
@@ -29,6 +29,7 @@ def _mark_post_failed(post_id: int) -> None:
                 PostStatus.PREVIEW_RENDERED, PostStatus.RENDERED, PostStatus.UPLOADED
             ):
                 post.status = PostStatus.FAILED
+                post.last_error = error[:1000] if error else None
                 session.commit()
     except Exception:
         logger.exception("FAILED 마킹 실패: post_id=%d", post_id)
@@ -46,6 +47,7 @@ def _recover_stuck_posts() -> None:
             return
         for post in stuck:
             post.status = PostStatus.APPROVED
+            post.last_error = None
             logger.warning(
                 "🔄 고착 포스트 복구: post_id=%d → APPROVED (이전 상태: PROCESSING)",
                 post.id,
@@ -123,9 +125,9 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
                 try:
                     script, audio_path = await processor.llm_tts_stage(post_id)
                     result = (post_id, script, audio_path)
-                except Exception:
+                except Exception as exc:
                     logger.exception("LLM+TTS 실패: post_id=%d", post_id)
-                    _mark_post_failed(post_id)
+                    _mark_post_failed(post_id, error=repr(exc))
                     await asyncio.sleep(5)
 
         # gpu_lock 해제 후 큐 적재 (데드락 방지: 큐 만석 시 render_worker가 lock 필요)
@@ -167,9 +169,9 @@ async def _render_worker(render_queue: asyncio.Queue) -> None:
                 await loop.run_in_executor(
                     None, processor.render_stage, post_id, script, audio_path
                 )
-        except Exception:
+        except Exception as exc:
             logger.exception("렌더링 실패: post_id=%d", post_id)
-            _mark_post_failed(post_id)
+            _mark_post_failed(post_id, error=repr(exc))
         finally:
             render_queue.task_done()
 
@@ -212,6 +214,7 @@ async def upload_once() -> bool:
                 logger.info("업로드 완료: post_id=%d", post.id)
             else:
                 post.status = PostStatus.FAILED
+                post.last_error = "업로드 실패"
                 session.commit()
                 logger.warning("업로드 실패, FAILED 처리: post_id=%d", post.id)
         except Exception:

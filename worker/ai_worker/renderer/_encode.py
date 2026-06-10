@@ -15,7 +15,7 @@ def _resolve_codec() -> str:
 
 
 def _get_encoder_args(codec: str) -> list[str]:
-    return ["-c:v", "h264_nvenc", "-preset", "medium", "-cq", "23", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23", "-pix_fmt", "yuv420p"]
 
 
 def _escape_ffmpeg_text(text: str) -> str:
@@ -84,11 +84,23 @@ def _render_video_segment(
     font_dir: Path,
     output_path: Path,
 ) -> Path:
-    """비디오 클립을 base_frame 위에 합성하여 세그먼트 mp4로 생성한다."""
-    from ai_worker.video.video_utils import resize_clip_to_layout, loop_or_trim_clip
+    """비디오 클립을 base_frame 위에 합성하여 세그먼트 mp4로 생성한다.
+
+    resize/loop 중간 파일 없이 단일 FFmpeg 명령으로 처리한다:
+    - demux 레벨 -stream_loop으로 재인코딩 없는 루프
+    - scale+crop+overlay를 filter_complex에 통합 → 인코딩 1회
+    """
     from ai_worker.renderer._frames import _render_video_text_overlay
 
     va = layout["scenes"]["video_text"]["elements"]["video_area"]
+    canvas_w = layout["canvas"]["width"]
+    canvas_h = layout["canvas"]["height"]
+    va_w = va["width"]
+    va_h = va["height"]
+    va_x = va["x"]
+    va_y = va["y"]
+    fps = 30
+    frame_count = int(duration * fps)
 
     tmp_dir = output_path.parent
     base_png = tmp_dir / f"base_{output_path.stem}.png"
@@ -96,24 +108,16 @@ def _render_video_segment(
 
     clip_path = Path(scene.video_clip_path)
 
-    resized_clip = tmp_dir / f"resized_{output_path.stem}.mp4"
-    resize_clip_to_layout(
-        clip_path, resized_clip,
-        width=va["width"], height=va["height"],
-    )
-
-    fitted_clip = tmp_dir / f"fitted_{output_path.stem}.mp4"
-    loop_or_trim_clip(resized_clip, fitted_clip, target_duration=duration)
-
-    # PIL로 텍스트 오버레이 PNG 생성 (FFmpeg drawtext 대신)
     text_overlay_png = tmp_dir / f"txtoverlay_{output_path.stem}.png"
     _render_video_text_overlay(text, layout, font_dir, text_overlay_png)
 
     filter_complex = (
-        f"[0:v]loop=loop={int(duration * 30)}:size=1:start=0,"
-        f"setpts=N/{30}/TB,fps={30}[base];"
-        f"[base][1:v]overlay={va['x']}:{va['y']}:shortest=1[vwith];"
-        f"[2:v]scale={layout['canvas']['width']}:{layout['canvas']['height']}[txt];"
+        f"[0:v]loop=loop={frame_count}:size=1:start=0,"
+        f"setpts=N/{fps}/TB,fps={fps}[base];"
+        f"[1:v]scale={va_w}:{va_h}:force_original_aspect_ratio=increase,"
+        f"crop={va_w}:{va_h},fps={fps}[clip];"
+        f"[base][clip]overlay={va_x}:{va_y}:shortest=0[vwith];"
+        f"[2:v]scale={canvas_w}:{canvas_h}[txt];"
         f"[vwith][txt]overlay=0:0[vout]"
     )
 
@@ -123,13 +127,13 @@ def _render_video_segment(
     cmd = [
         "ffmpeg", "-y",
         "-i", str(base_png),
-        "-i", str(fitted_clip),
+        "-stream_loop", "-1", "-i", str(clip_path),
         "-i", str(text_overlay_png),
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-t", f"{duration:.3f}",
         *enc_args,
-        "-r", "30",
+        "-r", str(fps),
         "-an",
         str(output_path),
     ]
@@ -140,8 +144,6 @@ def _render_video_segment(
         raise subprocess.CalledProcessError(result.returncode, cmd)
 
     base_png.unlink(missing_ok=True)
-    resized_clip.unlink(missing_ok=True)
-    fitted_clip.unlink(missing_ok=True)
     text_overlay_png.unlink(missing_ok=True)
 
     logger.debug("[layout] video_segment 생성: %s (%.2fs)", output_path.name, duration)

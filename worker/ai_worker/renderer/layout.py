@@ -531,6 +531,11 @@ def _render_pipeline(
                 logger.error("[layout] concat 실패:\n%s", concat_result.stderr[-2000:])
                 raise subprocess.CalledProcessError(concat_result.returncode, concat_cmd)
 
+            # concat 완료 후 세그먼트 파일 즉시 삭제 (디스크 절약)
+            for seg_path in segment_paths:
+                seg_path.unlink(missing_ok=True)
+            logger.debug("[layout] seg_*.mp4 %d개 즉시 삭제 완료", len(segment_paths))
+
             # ── Step 10–11: 오디오 합성 ────────────────────────────
             timings: list[float] = []
             acc = 0.0

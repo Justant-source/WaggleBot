@@ -49,6 +49,9 @@ public class Post {
     @Column(name = "retry_count", nullable = false)
     private Integer retryCount = 0;
 
+    @Column(name = "last_error", length = 1000)
+    private String lastError;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

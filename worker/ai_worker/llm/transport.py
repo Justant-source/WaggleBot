@@ -100,7 +100,8 @@ def _get_worker_url() -> str:
 #   - 대시보드 설정(pipeline.json)의 llm_backend 키로 전환
 #   - API 키는 env ANTHROPIC_API_KEY → config/credentials.json["anthropic_api_key"] 순
 # ---------------------------------------------------------------------------
-_ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+_ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com/v1"
+_ANTHROPIC_OFFICIAL_DOMAIN = "https://api.anthropic.com"
 _ANTHROPIC_VERSION = "2023-06-01"
 _API_DEFAULT_MAX_TOKENS = 8192
 # json_mode 시 system에 주입하는 JSON 강제 지시문 (캐시 prefix와 동일 블록에 병합)
@@ -128,6 +129,41 @@ def _get_anthropic_api_key() -> str | None:
     except Exception:
         pass
     return None
+
+
+def _get_api_base_url() -> str:
+    """Anthropic 호환 API base URL.
+
+    우선순위: env ANTHROPIC_BASE_URL → pipeline.json llm_api_base_url → 공식 기본값.
+    프록시/게이트웨이(예: https://api.clcocloud.com/claude/v1) 사용 시 여기로 라우팅.
+    뒤에 /messages 가 붙으므로 base는 .../v1 형태(끝 슬래시 제거).
+    """
+    import os
+    base = os.getenv("ANTHROPIC_BASE_URL")
+    if not (base and base.strip()):
+        try:
+            from config.settings import load_pipeline_config
+            base = load_pipeline_config().get("llm_api_base_url")
+        except Exception:
+            base = None
+    base = (base or _ANTHROPIC_DEFAULT_BASE_URL).strip()
+    return base.rstrip("/")
+
+
+def _build_api_headers(api_key: str, base_url: str) -> dict:
+    """Anthropic API 요청 헤더 구성.
+
+    공식 Anthropic 도메인이면 x-api-key만, 커스텀 proxy/게이트웨이면
+    Authorization: Bearer도 추가(게이트웨이 호환).
+    """
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": _ANTHROPIC_VERSION,
+        "content-type": "application/json",
+    }
+    if not base_url.rstrip("/").startswith(_ANTHROPIC_OFFICIAL_DOMAIN):
+        headers["authorization"] = f"Bearer {api_key}"
+    return headers
 
 
 def _get_cache_settings() -> tuple[bool, str]:
@@ -205,14 +241,12 @@ def _call_via_api(
         ]
     elif sys_text is not None:
         body["system"] = sys_text
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": _ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
+    base_url = _get_api_base_url()
+    headers = _build_api_headers(api_key, base_url)
+    url = base_url + "/messages"
     try:
         resp = _session.post(
-            _ANTHROPIC_API_URL, json=body, headers=headers, timeout=(10, timeout + 30)
+            url, json=body, headers=headers, timeout=(10, timeout + 30)
         )
     except requests.Timeout:
         raise TimeoutError(f"Anthropic API 응답 타임아웃 ({timeout}초 초과)")

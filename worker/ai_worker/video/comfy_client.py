@@ -13,15 +13,45 @@ LTX-2 워크플로우를 ComfyUI 서버에 제출하고 결과를 수신한다.
 - config/settings.py의 COMFYUI_URL 사용.
 """
 
+import copy
 import json
 import logging
 import random
+import time
 import uuid
 from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# 모듈 레벨 워크플로우 JSON 캐시 — 동일 파일을 한 번만 로드한다.
+_workflow_cache: dict[str, dict] = {}
+
+
+def _load_workflow(path: str | Path) -> dict:
+    """워크플로우 JSON 파일을 캐시에서 로드한다.
+
+    최초 접근 시에만 디스크에서 읽고 이후에는 캐시된 사본을 반환한다.
+    deepcopy를 사용하여 호출자가 반환된 dict를 수정해도 캐시가 오염되지 않는다.
+
+    Args:
+        path: 워크플로우 JSON 파일 경로
+
+    Returns:
+        워크플로우 dict (독립 사본)
+
+    Raises:
+        FileNotFoundError: 파일이 존재하지 않을 때
+    """
+    key = str(path)
+    if key not in _workflow_cache:
+        p = Path(path)
+        if not p.exists():
+            raise FileNotFoundError(f"워크플로우 파일 없음: {p}")
+        _workflow_cache[key] = json.loads(p.read_text(encoding="utf-8"))
+        logger.debug("[comfy] 워크플로우 캐시 등록: %s", p.name)
+    return copy.deepcopy(_workflow_cache[key])
 
 
 class ComfyUIClient:
@@ -302,12 +332,9 @@ class ComfyUIClient:
     # -- 내부 메서드 --
 
     def _load_workflow(self, filename: str) -> dict:
-        """workflows/ 디렉터리에서 워크플로우 JSON 로드."""
+        """workflows/ 디렉터리에서 워크플로우 JSON 로드 (모듈 캐시 사용)."""
         path = self._workflow_dir / filename
-        if not path.exists():
-            raise FileNotFoundError(f"워크플로우 파일 없음: {path}")
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
+        return _load_workflow(path)
 
     # 값 매칭에서 허용되는 placeholder 화이트리스트.
     # 이 목록에 없는 문자열은 placeholder로 취급하지 않는다.
@@ -368,17 +395,40 @@ class ComfyUIClient:
             data = resp.json()
             return data["name"]
 
-    async def _poll_until_done(self, prompt_id: str, interval: float = 3.0) -> None:
-        """GET /history/{prompt_id}를 폴링하여 완료를 대기한다.
+    @staticmethod
+    def _adaptive_interval(elapsed_secs: float) -> float:
+        """경과 시간에 따라 적응형 폴링 간격을 반환한다.
+
+        Args:
+            elapsed_secs: 폴링 시작 이후 경과 시간 (초)
+
+        Returns:
+            다음 폴링까지 대기 시간 (초)
+        """
+        if elapsed_secs < 30:
+            return 1.0   # 처음 30초: 1초마다 (짧은 작업 빠른 감지)
+        elif elapsed_secs < 120:
+            return 3.0   # 30~120초: 3초마다 (기존 동작)
+        else:
+            return 5.0   # 2분 이상: 5초마다 (긴 작업 폴링 부하 감소)
+
+    async def _poll_until_done(self, prompt_id: str) -> None:
+        """GET /history/{prompt_id}를 적응형 간격으로 폴링하여 완료를 대기한다.
 
         WebSocket 연결이 끊어진 경우의 폴백 메커니즘.
         history에 prompt_id가 나타나고 completed=True이면 완료로 판단한다.
         ComfyUI가 재시작되면 history가 유실되므로 queue 상태도 확인한다.
+
+        폴링 간격은 경과 시간에 따라 자동 조정된다:
+          - 0~30초:   1초 간격 (짧은 작업 빠른 감지)
+          - 30~120초: 3초 간격 (기존 동작)
+          - 120초 이상: 5초 간격 (긴 작업 폴링 부하 감소)
         """
         import asyncio
 
         logger.info("[comfy] polling 시작: prompt_id=%s", prompt_id)
         consecutive_errors = 0
+        start_time = time.monotonic()
         while True:
             try:
                 async with httpx.AsyncClient() as client:
@@ -406,7 +456,8 @@ class ComfyUIClient:
                         "ComfyUI 서버 응답 없음 — 크래시 가능성 (polling 중단)"
                     )
                 logger.debug("[comfy] polling 연결 실패 (%d회)", consecutive_errors)
-            await asyncio.sleep(interval)
+            elapsed = time.monotonic() - start_time
+            await asyncio.sleep(self._adaptive_interval(elapsed))
 
     async def _queue_and_wait(self, workflow: dict, timeout: int = 300) -> Path:
         """워크플로우를 큐에 제출하고 완료까지 polling으로 대기.
@@ -434,7 +485,7 @@ class ComfyUIClient:
             prompt_id = resp.json()["prompt_id"]
             logger.info("[comfy] 워크플로우 제출: prompt_id=%s", prompt_id)
 
-        # 2. Polling 대기 (WebSocket 레이스 컨디션 회피)
+        # 2. Polling 대기 (WebSocket 레이스 컨디션 회피, 적응형 간격)
         try:
             async with asyncio.timeout(timeout):
                 await self._poll_until_done(prompt_id)

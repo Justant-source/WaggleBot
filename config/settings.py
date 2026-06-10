@@ -109,6 +109,8 @@ _PIPELINE_DEFAULTS: dict[str, str] = {
     "llm_model_overrides": "{}",
     # LLM 백엔드: "cli"(llm-worker claude CLI 브릿지) | "api"(Anthropic API 직접)
     "llm_backend": os.getenv("LLM_BACKEND", "cli"),
+    # API 백엔드 base URL — 프록시/게이트웨이 사용 시 변경(.../v1 형태). 비우면 공식 사용.
+    "llm_api_base_url": os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
     # LLM 프롬프트 캐싱 (api 백엔드 전용) — 정적 prefix(페르소나·규칙·스키마·예시) 캐시 on/off
     "llm_prompt_cache": "true",
     # 프롬프트 캐시 TTL — "5m"(기본) | "1h"

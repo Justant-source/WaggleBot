@@ -77,6 +77,7 @@ class Post(Base):
     )
     engagement_score = Column(Float, nullable=False, default=0.0, server_default="0.0")
     retry_count = Column(Integer, nullable=False, default=0, server_default="0")
+    last_error = Column(String(1000), nullable=True)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
 

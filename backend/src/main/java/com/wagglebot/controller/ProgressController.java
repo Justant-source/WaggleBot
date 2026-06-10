@@ -24,7 +24,8 @@ public class ProgressController {
         List<com.wagglebot.domain.Post> processing = postRepo.findAll(
             (root, q, cb) -> cb.equal(root.get("status"), PostStatus.PROCESSING)
         );
-        return ResponseEntity.ok(Map.of("counts", counts, "processing", processing));
+        List<com.wagglebot.domain.Post> failed = postRepo.findTop20ByStatusOrderByUpdatedAtDesc(PostStatus.FAILED);
+        return ResponseEntity.ok(Map.of("counts", counts, "processing", processing, "failed", failed));
     }
 
     @PostMapping("/{id}/retry")
@@ -32,6 +33,7 @@ public class ProgressController {
         var post = postRepo.findById(id).orElseThrow(() -> new IllegalArgumentException("Post not found: " + id));
         post.setStatus(PostStatus.APPROVED);
         post.setRetryCount(post.getRetryCount() + 1);
+        post.setLastError(null);
         postRepo.save(post);
         return ResponseEntity.ok(Map.of("postId", id, "status", "APPROVED"));
     }

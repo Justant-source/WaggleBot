@@ -11,6 +11,8 @@ import java.util.List;
 public interface PostRepository extends JpaRepository<Post, Long>, JpaSpecificationExecutor<Post> {
     List<Post> findByStatusOrderByEngagementScoreDesc(PostStatus status);
 
+    List<Post> findTop20ByStatusOrderByUpdatedAtDesc(PostStatus status);
+
     @Query("SELECT COUNT(p) FROM Post p WHERE p.status = :status")
     long countByStatus(@Param("status") PostStatus status);
 

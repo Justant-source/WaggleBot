@@ -66,8 +66,12 @@ export default function InboxPage() {
   const handleBatchApprove = async () => {
     const ids = Array.from(selectedIds)
     if (!ids.length) return
-    await inboxApi.batch(ids, 'approve')
-    toast.success(`${ids.length}개 승인`)
+    const result = await inboxApi.batch(ids, 'approve')
+    if (result.failed?.length > 0) {
+      toast.warning(`${result.processed}개 성공, ${result.failed.length}개 실패`)
+    } else {
+      toast.success(`${result.processed}개 승인`)
+    }
     clearSelection(); load()
   }
 

@@ -467,6 +467,7 @@ class RobustProcessor:
         session.expire_all()
         post = session.query(Post).filter_by(id=post.id).first()
         post.status = PostStatus.FAILED
+        post.last_error = repr(last_error)[:1000] if last_error else None
         session.commit()
 
         logger.error(
@@ -704,6 +705,7 @@ class RobustProcessor:
 
             post.status = PostStatus.PROCESSING
             post.retry_count = (post.retry_count or 0) + 1
+            post.last_error = None
             session.commit()
             logger.info("[Pipeline LLM+TTS] 시작: post_id=%d", post_id)
 

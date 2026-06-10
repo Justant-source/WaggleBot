@@ -5,9 +5,11 @@
 """
 import asyncio
 import base64
+import json
 import logging
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -32,6 +34,40 @@ from ai_worker.tts.normalizer import normalize_for_tts
 logger = logging.getLogger(__name__)
 
 VOICES_DIR = Path(__file__).parent.parent.parent / "assets" / "voices"
+
+# ────────────────────────────────────────────────────────────────
+# 워밍업 센티널 — ai_worker 재시작 시 불필요한 재워밍업 방지
+# ────────────────────────────────────────────────────────────────
+_WARMUP_SENTINEL_MAX_AGE_HOURS = 6  # 센티널 유효 시간 (시간 단위)
+
+
+def _get_warmup_sentinel_path() -> Path:
+    """워밍업 센티널 파일 경로를 반환한다."""
+    from config.settings import MEDIA_DIR
+    return Path(MEDIA_DIR) / "tmp" / "fish_warmup_state.json"
+
+
+def _load_warmup_sentinel() -> dict | None:
+    """센티널 파일을 로드한다. 없거나 파싱 실패 시 None 반환."""
+    p = _get_warmup_sentinel_path()
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _save_warmup_sentinel() -> None:
+    """워밍업 완료 시각과 Fish Speech URL을 센티널 파일에 기록한다."""
+    p = _get_warmup_sentinel_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps({"warmed_at": time.time(), "url": FISH_SPEECH_URL}),
+        encoding="utf-8",
+    )
+    logger.debug("[warmup] 센티널 저장 완료: %s", p)
+
 
 # Fish Speech 첫 음절 garbling 방지용 프라이머 — 비활성화 (2026-03-04).
 # warmup 9회(3라운드×3회)로 모델이 충분히 안정화되어 primer 불필요.
@@ -279,7 +315,23 @@ async def _warmup_model() -> None:
     로딩 중에 들어온 요청은 voice cloning이 적용되지 않아 기본 중국어
     음성으로 출력될 수 있으므로, 실제 합성 전에 짧은 웜업 요청을 보내
     모델을 완전히 로드시킨다.
+
+    센티널 영속화:
+    1. 유효한 센티널(6시간 이내 + URL 일치)이 존재하면 1회 저비용 프로브 전송.
+    2. 프로브 성공 → 나머지 웜업 스킵, _warmup_done = True.
+    3. 센티널 없거나 만료/URL 불일치 / 프로브 실패 → 풀 웜업 실행 후 센티널 저장.
     """
+    global _warmup_done
+
+    # ── 센티널 확인 ─────────────────────────────────────────────
+    _sentinel = _load_warmup_sentinel()
+    _sentinel_valid = False
+    if _sentinel is not None:
+        _age_h = (time.time() - _sentinel.get("warmed_at", 0)) / 3600.0
+        _url_match = _sentinel.get("url") == FISH_SPEECH_URL
+        if _age_h <= _WARMUP_SENTINEL_MAX_AGE_HOURS and _url_match:
+            _sentinel_valid = True
+
     ref_filename = VOICE_PRESETS.get(VOICE_DEFAULT, "")
     ref_audio = VOICES_DIR / ref_filename
     if ref_audio.exists():
@@ -306,6 +358,29 @@ async def _warmup_model() -> None:
             "language": "ko",
         }
         async with httpx.AsyncClient(timeout=_timeout) as client:
+            # ── 센티널 유효: 저비용 프로브 1회로 빠른 경로 시도 ──────
+            if _sentinel_valid:
+                try:
+                    _probe_resp = await client.post(
+                        f"{FISH_SPEECH_URL}/v1/tts",
+                        json={**_warmup_payload, "text": "안녕하세요."},
+                    )
+                    if _probe_resp.status_code < 400:
+                        logger.info(
+                            "Fish Speech 워밍업 스킵 (캐시 유효, %.1fh 전 웜업)",
+                            (time.time() - _sentinel.get("warmed_at", 0)) / 3600.0,
+                        )
+                        _warmup_done = True
+                        return
+                    else:
+                        logger.warning(
+                            "Fish Speech 프로브 응답 %d — 풀 웜업 실행",
+                            _probe_resp.status_code,
+                        )
+                except Exception as _probe_exc:
+                    logger.warning("Fish Speech 프로브 실패 (%s) — 풀 웜업 실행", _probe_exc)
+
+            # ── 풀 웜업 (센티널 없거나 만료 / 프로브 실패) ───────────
             try:
                 # 1회: 모델 로드 트리거 (중국어 출력 흡수)
                 await client.post(
@@ -355,8 +430,8 @@ async def _warmup_model() -> None:
                         logger.warning("음성 프리셋 웜업 실패 (%s): %s", _vk, _vexc)
                 logger.info("비기본 음성 프리셋 웜업 완료 (%d개)", _warmed_voices)
 
-                global _warmup_done
                 _warmup_done = True
+                _save_warmup_sentinel()
             except Exception as exc:
                 logger.warning("Fish Speech 웜업 실패 (무시): %s", exc)
     finally:

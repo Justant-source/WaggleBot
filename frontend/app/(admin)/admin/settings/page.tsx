@@ -10,15 +10,18 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
-import { Loader2, CheckCircle, XCircle, KeyRound } from 'lucide-react'
+import { Loader2, CheckCircle, XCircle, KeyRound, Link2 } from 'lucide-react'
 
 const schema = z.object({
   llm_backend: z.enum(['cli', 'api']),
+  llm_api_base_url: z.string().trim().url('올바른 URL을 입력하세요 (.../v1)').or(z.literal('')),
   llm_model: z.enum(['haiku', 'sonnet']),
   tts_voice: z.string().min(1),
   auto_approve_threshold: z.coerce.number().min(0).max(100),
   max_chars_per_line: z.coerce.number().min(10).max(40),
 })
+
+const DEFAULT_BASE_URL = 'https://api.anthropic.com/v1'
 
 type FormData = z.infer<typeof schema>
 
@@ -33,9 +36,9 @@ export default function SettingsPage() {
   const [apiKeyMasked, setApiKeyMasked] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState(false)
 
-  const { register, handleSubmit, setValue, watch } = useForm<FormData>({
+  const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { llm_backend: 'cli', llm_model: 'haiku', tts_voice: 'yura', auto_approve_threshold: 80, max_chars_per_line: 20 },
+    defaultValues: { llm_backend: 'cli', llm_api_base_url: DEFAULT_BASE_URL, llm_model: 'haiku', tts_voice: 'yura', auto_approve_threshold: 80, max_chars_per_line: 20 },
   })
 
   const llmBackend = watch('llm_backend')
@@ -44,6 +47,7 @@ export default function SettingsPage() {
   useEffect(() => {
     settingsApi.get().then((cfg) => {
       if (cfg.llm_backend === 'cli' || cfg.llm_backend === 'api') setValue('llm_backend', cfg.llm_backend)
+      if (cfg.llm_api_base_url) setValue('llm_api_base_url', String(cfg.llm_api_base_url))
       if (cfg.llm_model === 'haiku' || cfg.llm_model === 'sonnet') setValue('llm_model', cfg.llm_model)
       if (cfg.tts_voice) setValue('tts_voice', String(cfg.tts_voice))
       if (cfg.auto_approve_threshold) setValue('auto_approve_threshold', Number(cfg.auto_approve_threshold))
@@ -116,6 +120,28 @@ export default function SettingsPage() {
 
           {llmBackend === 'api' && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <div className="mb-4">
+                <Label className="mb-1 flex items-center gap-1.5 text-amber-900">
+                  <Link2 className="h-4 w-4" /> API Base URL
+                </Label>
+                <Input
+                  {...register('llm_api_base_url')}
+                  placeholder={DEFAULT_BASE_URL}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                {errors.llm_api_base_url && (
+                  <p className="mt-1 text-xs text-red-600">{errors.llm_api_base_url.message}</p>
+                )}
+                <p className="mt-1 text-xs text-amber-800">
+                  공식 Anthropic은 <code className="rounded bg-amber-100 px-1">{DEFAULT_BASE_URL}</code>.
+                  프록시/게이트웨이 사용 시 <code className="rounded bg-amber-100 px-1">.../v1</code> 형태로 입력하세요
+                  (예: <code className="rounded bg-amber-100 px-1">https://api.clcocloud.com/claude/v1</code>).
+                  뒤에 <code className="rounded bg-amber-100 px-1">/messages</code> 가 자동으로 붙습니다.
+                  이 값은 상단 <b>저장</b> 버튼으로 적용됩니다.
+                </p>
+              </div>
+
               <Label className="mb-1 flex items-center gap-1.5 text-amber-900">
                 <KeyRound className="h-4 w-4" /> Anthropic API 키
               </Label>

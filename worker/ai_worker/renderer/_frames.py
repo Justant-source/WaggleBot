@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -10,6 +11,11 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# 비디오 텍스트 오버레이 PNG 캐시 (process 내 유효, 재시작 시 자동 초기화)
+# ---------------------------------------------------------------------------
+_overlay_cache: dict[str, Path] = {}
 
 # 캔버스 기본 상수 (layout.json 미로드 시 fallback)
 CANVAS_W = 1080
@@ -513,12 +519,36 @@ def _render_video_text_overlay(
     font_dir: Path,
     out_png: Path,
 ) -> Path:
-    """비디오 텍스트를 투명 PNG 오버레이로 PIL 렌더링한다."""
+    """비디오 텍스트를 투명 PNG 오버레이로 PIL 렌더링한다.
+
+    동일한 (text, 자막 스타일, 캔버스 크기, 출력 포맷) 조합은
+    모듈 레벨 _overlay_cache로 재사용한다. 캐시 히트 시 PNG를
+    out_png로 복사만 수행하므로 PIL 렌더링 비용이 0이다.
+    """
     from ai_worker.renderer.layout import _load_font
 
-    ta = layout["scenes"]["video_text"]["elements"]["text_area"]
-    cw = layout["canvas"]["width"]
-    ch = layout["canvas"]["height"]
+    # ── 캐시 키 계산 ─────────────────────────────────────────────────────
+    video_text_cfg = layout.get("scenes", {}).get("video_text", {})
+    canvas_cfg = layout.get("canvas", {})
+    cache_raw = (
+        f"{text}"
+        f"|{video_text_cfg}"
+        f"|{canvas_cfg.get('width')}x{canvas_cfg.get('height')}"
+        f"|{out_png.suffix}"
+    )
+    cache_key = hashlib.md5(cache_raw.encode("utf-8")).hexdigest()
+
+    if cache_key in _overlay_cache and _overlay_cache[cache_key].exists():
+        cached = _overlay_cache[cache_key]
+        if cached != out_png:
+            shutil.copy2(cached, out_png)
+            logger.debug("오버레이 캐시 히트 → %s (from %s)", out_png.name, cached.name)
+        return out_png
+
+    # ── 실제 렌더링 ───────────────────────────────────────────────────────
+    ta = video_text_cfg["elements"]["text_area"]
+    cw = canvas_cfg["width"]
+    ch = canvas_cfg["height"]
 
     font = _load_font(font_dir, "NotoSansKR-Medium.ttf", ta["font_size"])
     lh = ta.get("line_height", int(ta["font_size"] * 1.4))
@@ -540,4 +570,8 @@ def _render_video_text_overlay(
     )
 
     overlay.save(str(out_png), "PNG")
+
+    # ── 캐시 저장 ─────────────────────────────────────────────────────────
+    _overlay_cache[cache_key] = out_png
+    logger.debug("오버레이 캐시 저장 (key=%s…): %s", cache_key[:8], out_png.name)
     return out_png

@@ -39,8 +39,11 @@ def validate_resolution(width: int, height: int) -> tuple[int, int]:
 
 
 def _resolve_intermediate_codec() -> tuple[str, list[str]]:
-    """중간 처리용 코덱 (RTX 3090 필수 환경 — h264_nvenc 고정)."""
-    return "h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p1", "-pix_fmt", "yuv420p"]
+    """중간 처리용 코덱 (RTX 3090 필수 환경 — h264_nvenc 고정).
+
+    p1 프리셋은 중간 파일 용도이므로 품질 손실을 최소화하기 위해 -cq 30 지정.
+    """
+    return "h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p1", "-cq", "30", "-pix_fmt", "yuv420p"]
 
 
 def get_video_duration(path: Path) -> float:

@@ -12,9 +12,11 @@ Phase 5: tts.fish_client.synthesize()
 Phase 6: video.prompt_engine.VideoPromptEngine.generate_batch()
 Phase 7: video.manager.VideoManager.generate_all_clips()
 """
+import asyncio
 import collections
 import json as _json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from ai_worker.script.chunker import chunk_with_llm
@@ -22,8 +24,26 @@ from ai_worker.scene.analyzer import ResourceProfile, analyze_resources
 from ai_worker.scene.director import SceneDecision, SceneDirector
 from ai_worker.scene.validator import validate_and_fix
 from ai_worker.tts.fish_client import synthesize
+from db.models import Post
+from db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
+
+
+def _touch_post(post_id: int) -> None:
+    """Phase 경계 하트비트 — updated_at을 현재 UTC 시각으로 터치.
+
+    PROCESSING 상태 포스트가 멈춰도 감지할 수 있도록 각 Phase 완료 시점마다 호출한다.
+    DB 오류는 로그만 남기고 파이프라인을 중단하지 않는다.
+    """
+    try:
+        with SessionLocal() as db:
+            db.query(Post).filter(Post.id == post_id).update(
+                {"updated_at": datetime.utcnow()}, synchronize_session=False
+            )
+            db.commit()
+    except Exception as _exc:
+        logger.warning("[heartbeat] updated_at 터치 실패 (post_id=%d): %s", post_id, _exc)
 
 
 async def process_content(post, images: list[str], cfg: dict | None = None) -> list[SceneDecision]:
@@ -43,6 +63,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         ValueError: 대본 필수 키 누락 등 검증 실패
     """
     _cfg = cfg or {}
+    post_id: int = post.id
     comment_voices: list[str] = _json.loads(_cfg.get("comment_voices", "[]"))
     # ── Phase 1: 자원 분석 ────────────────────────────────────────
     profile: ResourceProfile = analyze_resources(post, images)
@@ -50,6 +71,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         "[content_processor] Phase 1 완료: 전략=%s 이미지=%d 예상문장≈%d",
         profile.strategy, profile.image_count, profile.estimated_sentences,
     )
+    _touch_post(post_id)
 
     # ── Phase 2: LLM 청킹 (의미 단위) ────────────────────────────
     llm_output: dict = await chunk_with_llm(post.content or "", profile)
@@ -62,6 +84,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         len(script.get("body", [])),
         len(script.get("closer", "")),
     )
+    _touch_post(post_id)
 
     # ── Phase 4: 씬 배분 ──────────────────────────────────────────
     from config.settings import VIDEO_GEN_ENABLED, MEDIA_DIR
@@ -84,6 +107,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         "[content_processor] Phase 4 완료: %d씬 구성 %s",
         len(scenes), dict(counter),
     )
+    _touch_post(post_id)
 
     # ── Phase 4.5: video_mode 할당 ────────────────────────────────
     # LLM Director가 이미 video_mode를 설정한 씬은 assign_video_modes()에서 스킵됨 (안전망).
@@ -97,41 +121,37 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             i2v_threshold=VIDEO_I2V_THRESHOLD,
         )
         logger.info("[content_processor] Phase 4.5 완료: video_mode 할당")
+        _touch_post(post_id)
     else:
         logger.info("[content_processor] VIDEO_GEN_ENABLED=false — Phase 4.5 스킵")
 
-    # ── Phase 5: TTS 사전 생성 ────────────────────────────────────
-    tts_ok = 0
-    tts_fail = 0
-    for scene in scenes:
-        for j, line in enumerate(scene.text_lines):
-            text = line if isinstance(line, str) else line.get("text", "")
-            try:
-                tts_kwargs: dict = {"text": text, "scene_type": scene.type}
-                if scene.voice_override:
-                    tts_kwargs["voice_key"] = scene.voice_override
-                audio_path = await synthesize(**tts_kwargs)
-                scene.text_lines[j] = {"text": text, "audio": str(audio_path)}
-                tts_ok += 1
-            except Exception as exc:
-                logger.warning(
-                    "[content_processor] TTS 실패 (씬=%s, 줄=%d): %s",
-                    scene.type, j, exc,
-                )
-                scene.text_lines[j] = {"text": text, "audio": None}
-                tts_fail += 1
+    # ── Phase 5 내부 함수 정의 ────────────────────────────────────
+    async def _run_tts_phase(scene_list: list[SceneDecision]) -> tuple[int, int]:
+        """Phase 5: TTS 사전 생성. (tts_ok, tts_fail) 카운트 반환."""
+        ok = 0
+        fail = 0
+        for scene in scene_list:
+            for j, line in enumerate(scene.text_lines):
+                text = line if isinstance(line, str) else line.get("text", "")
+                try:
+                    tts_kwargs: dict = {"text": text, "scene_type": scene.type}
+                    if scene.voice_override:
+                        tts_kwargs["voice_key"] = scene.voice_override
+                    audio_path = await synthesize(**tts_kwargs)
+                    scene.text_lines[j] = {"text": text, "audio": str(audio_path)}
+                    ok += 1
+                except Exception as exc:
+                    logger.warning(
+                        "[content_processor] TTS 실패 (씬=%s, 줄=%d): %s",
+                        scene.type, j, exc,
+                    )
+                    scene.text_lines[j] = {"text": text, "audio": None}
+                    fail += 1
+        return ok, fail
 
-    logger.info(
-        "[content_processor] Phase 5 완료: TTS 성공=%d 실패=%d",
-        tts_ok, tts_fail,
-    )
-
-    # ── Phase 6: Video Prompt 생성 (GPU 불필요, LLM CPU 호출) ─────
+    # ── Phase 5 & 6 (VIDEO_GEN_ENABLED일 때 병렬, 아닐 때 Phase 5만 순차) ──
     if VIDEO_GEN_ENABLED:
         from ai_worker.video.prompt_engine import VideoPromptEngine
-
-        logger.info("[content_processor] Phase 6: video_prompt 생성 시작")
-        prompt_engine = VideoPromptEngine()
 
         body_texts: list[str] = []
         for block in list(script.get("body", [])):
@@ -141,19 +161,52 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
                 body_texts.append(str(block))
         body_summary = " ".join(body_texts)[:500]
 
-        scenes = prompt_engine.generate_batch(
-            scenes=scenes,
-            mood=script.get("mood", "daily"),
-            title=post.title or "",
-            body_summary=body_summary,
-            post_id=getattr(post, "id", None),
+        prompt_engine = VideoPromptEngine()
+        _mood = script.get("mood", "daily")
+        _title = post.title or ""
+        _post_id_ref = getattr(post, "id", None)
+
+        logger.info("[content_processor] Phase 5 & 6 병렬 시작 (TTS ∥ video_prompt)")
+
+        # Phase 6은 원격 LLM만 사용하므로 GPU 미접촉 → 스레드 풀에서 실행
+        _loop = asyncio.get_running_loop()
+
+        async def _run_phase6() -> list[SceneDecision]:
+            return await _loop.run_in_executor(
+                None,
+                lambda: prompt_engine.generate_batch(
+                    scenes=scenes,
+                    mood=_mood,
+                    title=_title,
+                    body_summary=body_summary,
+                    post_id=_post_id_ref,
+                ),
+            )
+
+        (tts_ok, tts_fail), scenes = await asyncio.gather(
+            _run_tts_phase(scenes),
+            _run_phase6(),
+        )
+
+        logger.info(
+            "[content_processor] Phase 5 완료: TTS 성공=%d 실패=%d",
+            tts_ok, tts_fail,
         )
         logger.info(
             "[content_processor] Phase 6 완료: %d개 프롬프트 생성",
             sum(1 for s in scenes if s.video_prompt),
         )
     else:
+        # VIDEO_GEN_ENABLED=false — Phase 5만 순차 실행 (기존 동작 유지)
+        tts_ok, tts_fail = await _run_tts_phase(scenes)
+        logger.info(
+            "[content_processor] Phase 5 완료: TTS 성공=%d 실패=%d",
+            tts_ok, tts_fail,
+        )
         logger.info("[content_processor] VIDEO_GEN_ENABLED=false — Phase 6 스킵")
+        body_summary = ""  # Phase 7 스킵 시에도 body_summary 변수 정의
+
+    _touch_post(post_id)
 
     # ── Phase 7: Video Clip 생성 (GPU 필요, ComfyUI 경유) ─────────
     if VIDEO_GEN_ENABLED:
@@ -161,6 +214,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
 
         # ★ 2막 전환: LLM + TTS VRAM 완전 해제 시퀀스
         await _clear_vram_for_video()
+        _touch_post(post_id)
 
         from ai_worker.video.manager import VideoManager
         from ai_worker.video.comfy_client import ComfyUIClient
@@ -173,6 +227,21 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             VIDEO_CFG, VIDEO_CFG_DISTILLED,
             VIDEO_FPS, VIDEO_WORKFLOW_MODE,
         )
+
+        # ★ Phase 7 진입 전 동적 VRAM 확인 (nvidia-smi 기반)
+        from ai_worker.core.gpu_manager import GPUMemoryManager
+        available_vram = GPUMemoryManager.get_system_available_vram()
+        if available_vram is not None and available_vram > 0 and available_vram < 13.0:
+            logger.warning(
+                "[content_processor] Phase 7 진입 경고: 가용 VRAM %.1fGB < 13GB. "
+                "GGUF Q4 로드 중 OOM 발생 가능. 계속 진행합니다.",
+                available_vram,
+            )
+        else:
+            logger.info(
+                "[content_processor] Phase 7 진입 VRAM 확인: %.1fGB 여유",
+                available_vram if available_vram else 0.0,
+            )
 
         logger.info(
             "[content_processor] Phase 7: 비디오 클립 생성 시작 "
@@ -203,12 +272,16 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             config=video_config,
         )
 
+        def _on_scene_done(scene_idx: int, clip_path: str) -> None:
+            _touch_post(post_id)
+
         scenes = await manager.generate_all_clips(
             scenes=scenes,
             mood=script.get("mood", "daily"),
             post_id=post.id,
             title=post.title or "",
             body_summary=body_summary,
+            on_scene_complete=_on_scene_done,
         )
 
         try:
@@ -224,6 +297,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             "[content_processor] Phase 7 완료: 성공=%d, 실패(삭제)=%d, 최종 씬 수=%d",
             video_ok, video_fail, len(scenes),
         )
+        _touch_post(post_id)
     else:
         logger.info("[content_processor] VIDEO_GEN_ENABLED=false — Phase 7 스킵")
 

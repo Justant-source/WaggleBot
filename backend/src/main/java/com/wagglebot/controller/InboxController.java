@@ -66,15 +66,25 @@ public class InboxController {
     public ResponseEntity<Map<String, Object>> batch(@RequestBody Map<String, Object> req) {
         List<Integer> ids = (List<Integer>) req.get("ids");
         String action = (String) req.get("action");
-        int count = 0;
+        int processed = 0;
+        List<Map<String, Object>> failed = new ArrayList<>();
         for (Integer id : ids) {
             try {
                 if ("approve".equals(action)) approve(id.longValue());
                 else if ("decline".equals(action)) decline(id.longValue());
-                count++;
-            } catch (Exception ignored) {}
+                processed++;
+            } catch (Exception e) {
+                Map<String, Object> failEntry = new LinkedHashMap<>();
+                failEntry.put("id", id);
+                failEntry.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                failed.add(failEntry);
+            }
         }
-        return ResponseEntity.ok(Map.of("processed", count, "action", action));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("processed", processed);
+        body.put("failed", failed);
+        body.put("action", action);
+        return ResponseEntity.ok(body);
     }
 
     @PostMapping("/{id}/analyze")

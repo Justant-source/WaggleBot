@@ -9,6 +9,7 @@ export interface Post {
   status: PostStatus
   engagementScore: number
   retryCount: number
+  lastError?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -77,6 +78,7 @@ export interface Job {
 
 export interface PipelineSettings {
   llm_backend: 'cli' | 'api'
+  llm_api_base_url: string
   llm_model: string
   llm_model_overrides: string
   tts_engine: string

@@ -63,15 +63,19 @@ def _handle_generate_script(job: Job) -> dict:
 
 
 def _handle_tts_preview(job: Job) -> dict:
+    import asyncio
+    from ai_worker.tts.fish_client import synthesize
+
     payload = job.payload or {}
     post_id = job.post_id
+    scope = payload.get("scope", "preview")  # "preview" | "full"
 
     from db.session import SessionLocal
     from db.models import Content
-    from config.settings import load_pipeline_config, MEDIA_DIR
+    from config.settings import load_pipeline_config, MEDIA_DIR, TTS_OUTPUT_FORMAT
 
     cfg = load_pipeline_config()
-    voice = payload.get("voice", cfg.get("tts_voice", "yura"))
+    voice_key = payload.get("voice", cfg.get("tts_voice", "yura"))
 
     with SessionLocal() as db:
         content = db.query(Content).filter_by(post_id=post_id).first()
@@ -80,19 +84,31 @@ def _handle_tts_preview(job: Job) -> dict:
         from db.models import ScriptData
         script = ScriptData.from_json(content.summary_text)
 
-    lines = [script.hook]
-    for item in script.body[:3]:
-        if isinstance(item, dict):
-            lines.extend(item.get("lines", []))
+    if scope == "full":
+        # hook + 전체 body + closer 이어 붙이기
+        lines = [script.hook]
+        for item in script.body:
+            if isinstance(item, dict):
+                lines.extend(item.get("lines", []))
+        closer = getattr(script, "closer", None)
+        if closer:
+            lines.append(closer)
+    else:
+        # 기본 preview: hook + body 앞 3개
+        lines = [script.hook]
+        for item in script.body[:3]:
+            if isinstance(item, dict):
+                lines.extend(item.get("lines", []))
+
     text = " ".join(lines)
 
-    output_path = Path(MEDIA_DIR) / "tmp" / f"preview_{post_id}.mp3"
+    output_path = Path(MEDIA_DIR) / "tmp" / f"preview_{post_id}.{TTS_OUTPUT_FORMAT}"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    from ai_worker.tts.fish_client import FishSpeechClient
-    client = FishSpeechClient()
-    client.synthesize(text, str(output_path), voice=voice)
-    return {"preview_path": str(output_path)}
+    audio_path = asyncio.run(
+        synthesize(text, voice_key=voice_key, output_path=output_path)
+    )
+    return {"preview_path": str(audio_path)}
 
 
 def _handle_ai_fitness(job: Job) -> dict:
