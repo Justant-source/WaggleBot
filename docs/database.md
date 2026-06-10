@@ -1,5 +1,8 @@
 # WaggleBot — 데이터베이스 스키마
 
+> **last-verified:** 2026-06-11 (commit `913e606`)
+> **scope:** DB 스키마, SQLAlchemy 패턴, ScriptData JSON 구조 — SSOT
+
 DB: MariaDB 11, 데이터베이스명: `wagglebot`
 
 ## ER 다이어그램

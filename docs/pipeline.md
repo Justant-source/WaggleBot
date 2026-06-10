@@ -1,5 +1,8 @@
 # WaggleBot — AI 파이프라인 (8-Phase)
 
+> **last-verified:** 2026-06-11 (commit `913e606`)
+> **scope:** 8-Phase AI 파이프라인 상세, LLM 라우팅, 4단계 폴백 — SSOT
+
 ## 개요
 
 `ai_worker` 서비스가 실행하는 콘텐츠 처리 파이프라인. `APPROVED` 상태 Post를 받아 최종 영상까지 생성.

@@ -1,5 +1,8 @@
 # WaggleBot — Docker 서비스 구성
 
+> **last-verified:** 2026-06-11 (commit `913e606`)
+> **scope:** Docker 서비스 포트/볼륨/환경변수/의존성 — SSOT
+
 ## 서비스 의존성 그래프
 
 ```mermaid
@@ -151,7 +154,7 @@ graph TD
 
 ### backend (Spring Boot)
 - **역할:** REST API 서버, Job 큐 관리, 대시보드 백엔드
-- **소스:** `backend/` (현재 domain 엔티티만 구현)
+- **소스:** `backend/` (완전 구현)
 - **포트:** `8080`
 - **볼륨:** `../config:/app/config`, `../assets/media:/app/media`
 - **환경변수:**
@@ -165,7 +168,7 @@ graph TD
 
 ### frontend (Next.js 14)
 - **역할:** 관리자 대시보드 UI
-- **소스:** `frontend/` (App Router 구조 준비됨, 구현 예정)
+- **소스:** `frontend/` (완전 구현, 7개 어드민 페이지 운영 중)
 - **포트:** `3000`
 - **라우트 구조:**
   ```

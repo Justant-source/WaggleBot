@@ -1,5 +1,8 @@
 # WaggleBot — API 레퍼런스
 
+> **last-verified:** 2026-06-11 (commit `913e606`)
+> **scope:** llm-worker·backend·Fish Speech·ComfyUI API 명세 — SSOT
+
 ## 서비스별 엔드포인트
 
 | 서비스 | Base URL | 역할 |
