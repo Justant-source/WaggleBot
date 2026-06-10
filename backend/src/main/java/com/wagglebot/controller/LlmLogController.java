@@ -23,10 +23,18 @@ public class LlmLogController {
         @RequestParam(required = false) Boolean success
     ) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
-        if (callType != null) return ResponseEntity.ok(logRepo.findByCallType(callType, pageable));
-        if (postId != null) return ResponseEntity.ok(logRepo.findByPostId(postId, pageable));
-        if (success != null) return ResponseEntity.ok(logRepo.findBySuccess(success, pageable));
-        return ResponseEntity.ok(logRepo.findAll(pageable));
+        Page<LlmLog> result = logRepo.findAll((root, q, cb) -> {
+            var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
+            if (callType != null && !callType.isBlank())
+                predicates.add(cb.equal(root.get("callType"), callType));
+            if (postId != null)
+                predicates.add(cb.equal(root.get("postId"), postId));
+            if (success != null)
+                predicates.add(cb.equal(root.get("success"), success));
+            return predicates.isEmpty() ? cb.conjunction()
+                : cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
+        }, pageable);
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/{id}")

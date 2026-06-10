@@ -22,7 +22,7 @@ from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts.fish_client import synthesize as tts_synthesize
 from db.models import ScriptData
-from config.settings import MEDIA_DIR, load_pipeline_config, MAX_RETRY_COUNT
+from config.settings import MEDIA_DIR, TTS_OUTPUT_FORMAT, load_pipeline_config, MAX_RETRY_COUNT
 from db.models import Content, Post, PostStatus
 from db.session import SessionLocal
 
@@ -141,7 +141,7 @@ class RobustProcessor:
                 )
 
                 # Phase 4: 씬 배분
-                _director = SceneDirector(_profile, _images, _script_dict, post_id=post.id)
+                _director = SceneDirector(_profile, _images, _script_dict, mood=script.mood, post_id=post.id)
                 _scenes = _director.direct()
                 logger.info("[Step 3/3] 씬=%d개", len(_scenes))
 
@@ -164,10 +164,20 @@ class RobustProcessor:
                     images = post.images if isinstance(post.images, list) else []
                     thumb_path = get_thumbnail_path(post.site_code, post.origin_id)
                     _MOOD_TO_STYLE = {
+                        "humor":       "funny",
+                        "touching":    "dramatic",
+                        "anger":       "dramatic",
+                        "sadness":     "dramatic",
+                        "horror":      "dramatic",
+                        "info":        "news",
+                        "controversy": "dramatic",
+                        "daily":       "funny",
+                        "shock":       "dramatic",
+                        # legacy keys
                         "funny": "funny",
                         "shocking": "dramatic",
                         "serious": "news",
-                        "heartwarming": "question",
+                        "heartwarming": "dramatic",
                     }
                     thumb_style = _MOOD_TO_STYLE.get(script.mood, "dramatic")
                     generate_thumbnail(script.hook, images, thumb_path, style=thumb_style)
@@ -332,13 +342,13 @@ class RobustProcessor:
 
             audio_dir = MEDIA_DIR / "audio" / site_code
             audio_dir.mkdir(parents=True, exist_ok=True)
-            audio_path = audio_dir / f"post_{origin_id}.mp3"
+            audio_path = audio_dir / f"post_{origin_id}.{TTS_OUTPUT_FORMAT}"
 
             # TTS 캐시 확인 (동일 텍스트+목소리 → 재합성 스킵)
             tts_cache_dir = MEDIA_DIR / "tmp" / "tts_cache"
             tts_cache_dir.mkdir(parents=True, exist_ok=True)
             cache_hash = hashlib.md5(f"{voice_id}:{text}".encode()).hexdigest()
-            cached_audio = tts_cache_dir / f"{cache_hash}.mp3"
+            cached_audio = tts_cache_dir / f"{cache_hash}.{TTS_OUTPUT_FORMAT}"
             if cached_audio.exists():
                 shutil.copy2(cached_audio, audio_path)
                 logger.info("[TTS 캐시 히트] post_id=%d", post_id)
@@ -481,7 +491,7 @@ class RobustProcessor:
         session.expire_all()
         post = session.query(Post).filter_by(id=post.id).first()
         post.status = PostStatus.FAILED
-        post.last_error = repr(last_error)[:1000] if last_error else None
+        post.last_error = str(last_error)[:1000] if last_error else None
         session.commit()
 
         logger.error(
@@ -528,7 +538,7 @@ class RobustProcessor:
             sum(1 for s in scenes if getattr(s, "video_mode", None)),
         )
 
-        # Phase 6: video prompt 생성 (Ollama HTTP 호출)
+        # Phase 6: video prompt 생성 (LLM haiku 호출)
         from ai_worker.video.prompt_engine import VideoPromptEngine
 
         prompt_engine = VideoPromptEngine()
@@ -756,7 +766,7 @@ class RobustProcessor:
                     closer=_raw.get("closer", ""),
                     title_suggestion=_raw.get("title_suggestion", ""),
                     tags=_raw.get("tags", []),
-                    mood=_raw.get("mood", "funny"),
+                    mood=_raw.get("mood", "daily"),
                 )
             else:
                 # 레거시 generate_script 경로
@@ -789,10 +799,20 @@ class RobustProcessor:
         완료 시 post.status → PREVIEW_RENDERED.
         """
         _MOOD_TO_STYLE = {
+            "humor":       "funny",
+            "touching":    "dramatic",
+            "anger":       "dramatic",
+            "sadness":     "dramatic",
+            "horror":      "dramatic",
+            "info":        "news",
+            "controversy": "dramatic",
+            "daily":       "funny",
+            "shock":       "dramatic",
+            # legacy keys
             "funny": "funny",
             "shocking": "dramatic",
             "serious": "news",
-            "heartwarming": "question",
+            "heartwarming": "dramatic",
         }
 
         with SessionLocal() as session:
@@ -822,7 +842,7 @@ class RobustProcessor:
             )
 
             # Phase 4: 씬 배분
-            director = SceneDirector(profile, images, script_dict, post_id=post_id)
+            director = SceneDirector(profile, images, script_dict, mood=script.mood, post_id=post_id)
             scenes = director.direct()
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 

@@ -36,13 +36,17 @@ export interface ScriptBodyItem {
   author?: string
 }
 
+export type Mood =
+  | 'humor' | 'touching' | 'anger' | 'sadness'
+  | 'horror' | 'info' | 'controversy' | 'daily' | 'shock'
+
 export interface ScriptData {
   hook: string
   body: ScriptBodyItem[]
   closer: string
   titleSuggestion: string
   tags: string[]
-  mood: string
+  mood: Mood | string
 }
 
 export interface LlmLog {
@@ -88,7 +92,6 @@ export interface PipelineSettings {
   auto_approve_threshold: number | string
   auto_upload: string | boolean
   max_chars_per_line: number | string
-  max_body_items: number | string
   [key: string]: unknown
 }
 

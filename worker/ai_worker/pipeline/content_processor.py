@@ -74,7 +74,9 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
     _touch_post(post_id)
 
     # ── Phase 2: LLM 청킹 (의미 단위) ────────────────────────────
-    llm_output: dict = await chunk_with_llm(post.content or "", profile)
+    llm_output: dict = await chunk_with_llm(
+        post.content or "", profile, post_id=post_id, extended=True
+    )
 
     # ── Phase 3: 물리적 검증 (max_chars 보정) ─────────────────────
     script: dict = validate_and_fix(llm_output)
@@ -96,6 +98,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
 
     director = SceneDirector(
         profile, images, script,
+        mood=script.get("mood", "daily"),
         comment_voices=comment_voices,
         post_id=post.id,
         image_cache_dir=image_cache_dir if VIDEO_GEN_ENABLED else None,

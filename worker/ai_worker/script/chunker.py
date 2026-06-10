@@ -301,11 +301,11 @@ async def chunk_with_llm(
     if not isinstance(result["body"], list):
         result["body"] = [str(result["body"])]
 
-    # extended 모드: 선택 필드 기본값 보정
+    # 선택 필드 기본값 보정 (extended=True 시 전체, False 시 mood만 보장)
+    result.setdefault("mood", "daily")
     if extended:
         result.setdefault("title_suggestion", "")
         result.setdefault("tags", [])
-        result.setdefault("mood", "funny")
         if not isinstance(result["tags"], list):
             result["tags"] = []
 

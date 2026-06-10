@@ -3,10 +3,23 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { editorApi } from '@/lib/api/editor'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { usePollingJob } from '@/lib/hooks/usePollingJob'
 import { useEditorStore } from '@/lib/store/editorStore'
-import type { ScriptData } from '@/lib/types'
+import type { Mood, ScriptData } from '@/lib/types'
 import { Loader2, Save, CheckCircle, Play } from 'lucide-react'
+
+const MOODS: { value: Mood; label: string }[] = [
+  { value: 'humor',       label: '😄 humor — 웃음' },
+  { value: 'touching',    label: '🥹 touching — 감동' },
+  { value: 'anger',       label: '😡 anger — 분노' },
+  { value: 'sadness',     label: '😢 sadness — 슬픔' },
+  { value: 'horror',      label: '😱 horror — 공포' },
+  { value: 'info',        label: '📢 info — 정보' },
+  { value: 'controversy', label: '⚖️ controversy — 논쟁' },
+  { value: 'daily',       label: '💬 daily — 일상' },
+  { value: 'shock',       label: '😮 shock — 반전' },
+]
 
 export default function EditorDetailPage({ params }: { params: { postId: string } }) {
   const id = Number(params.postId)
@@ -141,7 +154,16 @@ export default function EditorDetailPage({ params }: { params: { postId: string 
           </div>
           <div>
             <label className="text-xs font-medium text-gray-500">Mood</label>
-            <input className="mt-1 w-full rounded border border-gray-200 p-2 text-sm" value={script.mood} onChange={(e) => updateField('mood', e.target.value)} />
+            <Select value={script.mood} onValueChange={(v) => updateField('mood', v as Mood)}>
+              <SelectTrigger className="mt-1 w-full">
+                <SelectValue placeholder="mood 선택" />
+              </SelectTrigger>
+              <SelectContent>
+                {MOODS.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       )}

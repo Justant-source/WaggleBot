@@ -34,7 +34,7 @@ def _handle_generate_script(job: Job) -> dict:
             .limit(5)
             .all()
         )
-        comments = [c.content for c in comments_raw]
+        comments = [f"{c.author}: {c.content[:100]}" for c in comments_raw]
         title = post.title
         body = post.content or ""
 
