@@ -138,25 +138,29 @@ export default function InboxPage() {
   const handleBatchApprove = async () => {
     const ids = Array.from(selectedIds)
     if (!ids.length) return
-    const result = await inboxApi.batch(ids, 'approve')
-    if (result.failed?.length > 0) {
-      toast.warning(`${result.processed}개 성공, ${result.failed.length}개 실패`)
-    } else {
-      toast.success(`${result.processed}개 승인`)
-    }
-    clearSelection(); load()
+    try {
+      const result = await inboxApi.batch(ids, 'approve')
+      if (result.failed?.length > 0) {
+        toast.warning(`${result.processed}개 성공, ${result.failed.length}개 실패`)
+      } else {
+        toast.success(`${result.processed}개 승인`)
+      }
+      clearSelection(); load()
+    } catch { toast.error('일괄 승인 실패') }
   }
 
   const handleBatchDecline = async () => {
     const ids = Array.from(selectedIds)
     if (!ids.length) return
-    const result = await inboxApi.batch(ids, 'decline')
-    if (result.failed?.length > 0) {
-      toast.warning(`${result.processed}개 성공, ${result.failed.length}개 실패`)
-    } else {
-      toast.success(`${result.processed}개 거절`)
-    }
-    clearSelection(); load()
+    try {
+      const result = await inboxApi.batch(ids, 'decline')
+      if (result.failed?.length > 0) {
+        toast.warning(`${result.processed}개 성공, ${result.failed.length}개 실패`)
+      } else {
+        toast.success(`${result.processed}개 거절`)
+      }
+      clearSelection(); load()
+    } catch { toast.error('일괄 거절 실패') }
   }
 
   const handleBatchAnalyze = async () => {
@@ -188,9 +192,11 @@ export default function InboxPage() {
   }
 
   const handleCrawl = async () => {
-    const res = await inboxApi.triggerCrawl()
-    setCrawlJobId(res.jobId)
-    toast.info('크롤링 시작...')
+    try {
+      const res = await inboxApi.triggerCrawl()
+      setCrawlJobId(res.jobId)
+      toast.info('크롤링 시작...')
+    } catch { toast.error('크롤링 요청 실패') }
   }
 
   // Keyboard triage
