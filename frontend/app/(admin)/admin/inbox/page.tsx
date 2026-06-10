@@ -6,6 +6,9 @@ import { inboxApi } from '@/lib/api/inbox'
 import { AdminSection } from '@/components/admin/AdminSection'
 import { AdminPagination } from '@/components/admin/AdminPagination'
 import { AdminStatCard } from '@/components/admin/AdminStatCard'
+import { AiFitnessBadge } from '@/components/inbox/AiFitnessBadge'
+import { ScoreBreakdown } from '@/components/inbox/ScoreBreakdown'
+import { TriageDrawer } from '@/components/inbox/TriageDrawer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import type { Post } from '@/lib/types'
 import { useInboxStore } from '@/lib/store/inboxStore'
 import { usePollingJob } from '@/lib/hooks/usePollingJob'
-import { Loader2, RefreshCw, CheckCheck, X, Eye, Image as ImageIcon, Search } from 'lucide-react'
+import { Loader2, RefreshCw, CheckCheck, X, Image as ImageIcon, Search, Sparkles, XCircle } from 'lucide-react'
 
 const SITE_CODES = ['nate_pann', 'bobaedream', 'dcinside', 'fmkorea']
 
@@ -36,11 +39,20 @@ export default function InboxPage() {
   const [data, setData] = useState<{ posts: Post[]; total: number; counts: { tier1: number; tier2: number; tier3: number } } | null>(null)
   const [loading, setLoading] = useState(true)
   const [crawlJobId, setCrawlJobId] = useState<number | null>(null)
-  const [detail, setDetail] = useState<Post | null>(null)
+  const [detailIdx, setDetailIdx] = useState<number | null>(null)
   const [siteFilter, setSiteFilter] = useState('all')
   const [tierFilter, setTierFilter] = useState('all')
   const [searchInput, setSearchInput] = useState('')
   const [activeQ, setActiveQ] = useState('')
+  const [sort, setSort] = useState<'score' | 'ai_score' | 'newest'>('score')
+  const [todayOnly, setTodayOnly] = useState(false)
+  const [recommendedOnly, setRecommendedOnly] = useState(false)
+  const [analyzingIds, setAnalyzingIds] = useState<Set<number>>(new Set())
+  const [batchAnalyzing, setBatchAnalyzing] = useState(false)
+  const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map())
+
+  const detail = detailIdx !== null ? data?.posts[detailIdx] ?? null : null
+
   const searchRef = useRef<HTMLInputElement>(null)
   const { page, selectedIds, toggleSelect, clearSelection, setPage } = useInboxStore()
 
@@ -55,13 +67,16 @@ export default function InboxPage() {
         siteCode: siteFilter !== 'all' ? siteFilter : undefined,
         tier: tierFilter !== 'all' ? tierFilter : undefined,
         q: activeQ.trim() || undefined,
+        sort,
+        since: todayOnly ? new Date(new Date().setHours(0, 0, 0, 0)).toISOString() : undefined,
+        recommended: recommendedOnly || undefined,
       })
       setData(res)
     } catch { toast.error('수신함 로드 실패') }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [page, siteFilter, tierFilter, activeQ])
+  useEffect(() => { load() }, [page, siteFilter, tierFilter, activeQ, sort, todayOnly, recommendedOnly])
 
   const handleFilterChange = () => {
     setPage(0)
@@ -79,13 +94,45 @@ export default function InboxPage() {
   }, [crawlJob.status])
 
   const handleApprove = async (id: number) => {
-    try { await inboxApi.approve(id); toast.success('승인됨'); setDetail(null); load() }
-    catch { toast.error('승인 실패') }
+    // Optimistic removal
+    setData((prev) => {
+      if (!prev) return prev
+      const newPosts = prev.posts.filter((p) => p.id !== id)
+      return { ...prev, posts: newPosts, total: prev.total - 1 }
+    })
+    setDetailIdx((prev) => {
+      if (prev === null) return null
+      const newLen = (data?.posts.length ?? 1) - 1
+      return Math.min(prev, newLen - 1) < 0 ? null : Math.min(prev, newLen - 1)
+    })
+    try {
+      await inboxApi.approve(id)
+      toast.success('승인됨')
+    } catch {
+      toast.error('승인 실패')
+      load()
+    }
   }
 
   const handleDecline = async (id: number) => {
-    try { await inboxApi.decline(id); toast.success('거절됨'); setDetail(null); load() }
-    catch { toast.error('거절 실패') }
+    // Optimistic removal
+    setData((prev) => {
+      if (!prev) return prev
+      const newPosts = prev.posts.filter((p) => p.id !== id)
+      return { ...prev, posts: newPosts, total: prev.total - 1 }
+    })
+    setDetailIdx((prev) => {
+      if (prev === null) return null
+      const newLen = (data?.posts.length ?? 1) - 1
+      return Math.min(prev, newLen - 1) < 0 ? null : Math.min(prev, newLen - 1)
+    })
+    try {
+      await inboxApi.decline(id)
+      toast.success('거절됨')
+    } catch {
+      toast.error('거절 실패')
+      load()
+    }
   }
 
   const handleBatchApprove = async () => {
@@ -100,13 +147,115 @@ export default function InboxPage() {
     clearSelection(); load()
   }
 
+  const handleBatchDecline = async () => {
+    const ids = Array.from(selectedIds)
+    if (!ids.length) return
+    const result = await inboxApi.batch(ids, 'decline')
+    if (result.failed?.length > 0) {
+      toast.warning(`${result.processed}개 성공, ${result.failed.length}개 실패`)
+    } else {
+      toast.success(`${result.processed}개 거절`)
+    }
+    clearSelection(); load()
+  }
+
+  const handleBatchAnalyze = async () => {
+    setBatchAnalyzing(true)
+    try {
+      const unanalyzed = data?.posts.filter((p) => p.aiScore === null || p.aiScore === undefined) ?? []
+      if (!unanalyzed.length) { toast.info('분석할 게시글이 없습니다'); return }
+      const result = await inboxApi.analyzeBatch({ ids: unanalyzed.map((p) => p.id) })
+      toast.success(`${result.enqueued}개 분석 요청됨`)
+      setTimeout(load, 3000)
+    } catch { toast.error('일괄 분석 요청 실패') }
+    finally { setBatchAnalyzing(false) }
+  }
+
+  const handleAnalyzeRequest = async (id: number) => {
+    setAnalyzingIds((prev) => new Set([...prev, id]))
+    try {
+      await inboxApi.analyze(id)
+      toast.success('분석 요청됨')
+      setTimeout(load, 3000)
+    } catch { toast.error('분석 요청 실패') }
+    finally {
+      setAnalyzingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }
+  }
+
   const handleCrawl = async () => {
     const res = await inboxApi.triggerCrawl()
     setCrawlJobId(res.jobId)
     toast.info('크롤링 시작...')
   }
 
+  // Keyboard triage
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.isComposing) return
+      const target = e.target as HTMLElement
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+
+      const len = data?.posts.length ?? 0
+      switch (e.key) {
+        case 'j':
+        case 'ArrowDown': {
+          e.preventDefault()
+          setDetailIdx((prev) => {
+            const next = prev === null ? (len > 0 ? 0 : null) : Math.min(prev + 1, len - 1)
+            if (next !== null) {
+              const row = rowRefs.current.get(data!.posts[next].id)
+              row?.scrollIntoView({ block: 'nearest' })
+            }
+            return next
+          })
+          break
+        }
+        case 'k':
+        case 'ArrowUp': {
+          e.preventDefault()
+          setDetailIdx((prev) => {
+            if (prev === null) return null
+            const next = Math.max(prev - 1, 0)
+            const row = rowRefs.current.get(data!.posts[next].id)
+            row?.scrollIntoView({ block: 'nearest' })
+            return next
+          })
+          break
+        }
+        case 'a':
+        case 'Enter': {
+          if (detail) { e.preventDefault(); handleApprove(detail.id) }
+          break
+        }
+        case 'd': {
+          if (detail) { e.preventDefault(); handleDecline(detail.id) }
+          break
+        }
+        case 'Escape': {
+          setDetailIdx(null)
+          break
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [data?.posts, detail, detailIdx])
+
+  // Blur active element when drawer opens
+  useEffect(() => {
+    if (detailIdx !== null) {
+      ;(document.activeElement as HTMLElement)?.blur()
+    }
+  }, [detailIdx])
+
   const totalPages = data ? Math.ceil(data.total / 20) : 1
+  const hasActiveFilters = siteFilter !== 'all' || tierFilter !== 'all' || activeQ || todayOnly || recommendedOnly
 
   return (
     <div>
@@ -114,11 +263,29 @@ export default function InboxPage() {
         <h1 className="text-xl font-semibold text-gray-900">수신함</h1>
         <div className="flex gap-2">
           {selectedIds.size > 0 && (
-            <Button size="sm" onClick={handleBatchApprove}>
-              <CheckCheck className="mr-1 h-4 w-4" />
-              {selectedIds.size}개 일괄 승인
-            </Button>
+            <>
+              <Button size="sm" onClick={handleBatchApprove}>
+                <CheckCheck className="mr-1 h-4 w-4" />
+                {selectedIds.size}개 일괄 승인
+              </Button>
+              <Button size="sm" variant="outline" className="text-red-600" onClick={handleBatchDecline}>
+                <XCircle className="mr-1 h-4 w-4" />
+                {selectedIds.size}개 일괄 거절
+              </Button>
+            </>
           )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleBatchAnalyze}
+            disabled={batchAnalyzing}
+          >
+            {batchAnalyzing
+              ? <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              : <Sparkles className="mr-1 h-4 w-4" />
+            }
+            미분석 일괄 분석
+          </Button>
           <Button variant="outline" size="sm" onClick={handleCrawl} disabled={crawlJob.isPolling}>
             {crawlJob.isPolling ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1 h-4 w-4" />}
             크롤링
@@ -156,6 +323,38 @@ export default function InboxPage() {
             <SelectItem value="tier3">하위 (&lt;30)</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={sort} onValueChange={(v) => { setSort(v as typeof sort); handleFilterChange() }}>
+          <SelectTrigger className="h-8 w-28 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="score">점수순</SelectItem>
+            <SelectItem value="ai_score">AI점수순</SelectItem>
+            <SelectItem value="newest">최신순</SelectItem>
+          </SelectContent>
+        </Select>
+        {/* 오늘 수집 토글 칩 */}
+        <button
+          onClick={() => { setTodayOnly((v) => !v); handleFilterChange() }}
+          className={`h-8 rounded-full border px-3 text-xs font-medium transition-colors ${
+            todayOnly
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          오늘 수집
+        </button>
+        {/* 추천만 토글 칩 */}
+        <button
+          onClick={() => { setRecommendedOnly((v) => !v); handleFilterChange() }}
+          className={`h-8 rounded-full border px-3 text-xs font-medium transition-colors ${
+            recommendedOnly
+              ? 'bg-amber-500 text-white border-amber-500'
+              : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+          }`}
+        >
+          ★ 추천만
+        </button>
         <div className="flex flex-1 gap-1">
           <Input
             ref={searchRef}
@@ -168,7 +367,7 @@ export default function InboxPage() {
           <Button size="sm" variant="outline" className="h-8 px-2" onClick={handleSearch}>
             <Search className="h-3.5 w-3.5" />
           </Button>
-          {(siteFilter !== 'all' || tierFilter !== 'all' || activeQ) && (
+          {hasActiveFilters && (
             <Button
               size="sm"
               variant="ghost"
@@ -176,6 +375,7 @@ export default function InboxPage() {
               onClick={() => {
                 setSiteFilter('all'); setTierFilter('all')
                 setSearchInput(''); setActiveQ('')
+                setSort('score'); setTodayOnly(false); setRecommendedOnly(false)
                 handleFilterChange()
               }}
             >
@@ -193,26 +393,41 @@ export default function InboxPage() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
                 <tr>
-                  <th className="px-3 py-2 text-left w-8"><input type="checkbox" onChange={(e) => e.target.checked && data ? useInboxStore.getState().selectAll(data.posts) : clearSelection()} /></th>
+                  <th className="px-3 py-2 text-left w-8">
+                    <input
+                      type="checkbox"
+                      onChange={(e) =>
+                        e.target.checked && data ? useInboxStore.getState().selectAll(data.posts) : clearSelection()
+                      }
+                    />
+                  </th>
                   <th className="px-3 py-2 text-left">제목</th>
                   <th className="px-3 py-2 text-left w-16">사이트</th>
                   <th className="px-3 py-2 text-right w-20">점수</th>
                   <th className="px-3 py-2 text-left w-16">티어</th>
+                  <th className="px-3 py-2 text-center w-28">AI 적합도</th>
                   <th className="px-3 py-2 text-center w-40">액션</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {data?.posts.map((post) => {
+                {data?.posts.map((post, idx) => {
                   const stats = (post.stats ?? {}) as PostStats
                   const imgCount = Array.isArray(post.images) ? post.images.length : 0
+                  const isSelected = selectedIds.has(post.id)
+                  const isActive = detailIdx === idx
                   return (
-                    <tr key={post.id} className="hover:bg-gray-50">
+                    <tr
+                      key={post.id}
+                      ref={(el) => { if (el) rowRefs.current.set(post.id, el); else rowRefs.current.delete(post.id) }}
+                      aria-selected={isActive}
+                      className={`hover:bg-gray-50 transition-colors ${isActive ? 'bg-blue-50 ring-1 ring-inset ring-blue-200' : ''}`}
+                    >
                       <td className="px-3 py-2">
-                        <input type="checkbox" checked={selectedIds.has(post.id)} onChange={() => toggleSelect(post.id)} />
+                        <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(post.id)} />
                       </td>
                       <td className="px-3 py-2 max-w-md">
                         <button
-                          onClick={() => setDetail(post)}
+                          onClick={() => setDetailIdx(idx)}
                           className="group flex items-center gap-2 text-left font-medium text-gray-900 hover:text-blue-600"
                           title="내용 보기"
                         >
@@ -228,13 +443,19 @@ export default function InboxPage() {
                         </div>
                       </td>
                       <td className="px-3 py-2 text-gray-500">{post.siteCode}</td>
-                      <td className="px-3 py-2 text-right font-mono">{Math.round(post.engagementScore)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <ScoreBreakdown post={post} />
+                      </td>
                       <td className="px-3 py-2">{tierBadge(post.engagementScore)}</td>
+                      <td className="px-3 py-2 text-center">
+                        <AiFitnessBadge
+                          post={post}
+                          onAnalyzeRequest={() => handleAnalyzeRequest(post.id)}
+                          isAnalyzing={analyzingIds.has(post.id)}
+                        />
+                      </td>
                       <td className="px-3 py-2">
                         <div className="flex justify-center gap-1">
-                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setDetail(post)}>
-                            <Eye className="mr-1 h-3 w-3" />보기
-                          </Button>
                           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleApprove(post.id)}>승인</Button>
                           <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600" onClick={() => handleDecline(post.id)}>거절</Button>
                         </div>
@@ -251,107 +472,17 @@ export default function InboxPage() {
         )}
       </AdminSection>
 
-      <PostDetailDrawer
+      <TriageDrawer
         post={detail}
-        onClose={() => setDetail(null)}
+        posts={data?.posts ?? []}
+        detailIdx={detailIdx}
+        onClose={() => setDetailIdx(null)}
         onApprove={handleApprove}
         onDecline={handleDecline}
+        onNavigate={setDetailIdx}
+        onAnalyzeRequest={handleAnalyzeRequest}
+        analyzingIds={analyzingIds}
       />
-    </div>
-  )
-}
-
-function PostDetailDrawer({
-  post, onClose, onApprove, onDecline,
-}: {
-  post: Post | null
-  onClose: () => void
-  onApprove: (id: number) => void
-  onDecline: (id: number) => void
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    if (post) window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [post, onClose])
-
-  if (!post) return null
-
-  const stats = (post.stats ?? {}) as PostStats
-  const images = Array.isArray(post.images) ? (post.images as string[]) : []
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      {/* backdrop */}
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-
-      {/* panel */}
-      <div className="relative flex h-full w-full max-w-2xl flex-col bg-white shadow-xl">
-        {/* header */}
-        <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
-          <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{post.siteCode}</Badge>
-              {tierBadge(post.engagementScore)}
-              <span className="text-xs text-gray-400">점수 {Math.round(post.engagementScore)}</span>
-            </div>
-            <h2 className="text-lg font-semibold leading-snug text-gray-900">{post.title}</h2>
-          </div>
-          <button onClick={onClose} className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700" title="닫기 (Esc)">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        {/* meta */}
-        <div className="flex flex-wrap gap-x-6 gap-y-1 border-b border-gray-100 px-6 py-3 text-sm text-gray-500">
-          <span>조회 <b className="text-gray-700">{stats.views ?? 0}</b></span>
-          <span>추천 <b className="text-gray-700">{stats.likes ?? 0}</b></span>
-          <span>댓글 <b className="text-gray-700">{stats.comments_count ?? 0}</b></span>
-          <span>수집 {post.createdAt ? new Date(post.createdAt).toLocaleString('ko-KR') : '-'}</span>
-        </div>
-
-        {/* body (scrollable) */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          {post.content ? (
-            <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-gray-800">
-              {post.content}
-            </p>
-          ) : (
-            <p className="text-sm text-gray-400">본문 내용이 없습니다.</p>
-          )}
-
-          {images.length > 0 && (
-            <div className="mt-6">
-              <div className="mb-2 flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-gray-400">
-                <ImageIcon className="h-3.5 w-3.5" /> 이미지 {images.length}
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                {images.map((src, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <a key={i} href={src} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-gray-200">
-                    <img
-                      src={src}
-                      alt={`이미지 ${i + 1}`}
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
-                      className="h-auto w-full object-cover"
-                      onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none' }}
-                    />
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* footer actions */}
-        <div className="flex justify-end gap-2 border-t border-gray-200 px-6 py-4">
-          <Button variant="ghost" className="text-red-600" onClick={() => onDecline(post.id)}>거절</Button>
-          <Button onClick={() => onApprove(post.id)}>
-            <CheckCheck className="mr-1 h-4 w-4" /> 승인 (대본 생성)
-          </Button>
-        </div>
-      </div>
     </div>
   )
 }

@@ -9,6 +9,8 @@ import org.springframework.data.domain.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 @RestController
@@ -17,6 +19,7 @@ import java.util.*;
 public class InboxController {
 
     private final PostRepository postRepo;
+    private final CommentRepository commentRepo;
     private final JobService jobService;
 
     @GetMapping
@@ -25,9 +28,20 @@ public class InboxController {
         @RequestParam(defaultValue = "20") int size,
         @RequestParam(required = false) String siteCode,
         @RequestParam(required = false) String q,
-        @RequestParam(required = false) String tier
+        @RequestParam(required = false) String tier,
+        @RequestParam(required = false) String sort,
+        @RequestParam(required = false) String since,
+        @RequestParam(required = false) Boolean recommended
     ) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by("engagementScore").descending());
+        Sort pageSort;
+        if ("ai_score".equals(sort)) {
+            pageSort = Sort.by(Sort.Order.desc("aiScore")).and(Sort.by(Sort.Order.desc("engagementScore")));
+        } else if ("newest".equals(sort)) {
+            pageSort = Sort.by("createdAt").descending();
+        } else {
+            pageSort = Sort.by("engagementScore").descending();
+        }
+        Pageable pageable = PageRequest.of(page, size, pageSort);
         Page<Post> posts = postRepo.findAll(
             (root, query, cb) -> {
                 var predicates = new ArrayList<jakarta.persistence.criteria.Predicate>();
@@ -42,6 +56,13 @@ public class InboxController {
                     predicates.add(cb.between(root.get("engagementScore"), 30.0, 79.99));
                 else if ("tier3".equals(tier))
                     predicates.add(cb.lessThan(root.get("engagementScore"), 30.0));
+                if (since != null && !since.isBlank()) {
+                    LocalDateTime dt = LocalDateTime.parse(since, DateTimeFormatter.ISO_DATE_TIME);
+                    predicates.add(cb.greaterThanOrEqualTo(root.get("createdAt"), dt));
+                }
+                if (recommended != null && recommended) {
+                    predicates.add(cb.equal(root.get("aiRecommended"), true));
+                }
                 return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
             },
             pageable
@@ -103,6 +124,53 @@ public class InboxController {
         body.put("action", action);
         return ResponseEntity.ok(body);
     }
+
+    @GetMapping("/{id}/comments")
+    public ResponseEntity<Map<String, Object>> getComments(
+        @PathVariable Long id,
+        @RequestParam(defaultValue = "5") int limit
+    ) {
+        List<Map<String, Object>> comments = commentRepo.findByPostIdOrderByLikesDesc(id)
+            .stream()
+            .limit(limit)
+            .map(c -> {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", c.getId());
+                m.put("author", c.getAuthor());
+                m.put("content", c.getContent());
+                m.put("likes", c.getLikes());
+                return m;
+            })
+            .toList();
+        return ResponseEntity.ok(Map.of("comments", comments));
+    }
+
+    @PostMapping("/analyze-batch")
+    public ResponseEntity<Map<String, Object>> analyzeBatch(
+        @RequestBody(required = false) AnalyzeBatchRequest req
+    ) {
+        List<Long> ids;
+        int limit = req != null && req.limit() > 0 ? Math.min(req.limit(), 20) : 20;
+        if (req != null && req.ids() != null && !req.ids().isEmpty()) {
+            ids = req.ids().stream().limit(20).toList();
+        } else {
+            ids = postRepo.findAll(
+                (root, query, cb) -> cb.and(
+                    cb.equal(root.get("status"), PostStatus.COLLECTED),
+                    cb.isNull(root.get("aiScore"))
+                ),
+                PageRequest.of(0, limit, Sort.by("engagementScore").descending())
+            ).map(Post::getId).toList();
+        }
+        List<Long> jobIds = new ArrayList<>();
+        for (Long postId : ids) {
+            var job = jobService.createJob(JobType.AI_FITNESS, postId, null);
+            jobIds.add(job.getId());
+        }
+        return ResponseEntity.ok(Map.of("enqueued", jobIds.size(), "jobIds", jobIds));
+    }
+
+    public record AnalyzeBatchRequest(List<Long> ids, int limit) {}
 
     @PostMapping("/{id}/analyze")
     public ResponseEntity<Map<String, Object>> analyze(@PathVariable Long id) {

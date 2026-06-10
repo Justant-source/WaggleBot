@@ -57,6 +57,9 @@ def _handle_generate_script(job: Job) -> dict:
             content = ContentModel(post_id=post_id)
             db.add(content)
         content.summary_text = script.to_json()
+        # gen_instructions 영속화 (에디터에서 사용한 지시문 저장)
+        if extra_instructions:
+            content.gen_instructions = extra_instructions[:1000]
         db.commit()
 
     return {"script_json": script.to_json()}
@@ -75,7 +78,6 @@ def _handle_tts_preview(job: Job) -> dict:
     from config.settings import load_pipeline_config, MEDIA_DIR, TTS_OUTPUT_FORMAT
 
     cfg = load_pipeline_config()
-    voice_key = payload.get("voice", cfg.get("tts_voice", "yura"))
 
     with SessionLocal() as db:
         content = db.query(Content).filter_by(post_id=post_id).first()
@@ -83,6 +85,9 @@ def _handle_tts_preview(job: Job) -> dict:
             raise ValueError("TTS 미리듣기: 대본 없음")
         from db.models import ScriptData
         script = ScriptData.from_json(content.summary_text)
+        _post_voice = content.tts_voice  # 게시글별 보이스 (없으면 None)
+
+    voice_key = payload.get("voice") or _post_voice or cfg.get("tts_voice", "yura")
 
     if scope == "full":
         # hook + 전체 body + closer 이어 붙이기
@@ -113,6 +118,8 @@ def _handle_tts_preview(job: Job) -> dict:
 
 def _handle_ai_fitness(job: Job) -> dict:
     post_id = job.post_id
+    import json
+    from datetime import datetime, timezone
 
     from db.session import SessionLocal
     from db.models import Post
@@ -128,10 +135,37 @@ def _handle_ai_fitness(job: Job) -> dict:
     prompt = (
         f"다음 게시글이 유튜브 쇼츠 콘텐츠로 적합한지 분석하세요.\n"
         f"제목: {title}\n내용 앞부분: {body}\n\n"
-        'JSON으로 응답: {"score": 0~100, "reason": "한 줄 이유", "recommended": true/false}'
+        f"JSON 형식으로 답하세요:\n"
+        f'{{"score": 0-100, "reason": "이유 (한국어, 100자 이내)", "recommended": true/false}}\n'
+        f"score 기준: 100=매우 적합(드라마틱한 사연/공감/화제성), 0=전혀 부적합(광고/스팸/단순정보)"
     )
-    raw = call_llm_raw(prompt, max_tokens=200)
-    return {"raw": raw}
+
+    raw = call_llm_raw(prompt, call_type="ai_fitness")
+
+    # 견고한 파싱: 첫 '{' 위치에서 JSONDecoder.raw_decode 시도 (중첩/한국어 } 포함 안전)
+    start = raw.find('{')
+    if start == -1:
+        raise ValueError(f"AI 적합도 파싱 실패 — JSON 블록 없음: {raw[:200]}")
+    try:
+        data, _ = json.JSONDecoder().raw_decode(raw, start)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"AI 적합도 JSON 파싱 실패: {e}") from e
+
+    score = max(0, min(100, int(data.get("score", 50))))
+    reason = str(data.get("reason", ""))[:500]
+    recommended = bool(data.get("recommended", score >= 60))
+
+    with SessionLocal() as db:
+        post = db.query(Post).filter_by(id=post_id).first()
+        if not post:
+            raise ValueError(f"Post {post_id} not found (영속화)")
+        post.ai_score = score
+        post.ai_reason = reason
+        post.ai_recommended = recommended
+        post.ai_analyzed_at = datetime.now(timezone.utc)
+        db.commit()
+
+    return {"score": score, "reason": reason, "recommended": recommended}
 
 
 def _handle_manual_crawl(job: Job) -> dict:
@@ -175,7 +209,7 @@ def _handle_hd_render(job: Job) -> dict:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     from ai_worker.renderer.composer import render_final_video
-    render_final_video(post, content, output_path=output_path)
+    render_final_video(post, content, output_path=output_path, voice_key=content.tts_voice)
 
     with SessionLocal() as db:
         db.query(Content).filter_by(post_id=post_id).update({"video_path": output_path})
@@ -191,13 +225,16 @@ def _handle_upload(job: Job) -> dict:
     platform = payload.get("platform", "youtube")
 
     from db.session import SessionLocal
-    from db.models import Post, Content
+    from db.models import Post, Content, PostStatus
     from uploaders.uploader import upload_post
 
     with SessionLocal() as db:
         post = db.query(Post).filter_by(id=post_id).first()
         content = db.query(Content).filter_by(post_id=post_id).first()
         result = upload_post(post, content, db, target_platform=platform)
+        if result:
+            post.status = PostStatus.UPLOADED
+        db.commit()
     return {"platform": platform, "result": result}
 
 

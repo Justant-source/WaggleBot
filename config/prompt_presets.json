@@ -1,0 +1,34 @@
+{
+  "presets": [
+    {
+      "key": "hook_question",
+      "label": "의문형 후킹",
+      "extra_instructions": "hook은 반드시 의문형으로 작성하세요. 예: '왜 이런 일이 벌어졌을까?'"
+    },
+    {
+      "key": "hook_exclamation",
+      "label": "감탄형 후킹",
+      "extra_instructions": "hook은 반드시 감탄형으로 작성하세요. 예: '이건 진짜 충격이다!'"
+    },
+    {
+      "key": "body_short",
+      "label": "짧은 문장체",
+      "extra_instructions": "body 각 문장은 15자 이내로 매우 짧고 임팩트 있게 작성하세요."
+    },
+    {
+      "key": "body_narrative",
+      "label": "기승전결 스토리",
+      "extra_instructions": "body는 기승전결 스토리 구조로 서사적으로 흥미롭게 작성하세요."
+    },
+    {
+      "key": "tone_formal",
+      "label": "뉴스 앵커 어투",
+      "extra_instructions": "전체 대본을 뉴스 앵커처럼 격식체(~습니다/~했습니다)로 작성하세요."
+    },
+    {
+      "key": "tone_casual",
+      "label": "친구 대화체",
+      "extra_instructions": "전체 대본을 친구에게 얘기하듯 반말 구어체(~했는데/~ㅋㅋ)로 작성하세요."
+    }
+  ]
+}

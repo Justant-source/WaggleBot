@@ -27,32 +27,44 @@ logger = logging.getLogger(__name__)
 # 사전 정의 변형 프리셋
 # ---------------------------------------------------------------------------
 
-VARIANT_PRESETS: dict[str, dict] = {
-    "hook_question": {
-        "label": "의문형 후킹",
-        "extra_instructions": "hook은 반드시 의문형으로 작성하세요. 예: '왜 이런 일이 벌어졌을까?'",
-    },
-    "hook_exclamation": {
-        "label": "감탄형 후킹",
-        "extra_instructions": "hook은 반드시 감탄형으로 작성하세요. 예: '이건 진짜 충격이다!'",
-    },
-    "body_short": {
-        "label": "짧은 body",
-        "extra_instructions": "body 각 문장은 15자 이내로 매우 짧고 임팩트 있게 작성하세요.",
-    },
-    "body_narrative": {
-        "label": "서사형 body",
-        "extra_instructions": "body는 기승전결 스토리 구조로 서사적으로 흥미롭게 작성하세요.",
-    },
-    "tone_formal": {
-        "label": "뉴스 말투",
-        "extra_instructions": "전체 대본을 뉴스 앵커처럼 격식체(~습니다/~했습니다)로 작성하세요.",
-    },
-    "tone_casual": {
-        "label": "구어 말투",
-        "extra_instructions": "전체 대본을 친구에게 얘기하듯 반말 구어체(~했는데/~ㅋㅋ)로 작성하세요.",
-    },
-}
+def _load_variant_presets() -> dict:
+    """config/prompt_presets.json 에서 로드, 없으면 기존 하드코딩 폴백."""
+    config_path = Path(__file__).parent.parent.parent / "config" / "prompt_presets.json"
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            return {p["key"]: {"extra_instructions": p["extra_instructions"]} for p in data.get("presets", [])}
+        except Exception:
+            pass
+    # 폴백: 기존 하드코딩 값
+    return {
+        "hook_question": {
+            "label": "의문형 후킹",
+            "extra_instructions": "hook은 반드시 의문형으로 작성하세요. 예: '왜 이런 일이 벌어졌을까?'",
+        },
+        "hook_exclamation": {
+            "label": "감탄형 후킹",
+            "extra_instructions": "hook은 반드시 감탄형으로 작성하세요. 예: '이건 진짜 충격이다!'",
+        },
+        "body_short": {
+            "label": "짧은 body",
+            "extra_instructions": "body 각 문장은 15자 이내로 매우 짧고 임팩트 있게 작성하세요.",
+        },
+        "body_narrative": {
+            "label": "서사형 body",
+            "extra_instructions": "body는 기승전결 스토리 구조로 서사적으로 흥미롭게 작성하세요.",
+        },
+        "tone_formal": {
+            "label": "뉴스 말투",
+            "extra_instructions": "전체 대본을 뉴스 앵커처럼 격식체(~습니다/~했습니다)로 작성하세요.",
+        },
+        "tone_casual": {
+            "label": "구어 말투",
+            "extra_instructions": "전체 대본을 친구에게 얘기하듯 반말 구어체(~했는데/~ㅋㅋ)로 작성하세요.",
+        },
+    }
+
+VARIANT_PRESETS: dict[str, dict] = _load_variant_presets()
 
 
 # ---------------------------------------------------------------------------

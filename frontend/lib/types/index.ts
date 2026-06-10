@@ -12,6 +12,10 @@ export interface Post {
   lastError?: string | null
   createdAt: string
   updatedAt: string
+  aiScore?: number | null
+  aiReason?: string | null
+  aiRecommended?: boolean | null
+  aiAnalyzedAt?: string | null
 }
 
 export type PostStatus =
@@ -27,6 +31,8 @@ export interface Content {
   uploadMeta: Record<string, unknown> | null
   pipelineState: Record<string, unknown> | null
   createdAt: string
+  ttsVoice?: string | null
+  genInstructions?: string | null
 }
 
 export interface ScriptBodyItem {
@@ -101,4 +107,41 @@ export interface PageResponse<T> {
   totalPages: number
   number: number
   size: number
+}
+
+export interface VoiceInfo {
+  key: string
+  label: string
+  sampleUrl: string
+}
+
+export interface PromptPreset {
+  key: string
+  label: string
+  extra_instructions: string
+}
+
+export interface PostProgress {
+  currentPhase: number
+  phaseName: string
+  phaseStartedAt?: string
+  scenesDone?: number
+  totalScenes?: number
+  updatedAt?: string
+  done?: boolean
+}
+
+export interface ProcessingPost extends Post {
+  progress?: PostProgress | null
+}
+
+export interface OverviewData {
+  counts: Record<string, number>
+  today: {
+    crawled: number
+    uploaded: number
+    declined: number
+  }
+  failedRecent: Post[]
+  processing: ProcessingPost[]
 }

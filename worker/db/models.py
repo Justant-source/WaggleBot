@@ -83,6 +83,10 @@ class Post(Base):
     last_error = Column(String(1000), nullable=True)
     created_at = Column(DateTime, nullable=False, default=_utcnow)
     updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+    ai_score = Column(Integer, nullable=True)
+    ai_reason = Column(String(500), nullable=True)
+    ai_recommended = Column(Boolean, nullable=True)
+    ai_analyzed_at = Column(DateTime(timezone=True), nullable=True)
 
     comments = relationship("Comment", back_populates="post", cascade="all, delete-orphan")
 
@@ -130,6 +134,8 @@ class Content(Base):
     variant_group = Column(String(64), nullable=True)   # A/B 테스트 그룹 ID
     variant_label = Column(String(32), nullable=True)    # "A" 또는 "B"
     variant_config = Column(JSON, nullable=True)         # 해당 variant의 설정값
+    tts_voice = Column(String(32), nullable=True)
+    gen_instructions = Column(String(1000), nullable=True)
 
     post = relationship("Post", backref="content_item")
 

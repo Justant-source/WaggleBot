@@ -724,14 +724,19 @@ def _render_pipeline(
 # Public API
 # ---------------------------------------------------------------------------
 
-def render_layout_video(post, script, output_path: Path | None = None) -> Path:
+def render_layout_video(
+    post,
+    script,
+    output_path: Path | None = None,
+    voice_key: str | None = None,
+) -> Path:
     """레이아웃 기반 쇼츠 영상 렌더링."""
     from config import settings as s
     from config.settings import load_pipeline_config, VOICE_DEFAULT
 
     layout = _load_layout()
     _pipeline_cfg = load_pipeline_config()
-    voice: str = _pipeline_cfg.get("tts_voice", VOICE_DEFAULT)
+    voice: str = voice_key or _pipeline_cfg.get("tts_voice", VOICE_DEFAULT)
     rate: str = getattr(s, "TTS_RATE", "+25%")
     sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
     max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
@@ -790,6 +795,7 @@ def render_layout_video_from_scenes(
     output_path: Path | None = None,
     save_tts_cache: Path | None = None,
     tts_audio_cache: Path | None = None,
+    voice_key: str | None = None,
 ) -> Path:
     """SceneDirector 출력(SceneDecision 목록)으로 직접 렌더링."""
     from config import settings as s
@@ -797,7 +803,7 @@ def render_layout_video_from_scenes(
 
     layout = _load_layout()
     _pipeline_cfg = load_pipeline_config()
-    voice: str = _pipeline_cfg.get("tts_voice", VOICE_DEFAULT)
+    voice: str = voice_key or _pipeline_cfg.get("tts_voice", VOICE_DEFAULT)
     rate: str = getattr(s, "TTS_RATE", "+25%")
     sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
     max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)

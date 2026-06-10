@@ -33,11 +33,14 @@ public class SettingsService {
         Map.entry("llm_model_overrides", "{}"),
         Map.entry("llm_backend", "cli"),
         Map.entry("llm_api_base_url", "https://api.anthropic.com/v1"),
+        Map.entry("llm_prompt_cache", "true"),
+        Map.entry("llm_cache_ttl", "5m"),
         Map.entry("tts_engine", "fish-speech"),
         Map.entry("tts_voice", "yura"),
         Map.entry("auto_approve_enabled", "false"),
         Map.entry("auto_approve_threshold", "80"),
         Map.entry("auto_upload", "false"),
+        Map.entry("upload_privacy", "unlisted"),
         Map.entry("use_content_processor", "false"),
         Map.entry("max_chars_per_line", "20")
     );

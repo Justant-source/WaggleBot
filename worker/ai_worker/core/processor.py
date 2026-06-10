@@ -18,6 +18,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ai_worker.core.gpu_manager import get_gpu_manager, ModelType
+from ai_worker.core.progress import stamp_progress, clear_checkpoint_keep_progress
 from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts.fish_client import synthesize as tts_synthesize
@@ -27,6 +28,17 @@ from db.models import Content, Post, PostStatus
 from db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_post_voice(post_id: int) -> str | None:
+    """게시글별 TTS 보이스 조회 (없으면 None → 전역 설정 사용)."""
+    try:
+        with SessionLocal() as db:
+            ct = db.query(Content).filter_by(post_id=post_id).first()
+            return ct.tts_voice if ct else None
+    except Exception:
+        logger.warning("[voice] post_id=%d 보이스 조회 실패", post_id, exc_info=True)
+        return None
 
 
 # ===========================================================================
@@ -155,10 +167,11 @@ class RobustProcessor:
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
 
                 # ===== Content 저장 (stale 객체 방지: 세션 갱신 후 re-fetch) =====
+                _saved_post_id = post.id
                 session.expire_all()
-                post = session.query(Post).filter_by(id=post.id).first()
+                post = session.query(Post).filter_by(id=_saved_post_id).first()
                 if post is None:
-                    raise ValueError(f"Post {post_id} 렌더링 완료 후 DB에서 사라짐 — 외부 삭제 가능성")
+                    raise ValueError(f"Post {_saved_post_id} 렌더링 완료 후 DB에서 사라짐 — 외부 삭제 가능성")
                 self._save_content(post, session, script, audio_path, video_path)
 
                 # ===== 썸네일 생성 =====
@@ -331,7 +344,12 @@ class RobustProcessor:
             raise
 
     async def _safe_generate_tts(
-        self, text: str, post_id: int, site_code: str, origin_id: str
+        self,
+        text: str,
+        post_id: int,
+        site_code: str,
+        origin_id: str,
+        voice_override: str | None = None,
     ) -> Path:
         """
         안전하게 TTS 음성 생성
@@ -341,6 +359,7 @@ class RobustProcessor:
             post_id: 게시글 DB ID (캐시 로그용)
             site_code: 커뮤니티 코드
             origin_id: 원본 게시글 ID
+            voice_override: 게시글별 보이스 오버라이드 (None → pipeline.json tts_voice 사용)
 
         Returns:
             음성 파일 경로
@@ -349,7 +368,7 @@ class RobustProcessor:
             Exception: TTS 에러
         """
         try:
-            voice_id = self.cfg.get("tts_voice", "default")
+            voice_id = voice_override or self.cfg.get("tts_voice", "default")
 
             audio_dir = MEDIA_DIR / "audio" / site_code
             audio_dir.mkdir(parents=True, exist_ok=True)
@@ -499,10 +518,11 @@ class RobustProcessor:
             attempts: 시도 횟수
         """
         # stale 객체 방지: 장시간 작업 후 세션 갱신
+        _post_id = post.id
         session.expire_all()
-        post = session.query(Post).filter_by(id=post.id).first()
+        post = session.query(Post).filter_by(id=_post_id).first()
         if post is None:
-            logger.error("최종 실패 처리 불가: Post %d DB 없음", post_id)
+            logger.error("최종 실패 처리 불가: Post %d DB 없음", _post_id)
             return
         post.status = PostStatus.FAILED
         post.last_error = str(last_error)[:1000] if last_error else None
@@ -553,6 +573,7 @@ class RobustProcessor:
         )
 
         # Phase 6: video prompt 생성 (LLM haiku 호출)
+        stamp_progress(post_id, 6, "비디오 프롬프트")
         from ai_worker.video.prompt_engine import VideoPromptEngine
 
         prompt_engine = VideoPromptEngine()
@@ -664,6 +685,8 @@ class RobustProcessor:
         _done_scenes: list[int] = list(checkpoint.video_scenes_done) if checkpoint else []
         _done_clips: dict[str, str] = dict(checkpoint.video_clips) if checkpoint else {}
 
+        stamp_progress(post_id, 7, "비디오 클립", scenes_done=0, total_scenes=len(scenes))
+
         def _on_scene_complete(scene_idx: int, clip_path: str) -> None:
             _done_scenes.append(scene_idx)
             _done_clips[str(scene_idx)] = clip_path
@@ -671,12 +694,30 @@ class RobustProcessor:
                 with SessionLocal() as cb_sess:
                     ct = cb_sess.query(Content).filter_by(post_id=post_id).first()
                     if ct is not None:
-                        ct.pipeline_state = VideoCheckpoint(
+                        # 기존 state 읽기 (progress 보존)
+                        state: dict = dict(ct.pipeline_state or {})
+                        # 체크포인트 키 갱신
+                        checkpoint_dict = VideoCheckpoint(
                             phase=7,
                             video_scenes_done=list(_done_scenes),
                             video_clips=dict(_done_clips),
                             total_scenes=len(scenes),
                         ).to_dict()
+                        state.update(checkpoint_dict)
+                        # 진행 스탬프 갱신 (단일 쓰기)
+                        from datetime import datetime, timezone
+                        now = datetime.now(timezone.utc).isoformat()
+                        prev_p = state.get("progress") or {}
+                        state["progress"] = {
+                            "current_phase": 7,
+                            "phase_name": "비디오 클립",
+                            "phase_started_at": prev_p.get("phase_started_at", now) if prev_p.get("current_phase") == 7 else now,
+                            "scenes_done": len(_done_scenes),
+                            "total_scenes": len(scenes),
+                            "updated_at": now,
+                            "done": False,
+                        }
+                        ct.pipeline_state = state
                         cb_sess.commit()
             except Exception:
                 logger.warning("[video] 체크포인트 저장 실패 (비치명적)", exc_info=True)
@@ -691,13 +732,9 @@ class RobustProcessor:
             on_scene_complete=_on_scene_complete,
         )
 
-        # Phase 7 정상 완료 → 체크포인트 클리어
+        # Phase 7 정상 완료 → 체크포인트 클리어 (progress 보존)
         try:
-            with SessionLocal() as clear_sess:
-                ct = clear_sess.query(Content).filter_by(post_id=post_id).first()
-                if ct is not None:
-                    ct.pipeline_state = None
-                    clear_sess.commit()
+            clear_checkpoint_keep_progress(post_id)
         except Exception:
             logger.warning("[video] 체크포인트 클리어 실패 (비치명적)", exc_info=True)
 
@@ -746,6 +783,7 @@ class RobustProcessor:
             post.last_error = None
             session.commit()
             logger.info("[Pipeline LLM+TTS] 시작: post_id=%d", post_id)
+            stamp_progress(post_id, 1, "자원 분석")
 
             # A/B 테스트 변형 배정 (활성 테스트 있을 경우)
             try:
@@ -757,6 +795,7 @@ class RobustProcessor:
 
             use_cp = self.cfg.get("use_content_processor") == "true"
 
+            stamp_progress(post_id, 2, "대본 생성")
             if use_cp:
                 # 5-Phase content_processor 파이프라인
                 from ai_worker.script.chunker import chunk_with_llm
@@ -788,10 +827,14 @@ class RobustProcessor:
 
             logger.info("[Pipeline LLM+TTS] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
 
+            _post_voice = _resolve_post_voice(post_id)
+            stamp_progress(post_id, 5, "TTS 합성")
             with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
                 audio_path = await self._safe_generate_tts(
-                    script.to_plain_text(), post_id, post.site_code, post.origin_id
+                    script.to_plain_text(), post_id, post.site_code, post.origin_id,
+                    voice_override=_post_voice,
                 )
+            stamp_progress(post_id, 5, "TTS 합성", done=True)
             logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
 
             # 중간 결과 저장 (렌더 단계에서 재사용)
@@ -856,6 +899,7 @@ class RobustProcessor:
             )
 
             # Phase 4: 씬 배분
+            stamp_progress(post_id, 4, "씬 구성")
             director = SceneDirector(profile, images, script_dict, mood=script.mood, post_id=post_id)
             scenes = director.direct()
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
@@ -865,8 +909,12 @@ class RobustProcessor:
                 scenes, script, post.title or "", post_id
             )
 
+            stamp_progress(post_id, 8, "FFmpeg 렌더링")
             _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
-            video_path = render_layout_video_from_scenes(post, scenes, save_tts_cache=_tts_cache)
+            _post_voice = _resolve_post_voice(post_id)
+            video_path = render_layout_video_from_scenes(
+                post, scenes, save_tts_cache=_tts_cache, voice_key=_post_voice
+            )
 
             # 렌더링 후 트랜잭션 갱신 ─ 장시간 렌더링(15분+) 중 대시보드가
             # contents 레코드를 수정하면 REPEATABLE READ 스냅샷이 오래되어

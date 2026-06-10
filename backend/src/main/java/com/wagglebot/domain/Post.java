@@ -52,6 +52,18 @@ public class Post {
     @Column(name = "last_error", length = 1000)
     private String lastError;
 
+    @Column(name = "ai_score")
+    private Integer aiScore;
+
+    @Column(name = "ai_reason", length = 500)
+    private String aiReason;
+
+    @Column(name = "ai_recommended")
+    private Boolean aiRecommended;
+
+    @Column(name = "ai_analyzed_at")
+    private LocalDateTime aiAnalyzedAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

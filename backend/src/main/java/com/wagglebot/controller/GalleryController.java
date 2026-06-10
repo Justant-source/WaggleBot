@@ -42,7 +42,7 @@ public class GalleryController {
 
     @PostMapping("/{id}/hd-render")
     public ResponseEntity<Map<String, Object>> hdRender(@PathVariable Long id) {
-        var activeStatuses = List.of(com.wagglebot.common.JobStatus.PENDING, com.wagglebot.common.JobStatus.IN_PROGRESS);
+        var activeStatuses = List.of(com.wagglebot.common.JobStatus.PENDING, com.wagglebot.common.JobStatus.RUNNING);
         var existing = jobService.findActiveJob(JobType.HD_RENDER, id, activeStatuses);
         if (existing.isPresent()) {
             return ResponseEntity.ok(Map.of("jobId", existing.get().getId(), "alreadyQueued", true));

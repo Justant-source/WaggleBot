@@ -281,16 +281,28 @@ FISH_SPEECH_TIMEOUT = 120  # seconds (4B 모델 첫 생성 느림, 동시 요청
 
 # 참조 오디오 프리셋
 # key: voice_key, value: assets/voices/ 내 파일명
-VOICE_PRESETS: dict[str, str] = {
-    "default": "korean_man_default.wav",
-    "anna":    "voice_preview_anna.mp3",
-    "han":     "voice_preview_han.mp3",
-    "krys":    "voice_preview_krys.mp3",
-    "sunny":   "voice_preview_sunny.mp3",
-    "yohan":   "voice_preview_yohan.mp3",
-    "yura":    "voice_preview_yura.mp3",
-    "manbo":   "voice_preview_manbo.mp3",
-}
+def _load_voice_presets() -> dict:
+    """config/voices.json에서 로드, 없으면 하드코딩 폴백."""
+    config_path = Path(__file__).parent / "voices.json"
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            return {v["key"]: v["file"] for v in data.get("voices", [])}
+        except Exception:
+            pass
+    # 폴백: 기존 하드코딩
+    return {
+        "default": "korean_man_default.wav",
+        "anna":    "voice_preview_anna.mp3",
+        "han":     "voice_preview_han.mp3",
+        "krys":    "voice_preview_krys.mp3",
+        "sunny":   "voice_preview_sunny.mp3",
+        "yohan":   "voice_preview_yohan.mp3",
+        "yura":    "voice_preview_yura.mp3",
+        "manbo":   "voice_preview_manbo.mp3",
+    }
+
+VOICE_PRESETS: dict = _load_voice_presets()
 VOICE_DEFAULT = "default"
 
 # 참조 오디오 스크립트 (fish-speech가 언어를 인식하는 데 사용)

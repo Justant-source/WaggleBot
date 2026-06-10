@@ -179,30 +179,20 @@ telegram/
 
 ## 버그 픽스 이력 (2026-06-11 기준)
 
-3배치 버그 픽스 완료 (c655a4b 기준):
-
 | 배치 | 커밋 | 주요 수정 |
 |------|------|------|
 | 1차 | `0d2162f` | SceneDirector mood 미전달 3곳, _MOOD_TO_STYLE 9종 확장, LlmLog 복합 필터, HD_RENDER ImportError |
 | 2차 | `a96cdfc` | TTS 캐시 손상 폴백, 0-duration 프레임 필터, post None 검사, 타이머 누수 |
 | 3차 | `c655a4b` | TTS URL 오독, subprocess timeout, hash 충돌, migration DDL 원자성, llm-logs 경쟁 조건 |
+| 4차 | `6b5c20d` | HD 렌더 중복 방지, mood_weights 피드백 주입, ComfyUI 워크플로우 mtime 캐시 |
+| 5차 (미커밋) | — | TTS 프리뷰 ImportError, 비디오 단일 인코딩, 실패 원인 UI, 프롬프트 강화 (6종), GPU 효율, 갤러리 프리뷰 모달 |
+| 6차 (미커밋) | — | VoiceCatalogService JSON 파싱 버그, ai_fitness JSONDecoder 강화, parseProgress camelCase 변환, settings UI(upload_privacy·llm_prompt_cache), ProgressController 원자적 retry |
+| 7차 (미커밋) | — | processor.py post_id NameError 2건, HD 렌더 voice_key 미전달, SettingsService DEFAULTS 누락 키 추가 |
+| 8차 (미커밋) | — | _handle_upload commit 누락 (upload_meta 미저장·중복 업로드·UPLOADED 상태 미갱신) |
 
 ## 다음 개선 우선순위
 
-현 상태로 전체 파이프라인이 동작 가능하며 아래는 선택적 개선 항목:
-
-```mermaid
-flowchart TD
-    A[✅ telegram-bridge<br/>모바일 승인/모니터링] --> B
-    B[✅ A/B 테스트<br/>variant_group/config 활성화 + 파이프라인 통합] --> C
-    C[✅ 자동 승인<br/>auto_approve_enabled/threshold 구현] --> D
-    D[✅ 성과 피드백 루프<br/>YouTube Analytics → LLM 자동 적용] --> E
-    E[✅ mood_weights 피드백 주입<br/>extra_instructions에 선호 mood 힌트 병합] --> F
-    F[✅ HD 렌더 중복 방지<br/>PENDING/IN_PROGRESS Job 재사용] --> G
-    G[✅ ComfyUI 워크플로우 mtime 캐시<br/>파일 수정 시 자동 무효화]
-```
-
-현재 선택적 개선 항목 모두 구현 완료.
+현 상태로 전체 파이프라인이 동작 가능. 주요 선택적 개선 항목은 모두 완료됨.
 
 ### 장기 개선 후보 (미구현)
 
@@ -211,4 +201,4 @@ flowchart TD
 | 크롤러 사이트 추가 | 인스티즈, 더쿠, MLB파크 등 (ADDING_CRAWLER.md 참조) |
 | VRAM 누수 모니터링 | 장기 운영 시 nvidia-smi 주기적 로그 + 임계치 경보 |
 | 대시보드 다크모드 | Sidebar 토글 버튼 연결 (ThemeProvider 미구현) |
-| TTS 보이스 UI | settings에서 Fish Speech 기준 보이스 선택 |
+| 크롤러 트레이 알림 | 크롤링 시 중요 게시글 즉시 텔레그램 알림 |

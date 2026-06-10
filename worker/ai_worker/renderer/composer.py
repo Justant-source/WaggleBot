@@ -40,13 +40,20 @@ def compose_video(
     )
 
 
-def render_final_video(post, content, *, output_path: Optional[str | Path] = None) -> Path:
+def render_final_video(
+    post,
+    content,
+    *,
+    output_path: Optional[str | Path] = None,
+    voice_key: Optional[str] = None,
+) -> Path:
     """HD_RENDER 작업 핸들러용 진입점 — Content 객체에서 ScriptData를 복원해 렌더링한다.
 
     Args:
         post:        Post DB 객체
         content:     Content DB 객체 (summary_text에 ScriptData JSON 포함)
         output_path: 출력 경로 (None → 자동 생성)
+        voice_key:   게시글별 TTS 보이스 키 (None → pipeline.json tts_voice 사용)
     Returns:
         렌더링된 mp4 파일 경로
     """
@@ -54,7 +61,12 @@ def render_final_video(post, content, *, output_path: Optional[str | Path] = Non
     script = ScriptData.from_json(content.summary_text) if content.summary_text else ScriptData(
         hook="", body=[], closer="", title_suggestion="", tags=[], mood="daily"
     )
-    return render_layout_video(post, script, output_path=Path(output_path) if output_path else None)
+    return render_layout_video(
+        post,
+        script,
+        output_path=Path(output_path) if output_path else None,
+        voice_key=voice_key,
+    )
 
 
 def compose_thumbnail(

@@ -1,5 +1,5 @@
 import {
-  Inbox, Pencil, Activity, Film, BarChart3, FlaskConical, Settings,
+  LayoutDashboard, Inbox, Pencil, Activity, Film, BarChart3, FlaskConical, Settings,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -18,6 +18,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: '운영',
     items: [
+      { href: '/admin/overview',  label: '대시보드', icon: LayoutDashboard },
       { href: '/admin/inbox',     label: '수신함',   icon: Inbox },
       { href: '/admin/editor',    label: '편집실',   icon: Pencil },
       { href: '/admin/progress',  label: '진행현황', icon: Activity },

@@ -1,11 +1,15 @@
 import { get, post, put } from './client'
-import type { Post, Content, ScriptData, Job, PageResponse } from '@/lib/types'
+import type { Post, Content, ScriptData, Job, PageResponse, PromptPreset } from '@/lib/types'
 
 interface EditorPostDetail {
   post: Post
   script: ScriptData | null
   maxCharsPerLine: number
   maxBodyItems: number
+  ttsVoice?: string | null
+  genInstructions?: string | null
+  variantGroup?: string | null
+  variantLabel?: string | null
 }
 
 export const editorApi = {
@@ -19,4 +23,10 @@ export const editorApi = {
     post<{ jobId: number }>(`/api/editor/${id}/tts-preview`, opts),
   confirm: (id: number) => post<{ postId: number; status: string }>(`/api/editor/${id}/confirm`),
   pollJob: (jobId: number) => get<Job>(`/api/editor/jobs/${jobId}`),
+
+  setVoice: (id: number, voice: string | null) =>
+    put<{ saved: boolean; voice: string | null }>(`/api/editor/${id}/voice`, { voice }),
+
+  promptPresets: () =>
+    get<{ presets: PromptPreset[] }>('/api/editor/prompt-presets'),
 }

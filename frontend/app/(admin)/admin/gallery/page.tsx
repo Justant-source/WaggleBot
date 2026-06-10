@@ -9,7 +9,7 @@ import { Film, Upload, Play, X } from 'lucide-react'
 
 type GalleryItem = {
   post: { id: number; title: string; status: string }
-  content?: { videoPath: string | null; audioPath: string | null }
+  content?: { videoPath: string | null; audioPath: string | null; ttsVoice?: string | null; variantLabel?: string | null }
 }
 
 function getVideoUrl(videoPath: string): string {
@@ -71,7 +71,19 @@ export default function GalleryPage() {
 
               <div className="p-3">
                 <p className="text-sm font-medium text-gray-900 truncate">{item.post.title}</p>
-                <Badge className="mt-1">{item.post.status}</Badge>
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  <Badge>{item.post.status}</Badge>
+                  {item.content?.ttsVoice && (
+                    <Badge variant="outline" className="bg-gray-50 text-gray-600 text-xs">
+                      🎙 {item.content.ttsVoice}
+                    </Badge>
+                  )}
+                  {item.content?.variantLabel && (
+                    <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-xs">
+                      A/B {item.content.variantLabel}
+                    </Badge>
+                  )}
+                </div>
                 <div className="mt-2 flex gap-1">
                   <Button
                     size="sm"

@@ -18,11 +18,13 @@ const schema = z.object({
   llm_api_base_url: z.string().trim().url('올바른 URL을 입력하세요 (.../v1)').or(z.literal('')),
   llm_model: z.enum(['haiku', 'sonnet']),
   llm_model_overrides: z.string(),
+  llm_prompt_cache: z.boolean(),
   use_content_processor: z.boolean(),
   tts_voice: z.string().min(1),
   auto_approve_enabled: z.boolean(),
   auto_approve_threshold: z.coerce.number().min(0).max(100),
   auto_upload: z.boolean(),
+  upload_privacy: z.enum(['public', 'unlisted', 'private']),
   max_chars_per_line: z.coerce.number().min(10).max(40),
 })
 
@@ -47,11 +49,13 @@ export default function SettingsPage() {
       llm_api_base_url: DEFAULT_BASE_URL,
       llm_model: 'haiku',
       llm_model_overrides: '{}',
+      llm_prompt_cache: true,
       use_content_processor: false,
       tts_voice: 'yura',
       auto_approve_enabled: false,
       auto_approve_threshold: 80,
       auto_upload: false,
+      upload_privacy: 'unlisted',
       max_chars_per_line: 20,
     },
   })
@@ -62,17 +66,21 @@ export default function SettingsPage() {
   const autoApproveEnabled = watch('auto_approve_enabled')
   const autoUpload = watch('auto_upload')
 
+
   useEffect(() => {
     settingsApi.get().then((cfg) => {
       if (cfg.llm_backend === 'cli' || cfg.llm_backend === 'api') setValue('llm_backend', cfg.llm_backend)
       if (cfg.llm_api_base_url) setValue('llm_api_base_url', String(cfg.llm_api_base_url))
       if (cfg.llm_model === 'haiku' || cfg.llm_model === 'sonnet') setValue('llm_model', cfg.llm_model)
       if (cfg.llm_model_overrides) setValue('llm_model_overrides', String(cfg.llm_model_overrides))
+      setValue('llm_prompt_cache', cfg.llm_prompt_cache !== 'false' && cfg.llm_prompt_cache !== false)
       setValue('use_content_processor', cfg.use_content_processor === 'true' || cfg.use_content_processor === true)
       if (cfg.tts_voice) setValue('tts_voice', String(cfg.tts_voice))
       setValue('auto_approve_enabled', cfg.auto_approve_enabled === 'true' || cfg.auto_approve_enabled === true)
       if (cfg.auto_approve_threshold) setValue('auto_approve_threshold', Number(cfg.auto_approve_threshold))
       setValue('auto_upload', cfg.auto_upload === 'true' || cfg.auto_upload === true)
+      if (cfg.upload_privacy === 'public' || cfg.upload_privacy === 'unlisted' || cfg.upload_privacy === 'private')
+        setValue('upload_privacy', cfg.upload_privacy)
       if (cfg.max_chars_per_line) setValue('max_chars_per_line', Number(cfg.max_chars_per_line))
       setLoading(false)
     })
@@ -89,6 +97,7 @@ export default function SettingsPage() {
         ...data,
         auto_approve_enabled: String(data.auto_approve_enabled),
         auto_upload: String(data.auto_upload),
+        llm_prompt_cache: String(data.llm_prompt_cache),
         use_content_processor: String(data.use_content_processor),
       })
       toast.success('설정 저장됨')
@@ -202,6 +211,25 @@ export default function SettingsPage() {
             />
             <p className="mt-1 text-xs text-gray-400">callType별 모델 강제 지정. 비워두면 기본 모델 사용.</p>
           </div>
+          {llmBackend === 'api' && (
+            <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
+              <div>
+                <p className="text-sm font-medium text-gray-800">프롬프트 캐싱</p>
+                <p className="text-xs text-gray-400">Anthropic API 프롬프트 캐시 활성화 — 비용 절감</p>
+              </div>
+              <Controller
+                name="llm_prompt_cache"
+                control={control}
+                render={({ field }) => (
+                  <Switch
+                    id="llm_prompt_cache"
+                    checked={field.value}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                  />
+                )}
+              />
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <Button type="button" size="sm" variant="outline" onClick={checkLlmHealth} disabled={llmHealthChecking}>
               {llmHealthChecking && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} llm-worker 연결 확인
@@ -301,6 +329,21 @@ export default function SettingsPage() {
               )}
             />
           </div>
+
+          {autoUpload && (
+            <div>
+              <Label className="mb-1 block">업로드 공개 범위</Label>
+              <select
+                {...register('upload_privacy')}
+                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="unlisted">일부 공개 (비공개 링크)</option>
+                <option value="public">전체 공개</option>
+                <option value="private">비공개</option>
+              </select>
+              <p className="mt-1 text-xs text-gray-400">YouTube 업로드 시 적용되는 공개 범위입니다.</p>
+            </div>
+          )}
 
           <div>
             <Label className="mb-1 block">줄당 최대 글자 수</Label>

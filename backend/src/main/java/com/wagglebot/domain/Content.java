@@ -37,6 +37,12 @@ public class Content {
     @Column(name = "pipeline_state", columnDefinition = "JSON")
     private JsonNode pipelineState;
 
+    @Column(name = "tts_voice", length = 32)
+    private String ttsVoice;
+
+    @Column(name = "gen_instructions", length = 1000)
+    private String genInstructions;
+
     @Column(name = "variant_group", length = 64)
     private String variantGroup;
 

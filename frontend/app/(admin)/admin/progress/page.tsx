@@ -3,10 +3,11 @@ import { useEffect, useState } from 'react'
 import { progressApi } from '@/lib/api/progress'
 import { AdminStatCard } from '@/components/admin/AdminStatCard'
 import { AdminSection } from '@/components/admin/AdminSection'
+import { ProcessingCard } from '@/components/progress/ProcessingCard'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import type { Post } from '@/lib/types'
+import type { Post, ProcessingPost } from '@/lib/types'
 
 function FailedPostCard({ post, onRetry }: { post: Post; onRetry: (id: number) => Promise<void> }) {
   const [expanded, setExpanded] = useState(false)
@@ -59,7 +60,7 @@ function FailedPostCard({ post, onRetry }: { post: Post; onRetry: (id: number) =
 
 export default function ProgressPage() {
   const [counts, setCounts] = useState<Record<string, number>>({})
-  const [processing, setProcessing] = useState<Post[]>([])
+  const [processing, setProcessing] = useState<ProcessingPost[]>([])
   const [failed, setFailed] = useState<Post[]>([])
 
   const load = () =>
@@ -69,7 +70,13 @@ export default function ProgressPage() {
       setFailed(res.failed ?? [])
     })
 
-  useEffect(() => { load(); const t = setInterval(load, 10000); return () => clearInterval(t) }, [])
+  useEffect(() => {
+    load()
+    // 처리 중인 항목이 있으면 5초 간격, 없으면 10초
+    const interval = processing.length > 0 ? 5000 : 10000
+    const t = setInterval(load, interval)
+    return () => clearInterval(t)
+  }, [processing.length])
 
   const handleRetry = async (id: number) => {
     await progressApi.retry(id)
@@ -88,24 +95,13 @@ export default function ProgressPage() {
         ))}
       </div>
       <AdminSection title="처리 중">
-        {processing.length === 0 ? <p className="text-sm text-gray-400">처리 중인 항목 없음</p> : (
+        {processing.length === 0 ? (
+          <p className="text-sm text-gray-400">처리 중인 항목 없음</p>
+        ) : (
           <div className="space-y-2">
-            {processing.map((post) => {
-              const isStale = post.updatedAt
-                ? new Date().getTime() - new Date(post.updatedAt).getTime() > 15 * 60 * 1000
-                : false
-              return (
-                <div key={post.id} className="flex items-center justify-between rounded border border-gray-200 bg-white p-3 text-sm">
-                  <span className="font-medium">{post.title}</span>
-                  <div className="flex items-center gap-2">
-                    {isStale && (
-                      <span className="text-xs text-yellow-500">&#9888; 응답 없음</span>
-                    )}
-                    <Badge>{post.status}</Badge>
-                  </div>
-                </div>
-              )
-            })}
+            {processing.map((post) => (
+              <ProcessingCard key={post.id} post={post} />
+            ))}
           </div>
         )}
       </AdminSection>

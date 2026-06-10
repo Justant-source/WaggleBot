@@ -4,6 +4,7 @@ import com.wagglebot.common.*;
 import com.wagglebot.domain.*;
 import com.wagglebot.job.JobService;
 import com.wagglebot.settings.SettingsService;
+import com.wagglebot.settings.VoiceCatalogService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.*;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +22,7 @@ public class EditorController {
     private final JobService jobService;
     private final ScriptDataMapper scriptMapper;
     private final SettingsService settingsService;
+    private final VoiceCatalogService voiceCatalogService;
 
     @GetMapping
     public ResponseEntity<Page<Post>> list(
@@ -38,14 +40,20 @@ public class EditorController {
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> get(@PathVariable Long id) {
         Post post = postRepo.findById(id).orElseThrow(() -> new IllegalArgumentException("Post not found: " + id));
-        Optional<Content> content = contentRepo.findByPostId(id);
-        ScriptDataDto script = content.map(c -> scriptMapper.fromJson(c.getSummaryText())).orElse(null);
+        Optional<Content> contentOpt = contentRepo.findByPostId(id);
+        ScriptDataDto script = contentOpt.map(c -> scriptMapper.fromJson(c.getSummaryText())).orElse(null);
         Map<String, Object> cfg = settingsService.loadPipelineConfig();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("post", post);
         result.put("script", script);
         result.put("maxCharsPerLine", cfg.getOrDefault("max_chars_per_line", 20));
         result.put("maxBodyItems", cfg.getOrDefault("max_body_items", 23));
+        contentOpt.ifPresent(c -> {
+            result.put("ttsVoice", c.getTtsVoice());
+            result.put("genInstructions", c.getGenInstructions());
+            result.put("variantGroup", c.getVariantGroup());
+            result.put("variantLabel", c.getVariantLabel());
+        });
         return ResponseEntity.ok(result);
     }
 
@@ -82,6 +90,31 @@ public class EditorController {
         Map<String, Object> payload = req != null ? req : new HashMap<>();
         var job = jobService.createJob(JobType.TTS_PREVIEW, id, payload);
         return ResponseEntity.ok(Map.of("jobId", job.getId()));
+    }
+
+    @PutMapping("/{id}/voice")
+    public ResponseEntity<Map<String, Object>> setVoice(
+        @PathVariable Long id,
+        @RequestBody SetVoiceRequest req
+    ) {
+        if (!voiceCatalogService.isValidVoiceKey(req.voice())) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid voice key: " + req.voice()));
+        }
+        Content content = contentRepo.findByPostId(id).orElse(new Content());
+        if (content.getPostId() == null) {
+            content.setPostId(id);
+            content.setCreatedAt(java.time.LocalDateTime.now());
+        }
+        content.setTtsVoice(req.voice());
+        contentRepo.save(content);
+        return ResponseEntity.ok(Map.of("saved", true, "voice", req.voice() != null ? req.voice() : ""));
+    }
+
+    public record SetVoiceRequest(String voice) {}
+
+    @GetMapping("/prompt-presets")
+    public ResponseEntity<Map<String, Object>> getPromptPresets() {
+        return ResponseEntity.ok(Map.of("presets", voiceCatalogService.getPromptPresets()));
     }
 
     @PostMapping("/{id}/confirm")
