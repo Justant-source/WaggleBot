@@ -157,6 +157,8 @@ class RobustProcessor:
                 # ===== Content 저장 (stale 객체 방지: 세션 갱신 후 re-fetch) =====
                 session.expire_all()
                 post = session.query(Post).filter_by(id=post.id).first()
+                if post is None:
+                    raise ValueError(f"Post {post_id} 렌더링 완료 후 DB에서 사라짐 — 외부 삭제 가능성")
                 self._save_content(post, session, script, audio_path, video_path)
 
                 # ===== 썸네일 생성 =====
@@ -490,6 +492,9 @@ class RobustProcessor:
         # stale 객체 방지: 장시간 작업 후 세션 갱신
         session.expire_all()
         post = session.query(Post).filter_by(id=post.id).first()
+        if post is None:
+            logger.error("최종 실패 처리 불가: Post %d DB 없음", post_id)
+            return
         post.status = PostStatus.FAILED
         post.last_error = str(last_error)[:1000] if last_error else None
         session.commit()

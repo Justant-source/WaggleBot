@@ -9,7 +9,7 @@ from db.models import ScriptData
 logger = logging.getLogger(__name__)
 
 # ── layout.json에서 글자수 제한 로드 ──
-_LAYOUT_PATH = Path("config/layout.json")
+_LAYOUT_PATH = Path(__file__).resolve().parents[3] / "config" / "layout.json"
 
 def _load_layout_constraints() -> dict:
     """layout.json의 constraints 섹션을 로드한다."""

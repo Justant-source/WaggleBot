@@ -356,15 +356,24 @@ def _render_pipeline(
 
         # ── Steps 5~6: TTS 생성 또는 캐시 로드 ───────────────────
         merged_tts = tmp_dir / "merged_tts.wav"
+        _cache_valid = False
         if tts_audio_cache and (tts_audio_cache / "durations.json").exists():
-            durations: list[float] = json.loads(
-                (tts_audio_cache / "durations.json").read_text(encoding="utf-8")
-            )
-            shutil.copy2(tts_audio_cache / "merged_tts.wav", merged_tts)
-            total_dur = sum(durations)
-            logger.info("[layout] TTS 캐시 사용: post_id=%d (%d프레임, 총 %.1fs)",
-                        post_id, len(durations), total_dur)
-        else:
+            try:
+                durations: list[float] = json.loads(
+                    (tts_audio_cache / "durations.json").read_text(encoding="utf-8")
+                )
+                cached_tts = tts_audio_cache / "merged_tts.wav"
+                if cached_tts.exists() and cached_tts.stat().st_size > 0 and durations:
+                    shutil.copy2(cached_tts, merged_tts)
+                    total_dur = sum(durations)
+                    logger.info("[layout] TTS 캐시 사용: post_id=%d (%d프레임, 총 %.1fs)",
+                                post_id, len(durations), total_dur)
+                    _cache_valid = True
+                else:
+                    logger.warning("[layout] TTS 캐시 불완전 — 재생성")
+            except Exception as _e:
+                logger.warning("[layout] TTS 캐시 로드 실패 (%s) — 재생성", _e)
+        if not _cache_valid:
             logger.info("[layout] TTS 생성 시작")
             from ai_worker.tts.fish_client import _warmup_model
             _run_async(_warmup_model())
@@ -386,6 +395,16 @@ def _render_pipeline(
                     json.dumps(durations), encoding="utf-8"
                 )
                 logger.info("[layout] TTS 캐시 저장: %s", save_tts_cache)
+
+        # 0-duration 프레임 제거 — TTS 실패 프레임이 concat에서 빈 세그먼트로 이어지는 것 방지
+        if any(d <= 0.0 for d in durations):
+            _zero_count = sum(1 for d in durations if d <= 0.0)
+            logger.warning("[layout] TTS 실패 프레임 %d개 제거 (dur=0)", _zero_count)
+            _pairs = [(p, d) for p, d in zip(plan, durations) if d > 0.0]
+            if _pairs:
+                plan, durations = [list(x) for x in zip(*_pairs)]
+            else:
+                raise RuntimeError("모든 TTS 프레임 실패 — 렌더링 불가")
 
         # ── Step 7: text_only용 줄바꿈 사전 계산 ──────────────
         sc_to = layout["scenes"]["text_only"]

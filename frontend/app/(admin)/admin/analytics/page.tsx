@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { analyticsApi, PerformanceRow } from '@/lib/api/analytics'
 import { AdminSection } from '@/components/admin/AdminSection'
 import { Button } from '@/components/ui/button'
@@ -19,11 +19,16 @@ const PRESETS = [
 ]
 
 function usePollJob() {
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  useEffect(() => () => { if (timerRef.current !== null) clearInterval(timerRef.current) }, [])
   return (jobId: number, onDone: (r: unknown) => void, onError: () => void) => {
-    const timer = setInterval(async () => {
-      const job = await analyticsApi.pollJob(jobId)
-      if (job.status === 'DONE') { clearInterval(timer); onDone(job.result) }
-      if (job.status === 'ERROR') { clearInterval(timer); onError() }
+    if (timerRef.current !== null) clearInterval(timerRef.current)
+    timerRef.current = setInterval(async () => {
+      try {
+        const job = await analyticsApi.pollJob(jobId)
+        if (job.status === 'DONE') { clearInterval(timerRef.current!); timerRef.current = null; onDone(job.result) }
+        if (job.status === 'ERROR') { clearInterval(timerRef.current!); timerRef.current = null; onError() }
+      } catch { clearInterval(timerRef.current!); timerRef.current = null; onError() }
     }, 2000)
   }
 }

@@ -133,10 +133,11 @@ class VideoManager:
                 logger.info("[video] post=%d 최대 클립 수 (%d) 도달 — 나머지 스킵", post_id, max_clips)
                 break
 
-            # 체크포인트에 있는 씬 → 파일 존재 확인 후 스킵
+            # 체크포인트에 있는 씬 → 파일 존재 + 최소 크기(1MB) 확인 후 스킵
             if i in done_scenes:
                 cached_path = done_clips.get(str(i))
-                if cached_path and Path(cached_path).exists():
+                _cached = Path(cached_path) if cached_path else None
+                if _cached and _cached.exists() and _cached.stat().st_size > 1_000_000:
                     scene.video_clip_path = cached_path
                     clip_count += 1
                     self.results.append(VideoGenerationResult(
