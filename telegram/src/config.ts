@@ -46,6 +46,9 @@ export const config = {
     dailyBriefEnabled:
       optionalEnv("DAILY_BRIEF_ENABLED", "false") === "true",
   },
+  backend: {
+    url: optionalEnv("BACKEND_URL", "http://backend:8080"),
+  },
   hooks: {
     port: parseInt(optionalEnv("HOOKS_PORT", "3847"), 10),
   },

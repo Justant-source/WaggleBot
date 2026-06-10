@@ -87,6 +87,20 @@ class RobustProcessor:
             post.id, post.title[:40], post.retry_count, self.retry_policy.max_attempts
         )
 
+        # A/B 변형 배정 (첫 시도에서만 — retry_count=1)
+        if (post.retry_count or 0) == 1:
+            try:
+                from analytics.ab_test import assign_variant
+                assigned = assign_variant(post.id, session)
+                if assigned:
+                    session.commit()
+                    logger.info(
+                        "[A/B] 변형 배정: post_id=%d group=%s label=%s",
+                        post.id, assigned["group_id"], assigned["label"],
+                    )
+            except Exception:
+                logger.debug("A/B 변형 배정 실패 — 무시", exc_info=True)
+
         while attempt < self.retry_policy.max_attempts:
             try:
                 # GPU 메모리 상태 로그

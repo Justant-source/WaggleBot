@@ -250,6 +250,34 @@ def _handle_feedback_apply(job: Job) -> dict:
     return {"applied": True}
 
 
+def _handle_ab_evaluate(job: Job) -> dict:
+    """A/B 그룹 성과 평가 — winner 결정."""
+    payload = job.payload or {}
+    group_id = payload.get("group_id")
+    if not group_id:
+        raise ValueError("AB_EVALUATE: group_id 필수")
+
+    from analytics.ab_test import evaluate_group
+    from db.session import SessionLocal
+
+    with SessionLocal() as db:
+        winner = evaluate_group(group_id, db)
+    return {"group_id": group_id, "winner": winner}
+
+
+def _handle_ab_apply_winner(job: Job) -> dict:
+    """A/B 승자 설정을 feedback_config에 반영."""
+    payload = job.payload or {}
+    group_id = payload.get("group_id")
+    if not group_id:
+        raise ValueError("AB_APPLY_WINNER: group_id 필수")
+
+    from analytics.ab_test import apply_winner
+
+    ok = apply_winner(group_id)
+    return {"group_id": group_id, "applied": ok}
+
+
 # ---------------------------------------------------------------------------
 # 핸들러 레지스트리
 # ---------------------------------------------------------------------------
@@ -263,4 +291,6 @@ HANDLERS = {
     JobType.FETCH_YT_ANALYTICS: _handle_fetch_yt_analytics,
     JobType.AI_INSIGHT:         _handle_ai_insight,
     JobType.FEEDBACK_APPLY:     _handle_feedback_apply,
+    JobType.AB_EVALUATE:        _handle_ab_evaluate,
+    JobType.AB_APPLY_WINNER:    _handle_ab_apply_winner,
 }

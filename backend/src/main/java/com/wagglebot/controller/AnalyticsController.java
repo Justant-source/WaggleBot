@@ -46,6 +46,22 @@ public class AnalyticsController {
         return ResponseEntity.ok(Map.of("jobId", job.getId()));
     }
 
+    @PostMapping("/ab/evaluate")
+    public ResponseEntity<Map<String, Object>> abEvaluate(@RequestBody Map<String, Object> req) {
+        String groupId = (String) req.get("groupId");
+        if (groupId == null || groupId.isBlank()) return ResponseEntity.badRequest().body(Map.of("error", "groupId required"));
+        var job = jobService.createJob(JobType.AB_EVALUATE, null, Map.of("group_id", groupId));
+        return ResponseEntity.ok(Map.of("jobId", job.getId()));
+    }
+
+    @PostMapping("/ab/apply-winner")
+    public ResponseEntity<Map<String, Object>> abApplyWinner(@RequestBody Map<String, Object> req) {
+        String groupId = (String) req.get("groupId");
+        if (groupId == null || groupId.isBlank()) return ResponseEntity.badRequest().body(Map.of("error", "groupId required"));
+        var job = jobService.createJob(JobType.AB_APPLY_WINNER, null, Map.of("group_id", groupId));
+        return ResponseEntity.ok(Map.of("jobId", job.getId()));
+    }
+
     @GetMapping("/jobs/{jobId}")
     public ResponseEntity<Map<String, Object>> pollJob(@PathVariable Long jobId) {
         var job = jobService.getJob(jobId);

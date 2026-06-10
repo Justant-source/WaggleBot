@@ -4,10 +4,13 @@ import { ProjectExplorer } from "../explorer/project-explorer.js";
 import { GitCommands } from "../explorer/git-commands.js";
 import { Notifier } from "../notification/notifier.js";
 import { DailyBrief } from "../scheduler/daily-brief.js";
+import { PipelineCommands } from "../pipeline/pipeline-commands.js";
 import { MainMenu } from "./keyboard.js";
 import { logger } from "../utils/logger.js";
 
 export class CommandHandler {
+  private pipeline: PipelineCommands;
+
   constructor(
     private wrapper: TelegramBotWrapper,
     private fileHandler: FileHandler,
@@ -15,7 +18,9 @@ export class CommandHandler {
     private git: GitCommands,
     private notifier: Notifier,
     private dailyBrief: DailyBrief,
-  ) {}
+  ) {
+    this.pipeline = new PipelineCommands(wrapper);
+  }
 
   register(): void {
     const bot = this.wrapper.bot;
@@ -76,6 +81,37 @@ export class CommandHandler {
       await this.dailyBrief.sendBrief(msg.chat.id);
     }));
 
+    // === Pipeline Commands ===
+    bot.onText(/\/status/, auth(async (msg) => {
+      await this.pipeline.sendStatus(msg.chat.id);
+    }));
+
+    bot.onText(/\/posts/, auth(async (msg) => {
+      await this.pipeline.sendCollectedPosts(msg.chat.id);
+    }));
+
+    bot.onText(/\/approve(?:\s+(\d+))?/, auth(async (msg, match) => {
+      const postId = parseInt(match?.[1] || "", 10);
+      if (isNaN(postId)) {
+        await bot.sendMessage(msg.chat.id, "사용법: /approve <post_id>");
+        return;
+      }
+      await this.pipeline.handleApprove(msg.chat.id, postId);
+    }));
+
+    bot.onText(/\/reject(?:\s+(\d+))?/, auth(async (msg, match) => {
+      const postId = parseInt(match?.[1] || "", 10);
+      if (isNaN(postId)) {
+        await bot.sendMessage(msg.chat.id, "사용법: /reject <post_id>");
+        return;
+      }
+      await this.pipeline.handleReject(msg.chat.id, postId);
+    }));
+
+    bot.onText(/\/crawl/, auth(async (msg) => {
+      await this.pipeline.handleCrawl(msg.chat.id);
+    }));
+
     // === File Upload (document handler) ===
     bot.on("document", async (msg) => {
       const userId = msg.from?.id;
@@ -109,6 +145,16 @@ export class CommandHandler {
       case "cmd":
         await this.handleMenuCommand(chatId, value);
         break;
+      case "approve": {
+        const pid = parseInt(value, 10);
+        if (!isNaN(pid)) await this.pipeline.handleApprove(chatId, pid);
+        break;
+      }
+      case "reject": {
+        const pid = parseInt(value, 10);
+        if (!isNaN(pid)) await this.pipeline.handleReject(chatId, pid);
+        break;
+      }
       case "file":
         await this.fileHandler.sendFile(chatId, value);
         break;
@@ -152,6 +198,15 @@ export class CommandHandler {
       case "brief":
         await this.dailyBrief.sendBrief(chatId);
         break;
+      case "pipeline_status":
+        await this.pipeline.sendStatus(chatId);
+        break;
+      case "pipeline_posts":
+        await this.pipeline.sendCollectedPosts(chatId);
+        break;
+      case "pipeline_crawl":
+        await this.pipeline.handleCrawl(chatId);
+        break;
       case "back":
         await this.wrapper.bot.sendMessage(chatId, "메뉴:", { reply_markup: MainMenu });
         break;
@@ -161,8 +216,12 @@ export class CommandHandler {
 
 const HELP_TEXT = `🐝 WaggleBot Telegram Bridge
 
-📌 파일 관리 · Git · 알림 전용 모드
-Claude Code 명령은 Termius + tmux에서 직접 수행
+🎬 파이프라인 제어
+/status — 파이프라인 현황 (상태별 게시글 수)
+/posts — 승인 대기 게시글 목록 (인라인 승인/거절 버튼)
+/approve <id> — 게시글 승인
+/reject <id> — 게시글 거절
+/crawl — 수동 크롤링 시작
 
 📂 파일 관리
 /rq — 작업지시서 목록 (_request/)
@@ -183,6 +242,6 @@ Claude Code 명령은 Termius + tmux에서 직접 수행
 파일을 전송하면 _request/에 저장됩니다.
 
 🔔 자동 알림
+• 파이프라인 상태 변경 알림
 • Claude Code 작업 완료 시 결과 파일 전송
-• Claude Code 권한 요청 시 알림
 • 일일 브리핑 (설정 시)`;

@@ -14,9 +14,9 @@ export function button(text: string, callbackData: string): InlineButton {
 }
 
 export const MainMenu = buildKeyboard([
-  [button("📂 파일 탐색", "cmd:files"), button("📋 작업지시서", "cmd:request")],
-  [button("📊 결과 보기", "cmd:result"), button("🔧 Git 상태", "cmd:git")],
-  [button("📈 브리핑", "cmd:brief")],
+  [button("📊 파이프라인 현황", "cmd:pipeline_status"), button("📋 승인 대기", "cmd:pipeline_posts")],
+  [button("🕷️ 크롤링", "cmd:pipeline_crawl"), button("🔧 Git 상태", "cmd:git")],
+  [button("📂 파일 탐색", "cmd:files"), button("📈 브리핑", "cmd:brief")],
 ]);
 
 /**

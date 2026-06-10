@@ -15,12 +15,12 @@
 | `worker/ai_worker` | ✅ 완전 구현 | 8-Phase 파이프라인 전체 |
 | `worker/db` | ✅ 완전 구현 | SQLAlchemy 모델 + 마이그레이션 |
 | `worker/uploaders` | ✅ 완전 구현 | YouTube 업로더 |
-| `worker/analytics` | ✅ 완전 구현 | 성과 수집 + LLM 피드백 루프 |
+| `worker/analytics` | ✅ 완전 구현 | 성과 수집 + LLM 피드백 루프 + A/B 테스트 파이프라인 통합 |
 | `worker/monitoring` | ✅ 완전 구현 | 헬스체크 + 알림 데몬 |
 | `worker/dashboard_worker` | ✅ 완전 구현 | Job 폴링 실행 데몬 |
 | `config/` | ✅ 완전 구현 | settings.py + JSON 설정 파일 전체 |
 | `env/` | ✅ 완전 구현 | docker-compose.yml + Dockerfile 전체 + ltxvideo_patches.py |
-| `telegram-bridge` | ⬜ 선택 구현 | 모바일 제어 브리지 (선택 사항) |
+| `telegram-bridge` | ✅ 완전 구현 | 파이프라인 제어(/status,/posts,/approve,/reject,/crawl) + 파일관리/Git/알림 |
 
 ---
 
@@ -159,12 +159,20 @@ worker/
 
 ### telegram-bridge (`telegram/`)
 
-모바일 원격 제어 브리지. 선택 사항 — `docker-compose.yml`에 서비스 정의는 존재.
+WaggleBot 파이프라인 제어 + 파일관리/Git/알림 브리지. 구현 완료.
 
 ```
 telegram/
-├── Dockerfile               ⬜ (미구현)
-└── (봇 소스코드)              ⬜
+├── Dockerfile               ✅
+├── src/
+│   ├── bot/command-handler.ts  ✅ /status, /posts, /approve, /reject, /crawl + 파일/Git 명령
+│   ├── bot/keyboard.ts         ✅ MainMenu 파이프라인 버튼 포함
+│   ├── pipeline/
+│   │   ├── wagglebot-api.ts    ✅ Spring Boot API 클라이언트
+│   │   └── pipeline-commands.ts ✅ 파이프라인 명령 처리
+│   ├── notification/           ✅ 알림 발송
+│   └── scheduler/              ✅ 일일 브리핑
+└── config.ts                   ✅ BACKEND_URL 지원
 ```
 
 ---
@@ -175,8 +183,10 @@ telegram/
 
 ```mermaid
 flowchart TD
-    A[1. telegram-bridge<br/>모바일 승인/모니터링] --> B
-    B[2. A/B 테스트<br/>variant_group/config 활성화] --> C
-    C[3. 자동 승인<br/>auto_approve_enabled=true 운영] --> D
-    D[4. 성과 피드백 루프<br/>YouTube Analytics → LLM 자동 적용]
+    A[✅ telegram-bridge<br/>모바일 승인/모니터링] --> B
+    B[✅ A/B 테스트<br/>variant_group/config 활성화 + 파이프라인 통합] --> C
+    C[✅ 자동 승인<br/>auto_approve_enabled/threshold 구현] --> D
+    D[✅ 성과 피드백 루프<br/>YouTube Analytics → LLM 자동 적용]
 ```
+
+모든 선택적 개선 항목 구현 완료.
