@@ -52,6 +52,10 @@ worker/test/test_scene_policy_visual_output
 assets
 .venv
 
+# --- Java / Gradle 빌드 아티팩트 ---
+backend/.gradle/
+backend/build/
+
 # Docker
 worker/venv/
 worker/__pycache__/
