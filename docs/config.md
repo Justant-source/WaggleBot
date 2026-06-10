@@ -64,7 +64,7 @@ env/
 |------|--------|------|
 | `COMFYUI_URL` | `http://comfyui:8188` | ComfyUI API |
 | `VIDEO_GEN_ENABLED` | `false` | Phase 4.5~7 활성화 여부 |
-| `VIDEO_WORKFLOW_MODE` | `distilled` | `distilled`=빠른 테스트, `full`=고품질 |
+| `VIDEO_WORKFLOW_MODE` | `distilled` | `distilled`=8-step 빠른 생성, `full`=20-step 고품질 |
 | `VIDEO_GEN_TIMEOUT` | `1200` | 비디오 생성 타임아웃 (초, 20분) |
 | `VIDEO_RESOLUTION` | `(1280, 720)` | 기본 해상도 |
 | `VIDEO_RESOLUTION_FALLBACK` | `(768, 512)` | 폴백 해상도 |
@@ -74,10 +74,22 @@ env/
 | `VIDEO_STEPS` | `20` | Full 모델 denoising steps |
 | `VIDEO_STEPS_DISTILLED` | `8` | Distilled 모델 steps |
 | `VIDEO_CFG` | `3.5` | Classifier-free guidance (Full) |
-| `VIDEO_CFG_DISTILLED` | `1.0` | CFG (Distilled) |
+| `VIDEO_CFG_DISTILLED` | `1.0` | CFG (Distilled, ManualSigmas 사용) |
 | `VIDEO_I2V_THRESHOLD` | `0.6` | Image-to-Video 전환 임계값 |
 | `VIDEO_MAX_RETRY` | `4` | 씬당 최대 재시도 (4단계 폴백) |
 | `VIDEO_MAX_CLIPS_PER_POST` | `8` | 글당 최대 클립 수 |
+
+**LTX-2 모델 파일** (`checkpoints/` 하위, HF 소스: `Kijai/LTXV2_comfy`):
+
+| 파일 | 경로 | 용도 |
+|------|------|------|
+| `ltx-2-19b-distilled_Q4_K_M.gguf` | `diffusion_models/` | GGUF Q4 UNet (12.7GB, VRAM) |
+| `ltx-2-19b-embeddings_connector_distill_bf16.safetensors` | `ltx-2/` | 텍스트 connector (2.9GB) |
+| `LTX2_video_vae_bf16.safetensors` | `vae/` | VAE 디코더 (2.4GB) |
+| `gemma-3-12b-it-qat-q4_0-unquantized/` | `text_encoders/` | Gemma-3 12B (15GB, CPU) |
+
+> `ltxv_path`에 27GB FP8 full checkpoint 대신 2.9GB connector 파일 사용.
+> `full` 모드 워크플로우(`t2v_ltx2.json`, `i2v_ltx2.json`)는 별도 FP8 모델 필요.
 
 ### 레이아웃 제약 (layout.json에서 로드)
 

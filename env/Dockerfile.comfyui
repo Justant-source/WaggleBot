@@ -58,21 +58,16 @@ RUN cd custom_nodes && \
 
 # LTX-Video 커스텀 노드 (LTX-2 전용 노드: LTXVConditioning, LTXVScheduler,
 # EmptyLTXVLatentVideo, LTXVImgToVideoInplace, SamplerCustomAdvanced 등)
-# kornia 0.8+ 호환 패치: pyramid.pad가 제거됨 → F.pad로 교체
+# 패치 1: kornia 0.8+ pyramid.pad 제거 → F.pad 대체 (pyramid_blending.py)
+# 패치 2: standalone connector 파일의 AV prefix 감지 수정 (embeddings_connector.py)
+# 패치 3: is_av 판별 로직 수정 — audio_embeddings_connector prefix 추가 감지 (text_embeddings_connectors.py)
+COPY env/ltxvideo_patches.py /tmp/ltxvideo_patches.py
 RUN cd custom_nodes && \
     git clone https://github.com/Lightricks/ComfyUI-LTXVideo.git && \
     cd ComfyUI-LTXVideo && \
     python3.12 -m pip install --no-cache-dir -r requirements.txt || true && \
-    python3.12 -c "
-import re, pathlib
-p = pathlib.Path('pyramid_blending.py')
-t = p.read_text()
-t = re.sub(r'\n    pad,\n', '\n', t)
-t = t.replace('    image = pad(image,', '    image = F.pad(image,')
-t = t.replace('    images = pad(images,', '    images = F.pad(images,')
-p.write_text(t)
-print('kornia pad patch applied')
-"
+    python3.12 /tmp/ltxvideo_patches.py && \
+    rm /tmp/ltxvideo_patches.py
 
 # ComfyUI-GGUF — GGUF 양자화 모델 로더 (UnetLoaderGGUF 노드 제공)
 # GGUF Q4 UNet(~12.7GB)을 GPU에 직접 로드하여 --lowvram 없이 실행 가능

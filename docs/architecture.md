@@ -126,11 +126,13 @@ stateDiagram-v2
 ## GPU VRAM 배분 (RTX 3090 24GB)
 
 ```mermaid
-pie title VRAM 사용 배분 (~17GB / 24GB)
-    "LTX-2 GGUF Q4 UNet" : 12.7
+pie title VRAM 사용 배분 (~17.7GB / 24GB)
+    "LTX-2 distilled GGUF Q4 UNet" : 12.7
     "Fish Speech TTS" : 5.0
     "안전 마진" : 6.3
 ```
+
+> Gemma-3-12B 텍스트 인코더(~15GB)는 `--lowvram` 플래그로 CPU에서 실행 (VRAM 미사용).
 
 ## 기술 스택 요약
 
@@ -142,7 +144,7 @@ pie title VRAM 사용 배분 (~17GB / 24GB)
 | **LLM 게이트웨이** | Java 21, Spring Boot 3.3, Claude CLI subprocess |
 | **LLM** | Claude haiku-4-5 / sonnet-4-6 — CLI 백엔드(구독) 또는 API 백엔드(`ANTHROPIC_API_KEY`) |
 | **TTS** | Fish Speech v1.5.1 (zero-shot 클로닝) |
-| **비디오** | ComfyUI + LTX-2 19B FP8/GGUF Q4 |
+| **비디오** | ComfyUI + LTX-2 19B distilled GGUF Q4 (8-step) |
 | **렌더링** | FFmpeg (h264_nvenc) |
 | **컨테이너** | Docker Compose, NVIDIA Container Runtime |
 | **DB** | MariaDB 11, SQLAlchemy (Python), JPA/Hibernate (Java) |

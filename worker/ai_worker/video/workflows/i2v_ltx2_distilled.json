@@ -8,7 +8,7 @@
   "2": {
     "class_type": "LTXVGemmaCLIPModelLoader",
     "inputs": {
-      "ltxv_path": "ltx-2-19b-distilled-fp8.safetensors",
+      "ltxv_path": "ltx-2-19b-embeddings_connector_distill_bf16.safetensors",
       "gemma_path": "gemma-3-12b-it-qat-q4_0-unquantized/model-00001-of-00005.safetensors",
       "max_length": 256
     }
@@ -19,28 +19,18 @@
       "vae_name": "LTX2_video_vae_bf16.safetensors"
     }
   },
-  "15": {
-    "class_type": "LoraLoader",
-    "inputs": {
-      "model": ["1", 0],
-      "clip": ["2", 0],
-      "lora_name": "ltx-2-19b-distilled-lora-384.safetensors",
-      "strength_model": 1.0,
-      "strength_clip": 1.0
-    }
-  },
   "4": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "positive_prompt",
-      "clip": ["15", 1]
+      "clip": ["2", 0]
     }
   },
   "5": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "negative_prompt",
-      "clip": ["15", 1]
+      "clip": ["2", 0]
     }
   },
   "6": {
@@ -85,7 +75,7 @@
   "11": {
     "class_type": "CFGGuider",
     "inputs": {
-      "model": ["15", 0],
+      "model": ["1", 0],
       "positive": ["6", 0],
       "negative": ["6", 1],
       "cfg": 1.0

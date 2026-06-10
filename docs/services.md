@@ -114,20 +114,38 @@ graph TD
 ---
 
 ### comfyui
-- **역할:** LTX-2 비디오 생성 (Latent Text-to-Video 19B)
-- **소스:** `env/Dockerfile.comfyui` (커스텀 빌드)
+- **역할:** LTX-2 19B distilled 비디오 생성 (GGUF Q4, 8-step)
+- **소스:** `env/Dockerfile.comfyui` (커스텀 빌드) + `env/ltxvideo_patches.py` (자동 패치)
 - **포트:** `8188`
-- **GPU:** RTX 3090, VRAM ~12.7GB (GGUF Q4)
+- **GPU:** RTX 3090, VRAM ~12.7GB (GGUF Q4 UNet) — Gemma 텍스트 인코더는 CPU
 - **볼륨:**
-  - `../checkpoints/ltx-2:/comfyui/models/checkpoints`
-  - `../checkpoints/text_encoders:/comfyui/models/text_encoders`
+  - `../checkpoints/ltx-2:/comfyui/models/checkpoints` — connector 파일
+  - `../checkpoints/diffusion_models:/comfyui/models/diffusion_models` — GGUF UNet
+  - `../checkpoints/vae:/comfyui/models/vae` — VAE
+  - `../checkpoints/text_encoders:/comfyui/models/text_encoders` — Gemma-3-12B
   - `../worker/ai_worker/video/workflows:/comfyui/custom_workflows`
   - `../assets/media/tmp/videos:/comfyui/output` ← ai_worker와 공유
+- **필요 모델 파일:**
+
+  | 파일 | 크기 | 경로 (host) | HF 소스 |
+  |------|------|-------------|---------|
+  | `ltx-2-19b-distilled_Q4_K_M.gguf` | 12.7GB | `checkpoints/diffusion_models/` | `Kijai/LTXV2_comfy` |
+  | `ltx-2-19b-embeddings_connector_distill_bf16.safetensors` | 2.9GB | `checkpoints/ltx-2/` | `Kijai/LTXV2_comfy` |
+  | `LTX2_video_vae_bf16.safetensors` | 2.4GB | `checkpoints/vae/` | `Kijai/LTXV2_comfy` |
+  | `gemma-3-12b-it-qat-q4_0-unquantized/` | ~15GB | `checkpoints/text_encoders/` | `google/gemma-3-12b-it-qat-q4_0-unquantized` |
+
+  > 27GB FP8 full checkpoint는 시스템 RAM(17GB) 부족으로 사용 불가.
+  > Kijai의 pre-extracted connector 파일(2.9GB)로 대체.
+
 - **실행 플래그:** `--lowvram --reserve-vram 2 --fp8_e4m3fn-text-enc`
-  - `--lowvram`: 텍스트 인코더(Gemma 3 12B) CPU 오프로드
-  - `--reserve-vram 2`: 2GB 예약 (안전 마진)
-- **주의:** `--normalvram` 절대 금지 (OOM 발생)
-- **시작 시간:** `start_period: 300s` (모델 로딩 5분)
+  - `--lowvram`: Gemma 텍스트 인코더 CPU 오프로드 필수 (BF16 24GB → VRAM 초과)
+  - `--reserve-vram 2`: 2GB 예약 (Fish Speech 동시 실행 안전 마진)
+- **주의:** `--normalvram` 절대 금지 (텍스트 인코딩 OOM 발생)
+- **시작 시간:** `start_period: 300s` (Gemma 모델 로딩 5분)
+- **빌드 시 자동 패치** (`env/ltxvideo_patches.py`):
+  - kornia 0.8.3 호환: `pyramid_blending.py` — `pad` 제거 → `F.pad()` 대체
+  - standalone connector AV prefix 감지: `embeddings_connector.py`
+  - `is_av` 판별 수정: `text_embeddings_connectors.py`
 
 ---
 

@@ -19,7 +19,7 @@
 | `worker/monitoring` | ✅ 완전 구현 | 헬스체크 + 알림 데몬 |
 | `worker/dashboard_worker` | ✅ 완전 구현 | Job 폴링 실행 데몬 |
 | `config/` | ✅ 완전 구현 | settings.py + JSON 설정 파일 전체 |
-| `env/` | ✅ 완전 구현 | docker-compose.yml + Dockerfile 전체 |
+| `env/` | ✅ 완전 구현 | docker-compose.yml + Dockerfile 전체 + ltxvideo_patches.py |
 | `telegram-bridge` | ⬜ 선택 구현 | 모바일 제어 브리지 (선택 사항) |
 
 ---
@@ -126,6 +126,8 @@ worker/
 │   │   ├── image_filter.py              ✅ I2V 적합성 점수
 │   │   ├── video_utils.py               ✅ FFmpeg 후처리 + 프레임/해상도 검증
 │   │   └── workflows/                   ✅ ComfyUI 워크플로우 JSON
+│   │       ├── t2v_ltx2_distilled.json  ✅ T2V distilled (GGUF Q4 + connector, LoRA 없음)
+│   │       └── i2v_ltx2_distilled.json  ✅ I2V distilled (동일 구성)
 │   └── renderer/
 │       ├── composer.py                  ✅ 진입점
 │       ├── layout.py                    ✅ 오케스트레이터 (concat 후 seg 즉시 정리)
