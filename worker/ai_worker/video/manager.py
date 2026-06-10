@@ -430,7 +430,6 @@ class VideoManager:
         - 연속 실패 시 가장 가까운 성공 씬에 모두 병합
         - 병합된 text_lines는 원본 순서를 유지
         """
-        success_indices = {r.scene_index for r in results if r.success}
         failed_indices = [r.scene_index for r in results if not r.success]
 
         if not failed_indices:

@@ -305,21 +305,29 @@ class VideoPromptEngine:
                     post_id=post_id,
                     scene_index=i,
                 )
-                # Phase 7 재시도용 simplified 프롬프트 미리 생성 (LLM 호출 제로 보장)
+            except Exception as e:
+                logger.error("[prompt] 씬 %d 프롬프트 생성 실패: %s", i, e)
+                scene.video_prompt = None
+                scene.video_prompt_simplified = None
+                continue
+
+            # Phase 7 재시도용 simplified 프롬프트 미리 생성 (LLM 호출 제로 보장)
+            # generate_prompt 성공 후 별도 예외 처리 — 실패 시 원본으로 폴백
+            try:
                 scene.video_prompt_simplified = self.simplify_prompt(
                     scene.video_prompt,
                     post_id=post_id,
                     scene_index=i,
                 )
-                logger.info(
-                    "[prompt] 씬 %d 프롬프트 생성 완료 (%d자, simplified %d자)",
-                    i, len(scene.video_prompt),
-                    len(scene.video_prompt_simplified),
-                )
             except Exception as e:
-                logger.error("[prompt] 씬 %d 프롬프트 생성 실패: %s", i, e)
-                scene.video_prompt = None
-                scene.video_prompt_simplified = None
+                logger.warning("[prompt] 씬 %d simplified 생성 실패 — 원본으로 폴백: %s", i, e)
+                scene.video_prompt_simplified = scene.video_prompt
+
+            logger.info(
+                "[prompt] 씬 %d 프롬프트 생성 완료 (%d자, simplified %d자)",
+                i, len(scene.video_prompt),
+                len(scene.video_prompt_simplified),
+            )
         return scenes
 
 

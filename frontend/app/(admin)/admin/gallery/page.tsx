@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react'
 import { galleryApi } from '@/lib/api/gallery'
 import { AdminSection } from '@/components/admin/AdminSection'
+import { AdminPagination } from '@/components/admin/AdminPagination'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
@@ -89,14 +90,14 @@ export default function GalleryPage() {
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs flex-1"
-                    onClick={() => { galleryApi.hdRender(item.post.id); toast.info('HD 렌더링 요청') }}
+                    onClick={() => galleryApi.hdRender(item.post.id).then(() => toast.info('HD 렌더링 요청')).catch(() => toast.error('HD 렌더 요청 실패'))}
                   >
                     HD 렌더
                   </Button>
                   <Button
                     size="sm"
                     className="h-7 text-xs flex-1"
-                    onClick={() => { galleryApi.upload(item.post.id); toast.info('업로드 요청') }}
+                    onClick={() => galleryApi.upload(item.post.id).then(() => toast.info('업로드 요청')).catch(() => toast.error('업로드 요청 실패'))}
                   >
                     <Upload className="mr-1 h-3 w-3" /> 업로드
                   </Button>
@@ -106,6 +107,14 @@ export default function GalleryPage() {
           ))}
         </div>
       </AdminSection>
+
+      {total > 12 && (
+        <AdminPagination
+          page={page}
+          totalPages={Math.ceil(total / 12)}
+          onPageChange={(p) => { setPage(p); setPreviewItem(null) }}
+        />
+      )}
 
       {/* 풀스크린 비디오 프리뷰 모달 */}
       {previewItem && (
@@ -147,14 +156,14 @@ export default function GalleryPage() {
                 size="sm"
                 variant="outline"
                 className="bg-white/10 text-white border-white/30 hover:bg-white/20"
-                onClick={() => { galleryApi.hdRender(previewItem.post.id); toast.info('HD 렌더링 요청') }}
+                onClick={() => galleryApi.hdRender(previewItem.post.id).then(() => toast.info('HD 렌더링 요청')).catch(() => toast.error('HD 렌더 요청 실패'))}
               >
                 HD 렌더
               </Button>
               <Button
                 size="sm"
                 className="bg-blue-600 hover:bg-blue-700 text-white"
-                onClick={() => { galleryApi.upload(previewItem.post.id); toast.info('업로드 요청') }}
+                onClick={() => galleryApi.upload(previewItem.post.id).then(() => toast.info('업로드 요청')).catch(() => toast.error('업로드 요청 실패'))}
               >
                 <Upload className="mr-1 h-3 w-3" /> 업로드
               </Button>
