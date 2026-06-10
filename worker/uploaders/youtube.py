@@ -164,9 +164,9 @@ class YouTubeUploader(BaseUploader):
                 return None
             stats = items[0].get("statistics", {})
             return {
-                "views": int(stats.get("viewCount", 0)),
-                "likes": int(stats.get("likeCount", 0)),
-                "comments": int(stats.get("commentCount", 0)),
+                "views": int(stats.get("viewCount") or 0),
+                "likes": int(stats.get("likeCount") or 0),
+                "comments": int(stats.get("commentCount") or 0),
             }
         except Exception as exc:
             logger.warning("Analytics 수집 실패 video_id=%s: %s", video_id, exc)

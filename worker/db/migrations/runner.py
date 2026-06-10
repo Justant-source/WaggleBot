@@ -75,15 +75,29 @@ def migrate() -> None:
 
             try:
                 _run_sql(conn, sql_text)
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.error("❌ %s DDL 실패 (DDL은 이미 자동 커밋됐을 수 있음): %s", version, e)
+                raise
+
+            # DDL 성공 — 추적 레코드 삽입 (INSERT IGNORE: 재실행 안전)
+            try:
                 conn.execute(
-                    text("INSERT INTO schema_migrations (version) VALUES (:v)"),
+                    text("INSERT IGNORE INTO schema_migrations (version) VALUES (:v)"),
                     {"v": version},
                 )
                 conn.commit()
                 logger.info("✅ %s 완료", version)
             except Exception as e:
                 conn.rollback()
-                logger.error("❌ %s 실패: %s", version, e)
+                logger.error(
+                    "❌ %s schema_migrations 기록 실패 — 수동 삽입 필요: "
+                    "INSERT INTO schema_migrations (version) VALUES ('%s'): %s",
+                    version, version, e,
+                )
                 raise
 
     logger.info("마이그레이션 완료")

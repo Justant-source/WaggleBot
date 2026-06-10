@@ -102,7 +102,7 @@ async def _generate_tts_chunks(
                         "-af", f"apad=pad_dur={_INTRO_PAUSE_SEC}",
                         "-c:a", "pcm_s16le", str(tmp_pad),
                     ],
-                    capture_output=True,
+                    capture_output=True, timeout=30,
                 )
                 if pad_result.returncode == 0 and tmp_pad.exists() and tmp_pad.stat().st_size > 0:
                     tmp_pad.replace(chunk_path)
@@ -115,7 +115,7 @@ async def _generate_tts_chunks(
             subprocess.run(
                 ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
                  "-t", str(outro_duration), "-c:a", "pcm_s16le", str(out_path)],
-                capture_output=True, check=True,
+                capture_output=True, check=True, timeout=10,
             )
             dur = outro_duration
         durations.append(dur)
@@ -129,9 +129,11 @@ def _merge_chunks(chunk_paths: list[Path], output_path: Path) -> None:
         raise RuntimeError("유효한 TTS 청크 없음")
     concat_file = output_path.parent / "tts_concat.txt"
     concat_file.write_text("".join(f"file '{c.resolve()}'\n" for c in valid), encoding="utf-8")
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-         "-i", str(concat_file), "-c", "copy", str(output_path)],
-        capture_output=True, check=True,
-    )
-    concat_file.unlink(missing_ok=True)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+             "-i", str(concat_file), "-c", "copy", str(output_path)],
+            capture_output=True, check=True, timeout=120,
+        )
+    finally:
+        concat_file.unlink(missing_ok=True)

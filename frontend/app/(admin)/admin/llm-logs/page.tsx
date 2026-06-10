@@ -76,11 +76,11 @@ export default function LlmLogsPage() {
   const [successFilter, setSuccessFilter] = useState<string>('all')
 
   useEffect(() => {
-    setLoading(true)
     setPage(0)
   }, [callTypeFilter, successFilter])
 
   useEffect(() => {
+    let cancelled = false
     setLoading(true)
     llmLogsApi.list({
       page,
@@ -88,8 +88,9 @@ export default function LlmLogsPage() {
       callType: callTypeFilter !== 'all' ? callTypeFilter : undefined,
       success: successFilter !== 'all' ? successFilter === 'true' : undefined,
     }).then((res) => {
-      setLogs(res.content); setTotal(res.totalElements)
-    }).finally(() => setLoading(false))
+      if (!cancelled) { setLogs(res.content); setTotal(res.totalElements) }
+    }).finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [page, callTypeFilter, successFilter])
 
   return (

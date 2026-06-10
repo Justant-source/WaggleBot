@@ -233,6 +233,11 @@ def normalize_for_tts(text: str) -> str:
     # ):
     #     text = text.replace(spelling, pron)
 
+    # 3-2. URL/이메일/해시태그 제거 (Fish Speech 오독 방지)
+    text = re.sub(r'https?://\S+', '', text)
+    text = re.sub(r'[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}', '', text)
+    text = re.sub(r'#\S+', '', text)
+
     # 4. 특수문자 정리
     text = text.replace("。", ".").replace("、", ",")   # 중국어/일본어 구두점
     text = text.replace("~", " ").replace("～", " ")    # 물결표 → 공백

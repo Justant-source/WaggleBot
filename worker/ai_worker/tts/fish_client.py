@@ -5,6 +5,7 @@
 """
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import subprocess
@@ -186,7 +187,7 @@ async def synthesize(
 
     # 출력 경로
     if output_path is None:
-        output_path = Path(f"/tmp/tts_{abs(hash(final_text))}.{TTS_OUTPUT_FORMAT}")
+        output_path = Path(f"/tmp/tts_{hashlib.md5(final_text.encode()).hexdigest()[:16]}.{TTS_OUTPUT_FORMAT}")
 
     # 참조 오디오가 있으면 zero-shot 클로닝, 없으면 기본 음성으로 폴백
     if ref_audio.exists():
