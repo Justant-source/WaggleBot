@@ -43,6 +43,7 @@ class JobType(enum.Enum):
     FEEDBACK_APPLY = "FEEDBACK_APPLY"
     AB_EVALUATE = "AB_EVALUATE"
     AB_APPLY_WINNER = "AB_APPLY_WINNER"
+    AB_CREATE = "AB_CREATE"
 
 
 def _utcnow():

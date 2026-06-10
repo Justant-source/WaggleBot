@@ -250,6 +250,20 @@ def _handle_feedback_apply(job: Job) -> dict:
     return {"applied": True}
 
 
+def _handle_ab_create(job: Job) -> dict:
+    """A/B 테스트 생성."""
+    payload = job.payload or {}
+    name = payload.get("name")
+    preset_a = payload.get("preset_a")
+    preset_b = payload.get("preset_b")
+    if not (name and preset_a and preset_b):
+        raise ValueError("AB_CREATE: name, preset_a, preset_b 필수")
+
+    from analytics.ab_test import create_test
+    test = create_test(name, preset_a, preset_b)
+    return {"group_id": test.group_id, "name": test.name, "status": test.status}
+
+
 def _handle_ab_evaluate(job: Job) -> dict:
     """A/B 그룹 성과 평가 — winner 결정."""
     payload = job.payload or {}
@@ -293,4 +307,5 @@ HANDLERS = {
     JobType.FEEDBACK_APPLY:     _handle_feedback_apply,
     JobType.AB_EVALUATE:        _handle_ab_evaluate,
     JobType.AB_APPLY_WINNER:    _handle_ab_apply_winner,
+    JobType.AB_CREATE:          _handle_ab_create,
 }

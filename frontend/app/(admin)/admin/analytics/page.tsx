@@ -1,33 +1,60 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { analyticsApi } from '@/lib/api/analytics'
+import { analyticsApi, PerformanceRow } from '@/lib/api/analytics'
 import { AdminSection } from '@/components/admin/AdminSection'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { toast } from 'sonner'
-import { Loader2 } from 'lucide-react'
+import { Loader2, RefreshCw } from 'lucide-react'
+
+const PRESETS = [
+  { value: 'hook_question',    label: '의문형 후킹' },
+  { value: 'hook_exclamation', label: '감탄형 후킹' },
+  { value: 'body_short',       label: '짧은 body' },
+  { value: 'body_narrative',   label: '서사형 body' },
+  { value: 'tone_formal',      label: '뉴스 말투' },
+  { value: 'tone_casual',      label: '구어 말투' },
+]
 
 function usePollJob() {
-  const poll = (jobId: number, onDone: (result: unknown) => void, onError: () => void) => {
+  return (jobId: number, onDone: (r: unknown) => void, onError: () => void) => {
     const timer = setInterval(async () => {
       const job = await analyticsApi.pollJob(jobId)
       if (job.status === 'DONE') { clearInterval(timer); onDone(job.result) }
       if (job.status === 'ERROR') { clearInterval(timer); onError() }
     }, 2000)
   }
-  return poll
 }
 
 export default function AnalyticsPage() {
   const [funnel, setFunnel] = useState<Record<string, number>>({})
+  const [perf, setPerf] = useState<PerformanceRow[]>([])
+  const [perfLoading, setPerfLoading] = useState(false)
   const [insightLoading, setInsightLoading] = useState(false)
   const [insightText, setInsightText] = useState('')
+  // A/B 생성
+  const [abName, setAbName] = useState('')
+  const [abPresetA, setAbPresetA] = useState('hook_question')
+  const [abPresetB, setAbPresetB] = useState('hook_exclamation')
+  const [abCreateLoading, setAbCreateLoading] = useState(false)
+  const [abCreateResult, setAbCreateResult] = useState('')
+  // A/B 평가
   const [abGroupId, setAbGroupId] = useState('')
   const [abLoading, setAbLoading] = useState(false)
   const [abResult, setAbResult] = useState('')
   const poll = usePollJob()
 
   useEffect(() => { analyticsApi.funnel().then(setFunnel) }, [])
+
+  const loadPerf = async () => {
+    setPerfLoading(true)
+    try { setPerf(await analyticsApi.performance()) }
+    catch { toast.error('성과 데이터 로드 실패') }
+    finally { setPerfLoading(false) }
+  }
+  useEffect(() => { loadPerf() }, [])
 
   const funnelData = Object.entries(funnel).map(([name, value]) => ({
     name: name.replace(/_/g, ' '),
@@ -43,6 +70,27 @@ export default function AnalyticsPage() {
         () => { toast.error('인사이트 실패'); setInsightLoading(false) },
       )
     } catch { toast.error('요청 실패'); setInsightLoading(false) }
+  }
+
+  const handleAbCreate = async () => {
+    if (!abName.trim()) { toast.error('테스트 이름을 입력하세요'); return }
+    if (abPresetA === abPresetB) { toast.error('A와 B는 다른 프리셋이어야 합니다'); return }
+    setAbCreateLoading(true)
+    setAbCreateResult('')
+    try {
+      const res = await analyticsApi.abCreate(abName.trim(), abPresetA, abPresetB)
+      poll(res.jobId,
+        (r) => {
+          const result = r as { group_id: string }
+          setAbCreateResult(`생성됨: ${result.group_id}`)
+          setAbGroupId(result.group_id)
+          setAbName('')
+          setAbCreateLoading(false)
+          toast.success('A/B 테스트 생성됨')
+        },
+        () => { toast.error('생성 실패'); setAbCreateLoading(false) },
+      )
+    } catch { toast.error('요청 실패'); setAbCreateLoading(false) }
   }
 
   const handleAbAction = async (action: 'evaluate' | 'apply') => {
@@ -75,6 +123,50 @@ export default function AnalyticsPage() {
         </ResponsiveContainer>
       </AdminSection>
 
+      <AdminSection title="YouTube 성과" action={
+        <Button size="sm" variant="outline" onClick={loadPerf} disabled={perfLoading}>
+          {perfLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+        </Button>
+      }>
+        {perf.length === 0 ? (
+          <p className="text-sm text-gray-400">업로드된 영상 없음 (UPLOADED 상태 게시글 필요)</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-xs text-gray-500">
+                  <th className="pb-2 pr-4 font-medium">제목</th>
+                  <th className="pb-2 pr-4 font-medium text-right">조회수</th>
+                  <th className="pb-2 pr-4 font-medium text-right">좋아요</th>
+                  <th className="pb-2 font-medium text-right">댓글</th>
+                </tr>
+              </thead>
+              <tbody>
+                {perf.map((row) => (
+                  <tr key={row.postId} className="border-b last:border-0">
+                    <td className="py-2 pr-4 max-w-xs truncate" title={row.title}>
+                      {row.videoId ? (
+                        <a
+                          href={`https://youtube.com/watch?v=${row.videoId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline"
+                        >
+                          {row.title}
+                        </a>
+                      ) : row.title}
+                    </td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{row.analytics.views.toLocaleString()}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{row.analytics.likes.toLocaleString()}</td>
+                    <td className="py-2 text-right tabular-nums">{row.analytics.comments.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AdminSection>
+
       <AdminSection title="AI 인사이트" action={
         <Button size="sm" onClick={handleInsights} disabled={insightLoading}>
           {insightLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} 인사이트 생성
@@ -87,11 +179,45 @@ export default function AnalyticsPage() {
         )}
       </AdminSection>
 
-      <AdminSection title="A/B 테스트">
-        <div className="space-y-3">
+      <AdminSection title="A/B 테스트 생성">
+        <div className="max-w-lg space-y-3">
+          <Input
+            placeholder="테스트 이름 (예: hook 스타일 실험 2026-06)"
+            value={abName}
+            onChange={(e) => setAbName(e.target.value)}
+          />
           <div className="flex gap-2">
-            <input
-              className="flex-1 rounded border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            <div className="flex-1">
+              <p className="mb-1 text-xs text-gray-500">변형 A</p>
+              <Select value={abPresetA} onValueChange={setAbPresetA}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PRESETS.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex-1">
+              <p className="mb-1 text-xs text-gray-500">변형 B</p>
+              <Select value={abPresetB} onValueChange={setAbPresetB}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PRESETS.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <Button size="sm" onClick={handleAbCreate} disabled={abCreateLoading}>
+            {abCreateLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} 테스트 생성
+          </Button>
+          {abCreateResult && <p className="text-xs text-green-600">{abCreateResult}</p>}
+        </div>
+      </AdminSection>
+
+      <AdminSection title="A/B 테스트 평가">
+        <div className="max-w-lg space-y-3">
+          <div className="flex gap-2">
+            <Input
+              className="flex-1"
               placeholder="Group ID (예: ab_3f2a1b4c)"
               value={abGroupId}
               onChange={(e) => setAbGroupId(e.target.value)}
@@ -106,9 +232,7 @@ export default function AnalyticsPage() {
           {abResult ? (
             <pre className="rounded bg-gray-50 p-3 text-xs overflow-auto max-h-40">{abResult}</pre>
           ) : (
-            <p className="text-sm text-gray-400">
-              config/ab_tests.json에서 Group ID를 확인하세요
-            </p>
+            <p className="text-sm text-gray-400">테스트 생성 후 Group ID가 자동 입력됩니다</p>
           )}
         </div>
       </AdminSection>
