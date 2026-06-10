@@ -116,7 +116,7 @@ def _handle_ai_fitness(job: Job) -> dict:
 
     from db.session import SessionLocal
     from db.models import Post
-    from ai_worker.script.client import call_ollama_raw
+    from ai_worker.llm.transport import call_llm_raw
 
     with SessionLocal() as db:
         post = db.query(Post).filter_by(id=post_id).first()
@@ -130,7 +130,7 @@ def _handle_ai_fitness(job: Job) -> dict:
         f"제목: {title}\n내용 앞부분: {body}\n\n"
         'JSON으로 응답: {"score": 0~100, "reason": "한 줄 이유", "recommended": true/false}'
     )
-    raw = call_ollama_raw(prompt, max_tokens=200)
+    raw = call_llm_raw(prompt, max_tokens=200)
     return {"raw": raw}
 
 
@@ -222,21 +222,30 @@ def _handle_fetch_yt_analytics(job: Job) -> dict:
 
 
 def _handle_ai_insight(job: Job) -> dict:
-    from analytics.feedback import generate_structured_insights
+    from analytics.feedback import generate_structured_insights, build_performance_summary
+    from analytics.collector import collect_analytics
     from config.settings import load_pipeline_config
+    from db.session import SessionLocal
 
     cfg = load_pipeline_config()
-    model = cfg.get("llm_model", "haiku")
-    insights = generate_structured_insights(model=model)
+    collect_analytics()
+    with SessionLocal() as db:
+        performance_data = build_performance_summary(db)
+    insights = generate_structured_insights(performance_data, llm_model=cfg.get("llm_model", "haiku"))
     return {"insights": insights}
 
 
 def _handle_feedback_apply(job: Job) -> dict:
-    from analytics.feedback import generate_structured_insights, apply_feedback
+    from analytics.feedback import generate_structured_insights, build_performance_summary, apply_feedback
+    from analytics.collector import collect_analytics
     from config.settings import load_pipeline_config
+    from db.session import SessionLocal
 
     cfg = load_pipeline_config()
-    insights = generate_structured_insights(model=cfg.get("llm_model", "haiku"))
+    collect_analytics()
+    with SessionLocal() as db:
+        performance_data = build_performance_summary(db)
+    insights = generate_structured_insights(performance_data, llm_model=cfg.get("llm_model", "haiku"))
     apply_feedback(insights)
     return {"applied": True}
 

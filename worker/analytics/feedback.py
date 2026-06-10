@@ -143,12 +143,12 @@ def generate_structured_insights(
 
     Args:
         performance_data: build_performance_summary() 결과
-        llm_model: Ollama 모델명 (None이면 기본값 사용)
+        llm_model: LLM 모델 별칭 (None이면 기본값 사용)
 
     Returns:
         {"extra_instructions": str, "mood_weights": dict, "subtitle_style": str}
     """
-    from ai_worker.script.client import call_ollama_raw
+    from ai_worker.llm.transport import call_llm_raw
 
     if not performance_data:
         logger.warning("성과 데이터 없음 — 인사이트 생성 불가")
@@ -166,7 +166,7 @@ def generate_structured_insights(
 
     prompt = _STRUCTURED_PROMPT.format(data="\n".join(data_lines))
 
-    raw = call_ollama_raw(prompt, model=llm_model, max_tokens=512, temperature=0.5)
+    raw = call_llm_raw(prompt, model=llm_model, max_tokens=512, temperature=0.5)
 
     # JSON 파싱
     cleaned = re.sub(r"```json\s*", "", raw)

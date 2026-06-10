@@ -300,9 +300,25 @@ class BaseCrawler(ABC):
             )
             session.add(post)
             session.flush()
+
+            # 자동 승인: auto_approve_enabled=true + score >= threshold이면 APPROVED로 직행
+            try:
+                from config.settings import load_pipeline_config
+                pipe_cfg = load_pipeline_config()
+                if pipe_cfg.get("auto_approve_enabled", "false").lower() == "true":
+                    threshold = float(pipe_cfg.get("auto_approve_threshold", "80"))
+                    if score >= threshold:
+                        post.status = PostStatus.APPROVED
+                        log.info(
+                            "Auto-approved post %s:%s (score=%.1f >= %.1f)",
+                            self.site_code, origin_id, score, threshold,
+                        )
+            except Exception as _exc:
+                log.warning("자동 승인 설정 로드 실패 — COLLECTED 유지: %s", _exc)
+
             log.info(
-                "New post: %s:%s — %s (score=%.1f)",
-                self.site_code, origin_id, detail["title"], score,
+                "New post: %s:%s — %s (score=%.1f, status=%s)",
+                self.site_code, origin_id, detail["title"], score, post.status.value,
             )
 
         self._sync_comments(session, post, detail.get("comments", []))
