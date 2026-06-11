@@ -204,6 +204,7 @@ telegram/
 - **입력 격차 수정 (활성 경로)**: `chunk_with_llm()`이 제목·베스트 댓글·성과 피드백을 받지 못하던 결함 수정 → `type=comment` 인용 씬과 피드백/A/B 루프 부활. 본문 절단 2000→4000자 통일, temperature 0.7.
 - **공통화**: `analytics.feedback.build_extra_instructions()` 신설(피드백+A/B 조립), `call_llm_json` temperature 파라미터 추가.
 - 검증: 기존 32 테스트 + 신규 `test_chunker_retention.py` 6개 통과, 실게시글(post_id=71) E2E로 리텐션 구조·댓글 부활·길이 제약 확인.
+- **후속 보정(실게시글 QA 반영)**: ① 중간 떡밥 문구를 mood별 2~3개 톤 예시 + "복붙 금지"로 다양화(anger 게시글끼리 같은 문구 쏠림 완화) ② 실존 개인 식별정보(실명·나이·연락처·상세주소) 익명화 규칙 추가 — 사건·사고·의료·법적 분쟁 글에서 '누구인지'만 가리고 서사·사실관계는 보존. chunker.py·client.py 동기.
 
 ## 다음 개선 우선순위
 
