@@ -793,7 +793,7 @@ class RobustProcessor:
             except Exception:
                 logger.debug("A/B 변형 배정 실패 — 무시", exc_info=True)
 
-            use_cp = self.cfg.get("use_content_processor") == "true"
+            use_cp = load_pipeline_config().get("use_content_processor") == "true"
 
             stamp_progress(post_id, 2, "대본 생성")
             if use_cp:
