@@ -29,10 +29,15 @@ _FEEDBACK_DEFAULTS: dict = {
     "updated_at": None,
     "extra_instructions": "",
     "mood_weights": {
-        "shocking": 1.0,
-        "funny": 1.0,
-        "serious": 1.0,
-        "heartwarming": 1.0,
+        "humor": 1.0,
+        "touching": 1.0,
+        "anger": 1.0,
+        "sadness": 1.0,
+        "horror": 1.0,
+        "info": 1.0,
+        "controversy": 1.0,
+        "daily": 1.0,
+        "shock": 1.0,
     },
     "subtitle_style": "default",
 }
@@ -50,10 +55,15 @@ _STRUCTURED_PROMPT = """\
 {{
   "extra_instructions": "대본 작가를 위한 구체적 지시 (2~3문장, 한국어, 성과 패턴 기반)",
   "mood_weights": {{
-    "shocking": 1.0,
-    "funny": 1.0,
-    "serious": 1.0,
-    "heartwarming": 1.0
+    "humor": 1.0,
+    "touching": 1.0,
+    "anger": 1.0,
+    "sadness": 1.0,
+    "horror": 1.0,
+    "info": 1.0,
+    "controversy": 1.0,
+    "daily": 1.0,
+    "shock": 1.0
   }},
   "subtitle_style": "default"
 }}
