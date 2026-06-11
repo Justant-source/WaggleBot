@@ -9,7 +9,7 @@ from db.models import ScriptData
 logger = logging.getLogger(__name__)
 
 # ── layout.json에서 글자수 제한 로드 ──
-_LAYOUT_PATH = Path(__file__).resolve().parents[3] / "config" / "layout.json"
+_LAYOUT_PATH = Path(__file__).resolve().parents[2] / "config" / "layout.json"
 
 def _load_layout_constraints() -> dict:
     """layout.json의 constraints 섹션을 로드한다."""
@@ -22,12 +22,20 @@ def _load_layout_constraints() -> dict:
 
 _constraints = _load_layout_constraints()
 
-# 본문 글자수 제한 (layout.json → constraints.body_line)
-MAX_LINE_CHARS: int = _constraints.get("body_line", {}).get("max_chars", 21)
+# layout.json의 max_chars는 (줄당 글자수 × max_lines)의 total 값 — per-line으로 환산
+_body_line = _constraints.get("body_line", {})
+_comment_line = _constraints.get("comment_line", {})
 
-# 댓글 글자수 제한 (layout.json → constraints.comment_line)
-COMMENT_LINE_CHARS: int = _constraints.get("comment_line", {}).get("max_chars", 20)
-COMMENT_MAX_LINES: int = _constraints.get("comment_line", {}).get("max_lines", 3)
+MAX_LINE_CHARS: int = (
+    _body_line.get("max_chars", 42) // max(_body_line.get("max_lines", 2), 1)
+    if _body_line else 21
+)
+
+COMMENT_MAX_LINES: int = _comment_line.get("max_lines", 3) if _comment_line else 3
+COMMENT_LINE_CHARS: int = (
+    _comment_line.get("max_chars", 60) // max(COMMENT_MAX_LINES, 1)
+    if _comment_line else 20
+)
 COMMENT_MAX_CHARS: int = COMMENT_LINE_CHARS * COMMENT_MAX_LINES  # 60
 
 

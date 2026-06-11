@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 def _load_variant_presets() -> dict:
     """config/prompt_presets.json 에서 로드, 없으면 기존 하드코딩 폴백."""
-    config_path = Path(__file__).parent.parent.parent / "config" / "prompt_presets.json"
+    config_path = Path(__file__).parent.parent / "config" / "prompt_presets.json"
     if config_path.exists():
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
