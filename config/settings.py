@@ -277,7 +277,7 @@ def get_llm_constraints_prompt() -> str:
 # TTS — Fish Speech 1.5
 # ────────────────────────────────────────────
 FISH_SPEECH_URL = os.getenv("FISH_SPEECH_URL", "http://fish-speech:8080")
-FISH_SPEECH_TIMEOUT = 120  # seconds (4B 모델 첫 생성 느림, 동시 요청 시 write 대기 포함)
+FISH_SPEECH_TIMEOUT = 300  # seconds — 리텐션 개편 후 대본 600자+(9문장) 전체 합성이 문장당 ~13초로 120초를 초과 (타임아웃<합성시간이면 재시도 중복 큐잉 악순환)
 
 # 참조 오디오 프리셋
 # key: voice_key, value: assets/voices/ 내 파일명
@@ -366,6 +366,7 @@ VIDEO_RESOLUTION: tuple[int, int] = (1280, 720)
 VIDEO_RESOLUTION_FALLBACK: tuple[int, int] = (768, 512)
 VIDEO_NUM_FRAMES: int = 97           # 1+8*12 (~4초 @24fps)
 VIDEO_NUM_FRAMES_FALLBACK: int = 65  # 1+8*8 다운그레이드용
+VIDEO_NUM_FRAMES_MAX: int = 145      # 1+8*18 = 6.04초 @24fps — 동적 프레임 상한 (ADR-0004)
 VIDEO_FPS: int = 24
 VIDEO_STEPS: int = 20
 VIDEO_STEPS_DISTILLED: int = 8

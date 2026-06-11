@@ -144,11 +144,18 @@ class TestScriptSystemPrompt:
         )
 
     def test_prompt_mood_teaser_variants_present(self):
-        """mood별 떡밥 변형 예시 — shock/horror 패턴이 프롬프트에 있어야 한다."""
+        """mood별 떡밥 변형 가이드 — shock/horror(소름)·humor 패턴이 프롬프트에 있어야 한다.
+
+        50d62ef에서 문장형 예시("소름 돋는 게 뭔지 아세요")가
+        압축형 변형 가이드("shock/horror: 소름·등골 서늘")로 교체됨.
+        """
         from ai_worker.script.client import _SCRIPT_SYSTEM
 
-        assert "소름 돋는 게 뭔지 아세요" in _SCRIPT_SYSTEM, (
-            "_SCRIPT_SYSTEM에 mood별 떡밥 변형 예시(shock/horror)가 없음"
+        assert "shock/horror" in _SCRIPT_SYSTEM and "소름" in _SCRIPT_SYSTEM, (
+            "_SCRIPT_SYSTEM에 mood별 떡밥 변형 가이드(shock/horror·소름)가 없음"
+        )
+        assert "humor" in _SCRIPT_SYSTEM, (
+            "_SCRIPT_SYSTEM에 humor 떡밥 변형 가이드가 없음"
         )
 
     def test_prompt_mood_decision_tree_present(self):

@@ -597,6 +597,7 @@ class RobustProcessor:
             VIDEO_MAX_RETRY,
             VIDEO_NUM_FRAMES,
             VIDEO_NUM_FRAMES_FALLBACK,
+            VIDEO_NUM_FRAMES_MAX,
             VIDEO_RESOLUTION,
             VIDEO_RESOLUTION_FALLBACK,
             VIDEO_STEPS,
@@ -616,6 +617,7 @@ class RobustProcessor:
             "VIDEO_RESOLUTION_FALLBACK": VIDEO_RESOLUTION_FALLBACK,
             "VIDEO_NUM_FRAMES": VIDEO_NUM_FRAMES,
             "VIDEO_NUM_FRAMES_FALLBACK": VIDEO_NUM_FRAMES_FALLBACK,
+            "VIDEO_NUM_FRAMES_MAX": VIDEO_NUM_FRAMES_MAX,
             "VIDEO_GEN_TIMEOUT": VIDEO_GEN_TIMEOUT,
             "VIDEO_GEN_TIMEOUT_DISTILLED": VIDEO_GEN_TIMEOUT_DISTILLED,
             "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
@@ -814,6 +816,13 @@ class RobustProcessor:
                 )
             stamp_progress(post_id, 5, "TTS 합성", done=True)
             logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
+
+            # 장시간 LLM+TTS(수십 분) 동안 stamp_progress가 별도 세션으로 같은
+            # contents 행을 갱신함 → MariaDB 11.6+ innodb_snapshot_isolation=ON에서
+            # 오래된 REPEATABLE READ 스냅샷으로 UPDATE 시 errno 1020 발생.
+            # render_stage(L903)와 동일하게 트랜잭션을 끝내고 새 스냅샷으로 저장.
+            # (마지막 commit 이후 이 세션에 쓰기 없음 — rollback은 순수 트랜잭션 종료)
+            session.rollback()
 
             # 중간 결과 저장 (렌더 단계에서 재사용)
             content = session.query(Content).filter_by(post_id=post_id).first()

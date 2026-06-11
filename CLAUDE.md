@@ -56,7 +56,7 @@ with gpu_manager.managed_inference(ModelType.TTS, "fish-speech"):
 ```
 **FFmpeg:** `h264_nvenc` 필수, `libx264` 지정 금지 (프리뷰 480×854만 CPU 허용). 렌더러는 filter_complex 단일 NVENC 패스 — 중간 재인코딩 금지 → [ADR-0002](docs/adr/0002-single-nvenc.md)
 **ComfyUI:** `--lowvram --reserve-vram 2` 고정, `--normalvram` 금지 (텍스트 인코딩 OOM) → [ADR-0001](docs/adr/0001-comfyui-lowvram.md)
-**LTX-2:** 프레임 수 `1+8k`(9~97), 해상도 8의 배수 — `video_utils.validate_frame_count()`/`validate_resolution()` 필수
+**LTX-2:** 프레임 수 `1+8k`(9~145, 동적 상한 `VIDEO_NUM_FRAMES_MAX`=145), 해상도 8의 배수 — `video_utils.validate_frame_count()`/`validate_resolution()` 필수, 클립 4~6초 정책 → [ADR-0004](docs/adr/0004-clip-4-6s-frames-145.md)
 **Phase 5‖6 병렬:** 순차로 되돌리거나 GPU Phase를 병렬에 포함 금지 → [ADR-0003](docs/adr/0003-phase56-parallel.md)
 
 ## 코딩 규칙

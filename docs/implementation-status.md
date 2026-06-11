@@ -207,6 +207,19 @@ telegram/
 - **후속 보정(실게시글 QA 반영)**: ① 중간 떡밥 문구를 mood별 2~3개 톤 예시 + "복붙 금지"로 다양화(anger 게시글끼리 같은 문구 쏠림 완화) ② 실존 개인 식별정보(실명·나이·연락처·상세주소) 익명화 규칙 추가 — 사건·사고·의료·법적 분쟁 글에서 '누구인지'만 가리고 서사·사실관계는 보존. chunker.py·client.py 동기.
 - **2차 후속 보정**: ③ 떡밥 구체화 강제 — "지금부터예요" 류 막연한 마무리 금지, 사연 구체 단어(인물·사물·반전 대상) 주입((X)/(O) 예시). 잔여 수렴(8건 중 3건 동일) 해소 확인 ④ 약자 학대 편가르기 제외 — 아동·노약자·동물 대상 명백한 학대·폭력은 찬반 투표형 closer 금지("훈육이냐 학대냐" 식), 피해자 보호·공감 관점 질문으로 대체. chunker.py·client.py 동기.
 
+### LTX-2 비디오 프롬프트 V3 개편 + 클립 4~6초 (2026-06-11)
+
+지속시청시간 강화를 위한 Phase 6 프롬프트 엔진 전면 개편 (`prompt_engine.py` V3):
+
+- **연속성**: post당 1회 비주얼 앵커(주인공 외모·복장+장소, haiku) 생성 → 전 T2V 씬 공유로 클립 간 인물·배경 일관성. simplified 프롬프트에도 앵커 유지 지시.
+- **I2V vision brief**: `call_llm(images=)` 신설(api 백엔드 전용, base64 image block) — 초기 이미지 내용을 haiku vision으로 분석해 모션이 피사체와 모순되지 않게 함. 실패 시 post 단위 비활성 + `SceneDecision.video_image_category`(image_filter 분류, 신규 플럼빙) 힌트 폴백.
+- **출력 검증+폴백**: 메타 응답 유출 차단(`_validate_prompt`: 한글/물음표/메타 마커/길이) → 1회 재시도 → mood별 결정적 폴백. 실측 유출 사례("I'm Kiro...") 픽스처로 테스트 가드.
+- **동적 길이**: "4-second" 하드코딩 제거 → `estimated_tts_sec` 4~6초 클램프 주입. 씬 병합 4.0~6.0초(`scene/settings.yaml`), 프레임 상한 `VIDEO_NUM_FRAMES_MAX=145` → [ADR-0004](adr/0004-clip-4-6s-frames-145.md).
+- **기타**: `call_ollama_raw`(call_type="raw") → `call_llm`(정확한 call_type) 전환으로 모델 라우팅·오버라이드 정상화, system/user 분리 + `cache_prefix=True`로 api 프롬프트 캐싱, 모션 아크(시작→전개→끝+미해결 비트)·직전 씬 프레이밍 회피(샷 다양성) 지시, `video_styles.json` 9 mood 실사 단서로 재작성(편집 효과·반실사 렌즈 제거), 스토리 컨텍스트(제목+body_summary) 주입.
+- 검증: 전체 스위트 203 passed (신규 48개: 검증/재시도/앵커/brief/vision 전송/프레임 캡/category 플럼빙), 실 LLM 스모크 5건 통과 — V3 출력에서 메타 응답 0건, 앵커가 사연(며느리·시어머니·명절 거실)에 정확 부합.
+- **실게시글 E2E (post 9999910, 사내 스토커 누명 사연)**: APPROVED→PREVIEW_RENDERED 완주. 22씬(T2V 7, 정적 15), 클립 7/7 attempt-1 성공, 프레임 97~121(4.04~5.04초, 145 캡 이내), 앵커→씬 일관성 실증(휴게실·30대 남성·여성 후배가 전 씬 공유), call_type별 LLMLog 분리 기록 확인. 검증 체인 실전: 재시도 회복 2건(too_long·question_mark), 결정적 폴백 1건(korean_text) — 메타 유출 0. E2E 관찰 반영 튜닝: too_long 1200→1600자, 실패 사유별 재시도 힌트(`_RETRY_HINTS`).
+- **E2E 중 발견·수정한 파이프라인 결함 2건 (V3와 무관한 기존 버그)**: ① `FISH_SPEECH_TIMEOUT` 120→300초 — 리텐션 개편 후 대본 600자+ 전체 TTS 합성(문장당 ~13초×9)이 120초 초과 → 타임아웃·중복 큐잉 악순환 ② `llm_tts_stage` 종료 시 MariaDB errno 1020 — `mariadb:11` 롤링 태그가 11.8.8로 올라오며 `innodb_snapshot_isolation=ON` 기본화, 수십 분 트랜잭션 중 stamp_progress가 갱신한 contents 행을 오래된 스냅샷으로 UPDATE → 결정론적 실패. render_stage(L903)와 동일한 `session.rollback()` 패턴을 `processor.py` llm_tts_stage에 적용.
+
 ## 다음 개선 우선순위
 
 현 상태로 전체 파이프라인이 동작 가능. 주요 선택적 개선 항목은 모두 완료됨.

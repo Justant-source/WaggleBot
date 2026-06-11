@@ -69,6 +69,7 @@ class SceneDecision:
     video_prompt: str | None = None         # LTX-Video용 영어 프롬프트
     video_mode: str | None = None           # "t2v" | "i2v" | None
     video_init_image: str | None = None     # I2V 모드 초기 프레임 이미지 경로
+    video_image_category: str | None = None  # image_filter 분류 (photo/meme 등) — I2V 프롬프트 폴백 힌트
     video_generation_failed: bool = False   # 비디오 생성 최종 실패 여부
     # --- Phase 4 LLM Scene Director 필드 ---
     estimated_tts_sec: float = 0.0           # TTS 예상 시간 (초) — 비디오 생성 시 목표 길이
@@ -180,11 +181,11 @@ def _download_and_cache_image(url: str, cache_dir: Path) -> Path | None:
 
 def generate_merge_candidates(
     scenes: list[dict],
-    min_duration: float = 3.5,
-    max_duration: float = 5.0,
+    min_duration: float = 4.0,
+    max_duration: float = 6.0,
     max_group_size: int = 5,
 ) -> list[MergeCandidate]:
-    """3.5~5.0초 범위를 만족하는 모든 인접 씬 그룹 후보를 생성한다.
+    """4.0~6.0초 범위를 만족하는 모든 인접 씬 그룹 후보를 생성한다.
 
     댓글 전용 그룹(모든 씬이 comment)은 비디오 후보에서 제외한다.
 
@@ -241,11 +242,11 @@ def generate_merge_candidates(
 
 def generate_merge_candidates_with_oversized(
     scenes: list[dict],
-    min_duration: float = 3.5,
-    max_duration: float = 5.0,
+    min_duration: float = 4.0,
+    max_duration: float = 6.0,
     max_group_size: int = 5,
 ) -> tuple[list[MergeCandidate], list[int]]:
-    """병합 후보를 생성하되, 5초 초과 단일 씬도 별도로 반환한다.
+    """병합 후보를 생성하되, max_duration 초과 단일 씬도 별도로 반환한다.
 
     Returns:
         (normal_candidates, oversized_scene_indices)
@@ -782,6 +783,7 @@ def _convert_to_scene_decisions(
             tts_sec = estimate_tts_duration(text)
             img_url = None
             init_img = None
+            img_category = None
             v_mode = "t2v"
             v_subtype = "ttv"
 
@@ -790,6 +792,7 @@ def _convert_to_scene_decisions(
                 if img_id is not None and img_id in itv_map:
                     img_url = itv_map[img_id]["original_url"]
                     init_img = itv_map[img_id]["local_path"]
+                    img_category = itv_map[img_id].get("category")
                     v_mode = "i2v"
                     v_subtype = "itv"
 
@@ -805,6 +808,7 @@ def _convert_to_scene_decisions(
                 pre_split_lines=psl,
                 video_mode=v_mode,
                 video_init_image=init_img,
+                video_image_category=img_category,
                 video_subtype=v_subtype,
                 estimated_tts_sec=tts_sec,
                 merged_scene_indices=[scene_index],
@@ -829,6 +833,7 @@ def _convert_to_scene_decisions(
 
         img_url = None
         init_img = None
+        img_category = None
         v_mode = "t2v"
         v_subtype = "ttv"
 
@@ -837,6 +842,7 @@ def _convert_to_scene_decisions(
             if img_id is not None and img_id in itv_map:
                 img_url = itv_map[img_id]["original_url"]
                 init_img = itv_map[img_id]["local_path"]
+                img_category = itv_map[img_id].get("category")
                 v_mode = "i2v"
                 v_subtype = "itv"
 
@@ -849,6 +855,7 @@ def _convert_to_scene_decisions(
             block_type="comment" if has_comment else "body",
             video_mode=v_mode,
             video_init_image=init_img,
+            video_image_category=img_category,
             video_subtype=v_subtype,
             estimated_tts_sec=mg.total_duration_sec,
             merged_scene_indices=list(mg.scene_indices),
@@ -940,6 +947,7 @@ def assign_video_modes(
                     elif suitability.score >= i2v_threshold:
                         scene.video_mode = "i2v"
                         scene.video_init_image = str(local_path)
+                        scene.video_image_category = suitability.category
                         logger.info(
                             "[scene] 씬 %d (%s): I2V 선정 (score=%.3f, category=%s)",
                             i, scene.type, suitability.score, suitability.category,
@@ -1357,10 +1365,10 @@ class SceneDirector:
             "scene", sd_cfg_base, "max_video_clips", default=5,
         )
         min_clip_dur = get_domain_setting(
-            "scene", sd_cfg_base, "target_clip_duration", "min", default=3.5,
+            "scene", sd_cfg_base, "target_clip_duration", "min", default=4.0,
         )
         max_clip_dur = get_domain_setting(
-            "scene", sd_cfg_base, "target_clip_duration", "max", default=5.0,
+            "scene", sd_cfg_base, "target_clip_duration", "max", default=6.0,
         )
         max_group_size = get_domain_setting(
             "scene", sd_cfg_base, "max_group_size", default=5,

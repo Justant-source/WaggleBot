@@ -438,5 +438,72 @@ class TestConvertToSceneDecisions:
         assert scenes[0].video_subtype == "ttv"
 
 
+# =====================================================================
+# video_image_category 플럼빙 (I2V 프롬프트 폴백 힌트)
+# =====================================================================
+
+class TestImageCategoryPlumbing:
+
+    def test_itv_group_clip_carries_category(self) -> None:
+        """itv 그룹 클립의 SceneDecision에 image_filter category가 전달된다."""
+        body_items = [
+            ("대사 하나입니다", None, "body", None, None),
+            ("대사 둘입니다", None, "body", None, None),
+        ]
+        mg = MergeCandidate(
+            group_id="G0", start_index=0, end_index=1,
+            scene_indices=[0, 1], scene_count=2, total_duration_sec=4.5,
+        )
+        itv = [{
+            "index": 0, "original_url": "http://x/a.jpg",
+            "local_path": "/tmp/a.jpg", "suitability_score": 0.9,
+            "category": "photo",
+        }]
+        validated = {
+            "video_clips": [{"type": "itv", "group_id": "G0", "image_id": 0}],
+            "static_scenes": [],
+        }
+        scenes = _convert_to_scene_decisions(validated, body_items, [mg], itv, [], [])
+        assert scenes[0].video_mode == "i2v"
+        assert scenes[0].video_image_category == "photo"
+
+    def test_oversized_itv_clip_carries_category(self) -> None:
+        """oversized itv 클립도 category를 전달한다."""
+        body_items = [
+            ("아주 긴 대사입니다 이것은 정말 길어서 육초를 초과합니다 진짜로요", None, "body", None, None),
+        ]
+        itv = [{
+            "index": 0, "original_url": "http://x/b.jpg",
+            "local_path": "/tmp/b.jpg", "suitability_score": 0.8,
+            "category": "meme",
+        }]
+        validated = {
+            "video_clips": [{"type": "itv", "scene_index": 0, "image_id": 0}],
+            "static_scenes": [],
+        }
+        scenes = _convert_to_scene_decisions(validated, body_items, [], itv, [], [0])
+        assert scenes[0].video_image_category == "meme"
+
+    def test_assign_video_modes_stores_category(self, monkeypatch, tmp_path) -> None:
+        """Phase 4.5 안전망 경로에서도 i2v 선정 시 category가 저장된다."""
+        from ai_worker.scene import director
+        import ai_worker.video.image_filter as imgf
+        from ai_worker.video.image_filter import ImageSuitability
+
+        img = tmp_path / "img.jpg"
+        img.write_bytes(b"x" * 300)
+        monkeypatch.setattr(director, "_download_and_cache_image", lambda url, d: img)
+        monkeypatch.setattr(
+            imgf, "evaluate_image",
+            lambda p: ImageSuitability(
+                score=0.9, reason="suitable", category="photo", width=800, height=600,
+            ),
+        )
+        scene = SceneDecision(type="image_text", text_lines=["t"], image_url="http://x/im.jpg")
+        director.assign_video_modes([scene], tmp_path, 0.6)
+        assert scene.video_mode == "i2v"
+        assert scene.video_image_category == "photo"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

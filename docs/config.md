@@ -43,7 +43,7 @@ env/
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `FISH_SPEECH_URL` | `http://fish-speech:8080` | Fish Speech API |
-| `FISH_SPEECH_TIMEOUT` | `120` | TTS 요청 타임아웃 (초) |
+| `FISH_SPEECH_TIMEOUT` | `300` | TTS 요청 타임아웃 (초) — 대본 600자+ 전체 합성이 120초를 초과해 상향 (2026-06-11) |
 | `FISH_SPEECH_TEMPERATURE` | `0.5` | 생성 다양성 (0.7→0.5, 중국어 회귀 방지) |
 | `FISH_SPEECH_REPETITION_PENALTY` | `1.3` | 반복 억제 |
 | `TTS_OUTPUT_FORMAT` | `wav` | 출력 포맷 |
@@ -71,8 +71,9 @@ env/
 | `VIDEO_GEN_TIMEOUT` | `1200` | 비디오 생성 타임아웃 (초, 20분) |
 | `VIDEO_RESOLUTION` | `(1280, 720)` | 기본 해상도 |
 | `VIDEO_RESOLUTION_FALLBACK` | `(768, 512)` | 폴백 해상도 |
-| `VIDEO_NUM_FRAMES` | `97` | 기본 프레임 수 (1+8×12) |
+| `VIDEO_NUM_FRAMES` | `97` | 기본 프레임 수 (1+8×12, estimated_tts_sec 없을 때) |
 | `VIDEO_NUM_FRAMES_FALLBACK` | `65` | 폴백 프레임 수 (1+8×8) |
+| `VIDEO_NUM_FRAMES_MAX` | `145` | 동적 프레임 상한 (1+8×18 = 6.04초 @24fps) → [ADR-0004](adr/0004-clip-4-6s-frames-145.md) |
 | `VIDEO_FPS` | `24` | 프레임레이트 |
 | `VIDEO_STEPS` | `20` | Full 모델 denoising steps |
 | `VIDEO_STEPS_DISTILLED` | `8` | Distilled 모델 steps |
@@ -130,15 +131,17 @@ env/
 }
 ```
 
-**llm_model_overrides 예시:**
+**llm_model_overrides 예시** (키는 실제 call_type — `transport.py`의 `_CALL_TYPE_MODEL_MAP` 참조):
 ```json
 {
   "llm_model_overrides": {
     "chunk": "sonnet",
-    "video_prompt": "sonnet"
+    "video_prompt_t2v": "sonnet",
+    "video_prompt_i2v": "sonnet"
   }
 }
 ```
+비디오 관련 call_type: `video_prompt_t2v` · `video_prompt_i2v` · `video_prompt_simplify` · `video_visual_anchor` · `video_image_brief` (기본 전부 haiku)
 
 ---
 
@@ -192,7 +195,22 @@ env/
 
 ## config/video_styles.json
 
-mood별 비디오 시각 스타일. Phase 6 영어 프롬프트 생성에 적용.
+mood 9종별 비디오 시각 스타일. Phase 6 영어 프롬프트(T2V) 생성 시 user prompt의
+MOOD STYLING 블록에 주입된다.
+
+**구조 계약** (mood당 4키 — `prompt_engine._get_style_block()`·테스트가 의존):
+
+| 키 | 타입 | 용도 |
+|----|------|------|
+| `style_hint` | str | 시각 톤 (조명·프레이밍·텍스처) |
+| `camera_hints` | list[str] | 카메라 무브 후보 — **젠틀 단일 무브 2~3개만** (LTX-2 CAMERA RULE) |
+| `color_palette` | list[str] | 색감 방향 |
+| `atmosphere` | str | 전체 분위기·페이싱 |
+
+**작성 원칙 (V3):** 실사 촬영 가능한 단서만 허용. 편집 효과(freeze frame, speed ramp,
+glitch, split-screen, strobing)·반실사 렌즈(fish-eye)·과격 무브(whip pan, crash zoom,
+snap zoom)는 금지 — 템플릿의 REALISM 블록과 충돌해 AI 티를 유발한다.
+(`test_prompt_engine.py::test_video_styles_no_anti_realism_cues`가 가드)
 
 ---
 

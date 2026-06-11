@@ -39,3 +39,4 @@
 | 0001 | [0001-comfyui-lowvram.md](adr/0001-comfyui-lowvram.md) | ComfyUI `--lowvram` 고정, `--normalvram` 금지 |
 | 0002 | [0002-single-nvenc.md](adr/0002-single-nvenc.md) | 렌더러 NVENC 단일 패스 (filter_complex 통합) |
 | 0003 | [0003-phase56-parallel.md](adr/0003-phase56-parallel.md) | Phase 5(TTS)+6(video_prompt) asyncio.gather 병렬 |
+| 0004 | [0004-clip-4-6s-frames-145.md](adr/0004-clip-4-6s-frames-145.md) | 클립 4~6초 정책 + 동적 프레임 상한 145 |

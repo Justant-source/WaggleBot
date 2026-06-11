@@ -5,8 +5,10 @@ claude CLI는 temperature/max_tokens를 지원하지 않으므로 advisory로만
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
+from pathlib import Path
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -31,6 +33,8 @@ _CALL_TYPE_MODEL_MAP: dict[str, str] = {
     "video_prompt_t2v": "haiku",
     "video_prompt_i2v": "haiku",
     "video_prompt_simplify": "haiku",
+    "video_visual_anchor": "haiku",
+    "video_image_brief": "haiku",
     "translate": "haiku",
     "raw": "haiku",
 }
@@ -116,6 +120,15 @@ def _get_llm_backend() -> str:
         return "cli"
 
 
+def llm_backend_supports_vision() -> bool:
+    """현재 백엔드가 이미지 입력(vision)을 지원하는지 반환.
+
+    cli(llm-worker 브릿지)는 이미지 전달 경로가 없으므로 api 백엔드만 True.
+    호출자는 이 함수로 사전 판단해, 이미지 없이 brief를 지어내는 사고를 막는다.
+    """
+    return _get_llm_backend() == "api"
+
+
 def _get_anthropic_api_key() -> str | None:
     import os
     key = os.getenv("ANTHROPIC_API_KEY")
@@ -195,6 +208,44 @@ def _merge_json_instruction(system_text: str | None, json_mode: bool) -> str | N
     return _JSON_INSTRUCTION
 
 
+_IMAGE_MEDIA_TYPES: dict[str, str] = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+_IMAGE_MAX_BYTES = 5 * 1024 * 1024  # Anthropic API 이미지 제한(5MB) 준수
+
+
+def _encode_image_blocks(images: list[Path]) -> list[dict]:
+    """로컬 이미지 파일을 Messages API base64 image content block으로 변환.
+
+    미존재/미지원 확장자/5MB 초과 파일은 건너뛰고 경고만 남긴다.
+    """
+    blocks: list[dict] = []
+    for path in images:
+        if not path.is_file():
+            logger.warning("vision 이미지 누락 — 건너뜀: %s", path)
+            continue
+        media_type = _IMAGE_MEDIA_TYPES.get(path.suffix.lower())
+        if media_type is None:
+            logger.warning("vision 미지원 이미지 형식 — 건너뜀: %s", path)
+            continue
+        if path.stat().st_size > _IMAGE_MAX_BYTES:
+            logger.warning("vision 이미지 5MB 초과 — 건너뜀: %s", path)
+            continue
+        blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.b64encode(path.read_bytes()).decode("ascii"),
+            },
+        })
+    return blocks
+
+
 def _call_via_api(
     prompt: str,
     *,
@@ -205,6 +256,7 @@ def _call_via_api(
     timeout: int,
     system: str | None = None,
     cache_prefix: bool = False,
+    images: list[Path] | None = None,
 ) -> str:
     """Anthropic Messages API 직접 호출. 원시 텍스트 반환."""
     api_key = _get_anthropic_api_key()
@@ -216,11 +268,17 @@ def _call_via_api(
         )
     # CLI는 max_tokens를 무시했으므로, API에서 잘림 방지를 위해 충분히 큰 값 보장
     api_max = max_tokens if max_tokens and max_tokens >= 2048 else _API_DEFAULT_MAX_TOKENS
+    # vision: 이미지 블록을 텍스트 블록 앞에 배치 (공식 권장 순서)
+    content: str | list[dict] = prompt
+    if images:
+        image_blocks = _encode_image_blocks(images)
+        if image_blocks:
+            content = [*image_blocks, {"type": "text", "text": prompt}]
     body: dict = {
         "model": resolved_model,
         "max_tokens": api_max,
         "temperature": temperature,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": content}],
     }
     # system(정적 캐시 prefix) 구성:
     #   캐싱 활성(= api + system 존재 + cache_prefix=True + llm_prompt_cache truthy) →
@@ -287,6 +345,7 @@ def call_llm(
     post_id: int | None = None,
     system: str | None = None,
     cache_prefix: bool = False,
+    images: list[Path | str] | None = None,
 ) -> str:
     """LLM 호출. 원시 텍스트 반환.
 
@@ -297,6 +356,8 @@ def call_llm(
     system은 정적 캐시 prefix(페르소나/규칙/스키마/예시), prompt는 동적 tail(실제 입력).
     api 백엔드 + cache_prefix=True + 캐싱 활성 시 system을 prompt caching 블록으로 전송.
     cli 백엔드는 cache_control 미지원 → system을 prompt 앞에 합쳐 전송(캐싱 no-op).
+    images는 api 백엔드 전용(vision) — cli 백엔드는 무시하고 경고만 남긴다.
+    호출 전 llm_backend_supports_vision()으로 사전 판단할 것.
     """
     resolved_model = resolve_model_id(pick_model(call_type, model))
 
@@ -311,6 +372,13 @@ def call_llm(
             timeout=timeout,
             system=system,
             cache_prefix=cache_prefix,
+            images=[Path(p) for p in images] if images else None,
+        )
+
+    if images:
+        logger.warning(
+            "cli 백엔드는 vision 미지원 — 이미지 %d장 무시 (call_type=%s)",
+            len(images), call_type,
         )
 
     # cli 백엔드: cache_control 미지원 → system을 prompt 앞에 병합(캐싱 no-op).

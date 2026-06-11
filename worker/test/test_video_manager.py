@@ -48,6 +48,7 @@ def _make_manager(generate_side_effect=None):
         "VIDEO_RESOLUTION_FALLBACK": (768, 512),
         "VIDEO_NUM_FRAMES": 97,
         "VIDEO_NUM_FRAMES_FALLBACK": 65,
+        "VIDEO_NUM_FRAMES_MAX": 145,
         "VIDEO_FPS": 24,
         "VIDEO_STEPS": 20,
         "VIDEO_STEPS_DISTILLED": 8,
@@ -162,6 +163,31 @@ class TestVideoManager:
         )
         # 씬 1 실패 → 씬 0에 병합, 최종 2개
         assert len(result) == 2
+
+    def test_frame_cap_calc(self):
+        """calc_frames_from_duration이 max_frames 상한을 적용한다 (ADR-0004)."""
+        from ai_worker.video.manager import calc_frames_from_duration
+        assert calc_frames_from_duration(4.0, 24, max_frames=145) == 97
+        assert calc_frames_from_duration(6.0, 24, max_frames=145) == 145
+        assert calc_frames_from_duration(8.0, 24, max_frames=145) == 145
+        # 상한 미지정 시 기존 동작 (1+8k 보정만)
+        assert calc_frames_from_duration(8.0, 24) == 193
+
+    def test_oversized_scene_capped_at_145(self):
+        """8초 oversized 씬도 attempt 1에서 145프레임으로 캡된다."""
+        scene = _make_mock_scene()
+        scene.estimated_tts_sec = 8.0
+        manager = _make_manager()
+        params = manager._resolve_attempt_params(scene, 1, post_id=1, scene_index=0)
+        assert params["num_frames"] == 145
+
+    def test_normal_scene_dynamic_frames(self):
+        """5초 씬은 121프레임 (1+8*15) 그대로 — 캡 미적용."""
+        scene = _make_mock_scene()
+        scene.estimated_tts_sec = 5.0
+        manager = _make_manager()
+        params = manager._resolve_attempt_params(scene, 1, post_id=1, scene_index=0)
+        assert params["num_frames"] == 121
 
     def test_distilled_fallback_on_4th_attempt(self):
         """4번째 시도에서 Distilled 폴백이 사용되는지 확인한다."""

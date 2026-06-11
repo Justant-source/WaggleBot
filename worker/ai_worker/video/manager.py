@@ -9,7 +9,7 @@ SceneDirector로부터 씬 리스트를 받아:
 
 의존성 규칙:
 - ai_worker.tts 모듈을 절대 import하지 않는다.
-- ai_worker.llm.client의 call_ollama_raw()만 간접 사용 (prompt_engine 경유).
+- LLM은 ai_worker.llm.transport의 call_llm()만 간접 사용 (prompt_engine 경유).
 """
 
 import asyncio
@@ -61,15 +61,19 @@ class VideoGenerationResult:
     merged_into: int | None = None
 
 
-def calc_frames_from_duration(target_sec: float, fps: int = 24) -> int:
+def calc_frames_from_duration(target_sec: float, fps: int = 24, max_frames: int | None = None) -> int:
     """목표 시간(초)에서 LTX-2 유효 프레임 수를 계산한다.
 
     LTX-2 프레임 규칙 (1+8k)에 맞게 보정된 값을 반환한다.
+    max_frames 지정 시 상한을 적용한다 (oversized 씬의 VRAM 폭주 방지, ADR-0004).
     """
     from ai_worker.video.video_utils import validate_frame_count
 
     raw_frames = int(target_sec * fps)
-    return validate_frame_count(raw_frames)
+    frames = validate_frame_count(raw_frames)
+    if max_frames is not None:
+        frames = min(frames, validate_frame_count(max_frames))
+    return frames
 
 
 class VideoManager:
@@ -223,16 +227,17 @@ class VideoManager:
         simplified = getattr(scene, "video_prompt_simplified", None) or scene.video_prompt
         is_distilled = self._is_distilled_mode()
 
-        # estimated_tts_sec 기반 동적 프레임 수 결정
+        # estimated_tts_sec 기반 동적 프레임 수 결정 (상한: VIDEO_NUM_FRAMES_MAX)
         target_sec = getattr(scene, "estimated_tts_sec", 0.0)
         fps = self.config.get("VIDEO_FPS", 24)
+        max_frames = self.config.get("VIDEO_NUM_FRAMES_MAX", 145)
         dynamic_frames = (
-            calc_frames_from_duration(target_sec, fps)
+            calc_frames_from_duration(target_sec, fps, max_frames=max_frames)
             if target_sec > 0
             else self.config["VIDEO_NUM_FRAMES"]
         )
         dynamic_frames_fallback = (
-            calc_frames_from_duration(min(target_sec, 3.0), fps)
+            calc_frames_from_duration(min(target_sec, 3.0), fps, max_frames=max_frames)
             if target_sec > 0
             else self.config.get("VIDEO_NUM_FRAMES_FALLBACK", 65)
         )
