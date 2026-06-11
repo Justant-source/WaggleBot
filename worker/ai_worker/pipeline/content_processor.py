@@ -74,8 +74,22 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
     _touch_post(post_id)
 
     # ── Phase 2: LLM 청킹 (의미 단위) ────────────────────────────
+    # 제목·베스트 댓글·성과 피드백을 LLM에 전달 (후킹·댓글 인용·피드백 루프 활성화)
+    from analytics.feedback import build_extra_instructions
+
+    try:
+        _best = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
+        _comment_texts = [f"{c.author}: {c.content[:100]}" for c in _best]
+    except Exception:
+        logger.debug("[content_processor] 베스트 댓글 로드 실패 — 생략", exc_info=True)
+        _comment_texts = []
+    _extra = build_extra_instructions(post_id)  # 세션 미보유 → helper 내부 SessionLocal 사용
+
     llm_output: dict = await chunk_with_llm(
-        post.content or "", profile, post_id=post_id, extended=True
+        post.content or "", profile, post_id=post_id, extended=True,
+        title=post.title or "",
+        best_comments=_comment_texts,
+        extra_instructions=_extra or "",
     )
 
     # ── Phase 3: 물리적 검증 (max_chars 보정) ─────────────────────

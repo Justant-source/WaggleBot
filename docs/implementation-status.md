@@ -196,6 +196,15 @@ telegram/
 | 10차 | `ec4a28d` | normalizer.py 컨테이너 경로(parents[3]→[2])·max_chars 계산 버그, ab_test.py 경로 버그 |
 | 11차 | `ed9f9e8` | analytics/feedback.py mood_weights 레거시 키(shocking/funny…) → 9-mood 시스템 교체 |
 
+### 대본 리텐션 프롬프트 개편 (2026-06-11)
+
+쇼츠 시청 지속(리텐션) 강화를 위한 Sonnet 대본 프롬프트 개선 + 활성 경로 입력 격차 수정:
+
+- **프롬프트(§2 리텐션 설계 전면 개편)**: `chunker.py`·`client.py` 양쪽에 Hook 강화(구체명사/숫자·첫어절 강조·1인칭 고백형 추가), Hook-Payoff 계약(답은 마지막 1/3), 에스컬레이션 체인, 블록 클리프행어, 감정 낙차, 편가르기/루프형 Closer, 출력 전 자가점검 추가. few-shot 예시를 리텐션 곡선 시범으로 교체. 자극은 내용으로, 표현 순화 원칙 유지.
+- **입력 격차 수정 (활성 경로)**: `chunk_with_llm()`이 제목·베스트 댓글·성과 피드백을 받지 못하던 결함 수정 → `type=comment` 인용 씬과 피드백/A/B 루프 부활. 본문 절단 2000→4000자 통일, temperature 0.7.
+- **공통화**: `analytics.feedback.build_extra_instructions()` 신설(피드백+A/B 조립), `call_llm_json` temperature 파라미터 추가.
+- 검증: 기존 32 테스트 + 신규 `test_chunker_retention.py` 6개 통과, 실게시글(post_id=71) E2E로 리텐션 구조·댓글 부활·길이 제약 확인.
+
 ## 다음 개선 우선순위
 
 현 상태로 전체 파이프라인이 동작 가능. 주요 선택적 개선 항목은 모두 완료됨.

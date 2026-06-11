@@ -346,6 +346,7 @@ def call_llm_json(
     post_id: int | None = None,
     system: str | None = None,
     cache_prefix: bool = False,
+    temperature: float = 0.5,
 ) -> dict:
     """JSON 모드 LLM 호출. dict 반환.
 
@@ -361,6 +362,7 @@ def call_llm_json(
         post_id=post_id,
         system=system,
         cache_prefix=cache_prefix,
+        temperature=temperature,
     )
     try:
         return json.loads(raw)

@@ -18,11 +18,11 @@ flowchart TD
     end
 
     subgraph Phase2["Phase 2: chunk_with_llm"]
-        P2[LLM 의미 단위 청킹<br/>→ raw script dict<br/>모델: sonnet]
+        P2[LLM 의미 단위 청킹<br/>입력: 제목+본문+베스트댓글+피드백<br/>→ raw script dict<br/>모델: sonnet, temp 0.7]
     end
 
     subgraph Phase3["Phase 3: validate_and_fix"]
-        P3[max_chars 검증<br/>초과 시 LLM 재분할<br/>→ validated script dict]
+        P3[max_chars 검증<br/>초과 시 로컬 smart_split 보정<br/>→ validated script dict]
     end
 
     subgraph Phase4["Phase 4: SceneDirector"]
@@ -74,14 +74,16 @@ flowchart TD
 - 후속 씬 배분 전략 결정에 활용
 
 ### Phase 2 — chunk_with_llm
-- **모델**: `sonnet` (call_type: `chunk`)
+- **모델**: `sonnet` (call_type: `chunk`), **temperature 0.7** (창의적 구어체), max_tokens는 api 백엔드에서 8192 보정
 - Post 원문을 의미 단위로 분할해 대본 초안 생성
-- `layout.json` constraints 기반 글자 수 제약 프롬프트 삽입 (`get_llm_constraints_prompt()`)
-- 출력: `raw script dict` (씬 단위 텍스트)
+- **입력 (user tail, 동적)**: 제목 + 본문(최대 4000자) + 베스트 댓글 5개("닉:내용") + 추가 지시(성과 피드백·A/B variant). 제목·댓글·피드백은 `processor.llm_tts_stage`(활성)와 `content_processor.process_content`에서 주입 — 댓글이 있어야 `type=comment` 인용 씬이 생성됨
+  - 추가 지시는 `analytics.feedback.build_extra_instructions()`가 조립 (feedback_config.json의 extra_instructions + mood_weights>1.1 선호 힌트 + variant_config). chunk(활성)/generate_script(레거시) 양 경로 공통
+- **system 프롬프트 (정적 캐시 prefix)**: 페르소나 + §0 자연스러움 + §1 자극 수위(순화) + **§2 리텐션 설계(2-1 Hook 강화 ~ 2-7 Closer)** + §3 자막 분할 + §4 블록·댓글·팩트 + 출력형식 + few-shot + 자가점검 + `get_llm_constraints_prompt()`. 동적 요소는 절대 system에 넣지 않음(캐시 무효화 방지)
+- 출력: `raw script dict` (hook/body/closer/title_suggestion/tags/mood)
 
 ### Phase 3 — validate_and_fix
 - `MAX_BODY_CHARS`, `MAX_HOOK_CHARS`, `MAX_CAPTION_CHARS` 검증
-- 초과 시 LLM에 재분할 요청 (최대 2회 재시도)
+- **초과 시 로컬에서 `smart_split_korean()`으로 분할 보정** (LLM 재호출 없음). hook/closer는 초과 시 첫 청크만 남김
 - 출력: `validated script dict`
 
 ### Phase 4 — SceneDirector
@@ -180,5 +182,7 @@ flowchart LR
     YT_METRICS[YouTube 성과 지표<br/>조회수/좋아요/댓글] --> COLLECTOR[analytics/collector.py]
     COLLECTOR --> FEEDBACK[analytics/feedback.py<br/>LLM 인사이트 생성]
     FEEDBACK --> CONFIG[config/feedback_config.json]
-    CONFIG --> PROMPT[대본 생성 프롬프트 주입<br/>Phase 2/4]
+    CONFIG --> PROMPT[build_extra_instructions로 조립<br/>Phase 2 user tail 주입<br/>활성·레거시 경로 공통]
 ```
+
+> 피드백 주입은 `analytics.feedback.build_extra_instructions()`를 경유한다. extra_instructions + mood_weights>1.1 선호 mood 힌트 + A/B variant_config를 합쳐 Phase 2(chunk)·레거시(generate_script) 양 경로의 user tail에 붙인다.

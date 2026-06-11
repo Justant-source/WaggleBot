@@ -15,8 +15,12 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from config.settings import FEEDBACK_CONFIG_PATH
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +196,73 @@ def generate_structured_insights(
     except (json.JSONDecodeError, KeyError) as e:
         logger.warning("인사이트 JSON 파싱 실패 (%s) — 원문 반환", e)
         return {"extra_instructions": raw[:500], "mood_weights": {}, "subtitle_style": "default"}
+
+
+def build_extra_instructions(
+    post_id: int | None = None,
+    session: "Session | None" = None,
+) -> str | None:
+    """대본 생성에 주입할 추가 지시문(extra_instructions)을 조립한다.
+
+    feedback_config.json의 누적 지시 + 성과 기반 선호 mood 힌트를 결합하고,
+    post_id가 있으면 A/B 변형(variant_config)의 지시를 우선 적용한다.
+
+    chunk(활성)·generate_script(레거시) 양 경로가 동일 로직을 공유하도록 추출한 helper다.
+    모든 실패는 흡수하고 부분 결과(또는 None)를 반환한다 — 파이프라인을 중단시키지 않는다.
+
+    Args:
+        post_id: A/B 변형 조회용 게시글 ID (없으면 feedback 설정만 사용)
+        session: 재사용할 DB 세션. None이면 내부에서 SessionLocal을 연다.
+
+    Returns:
+        조립된 지시 문자열, 또는 적용할 지시가 없으면 None.
+    """
+    extra: str | None = None
+
+    # ① feedback_config.json — 누적 지시 + 선호 mood 힌트
+    try:
+        fb = load_feedback_config()
+        extra = fb.get("extra_instructions") or None
+        mood_weights: dict = fb.get("mood_weights") or {}
+        preferred = sorted(
+            [m for m, w in mood_weights.items() if float(w) > 1.1],
+            key=lambda m: -float(mood_weights[m]),
+        )
+        if preferred:
+            hint = f"성과 분석 기반 선호 mood: {', '.join(preferred[:3])}."
+            extra = f"{extra}\n{hint}" if extra else hint
+    except Exception:
+        logger.debug("feedback_config 로드 실패 — 무시", exc_info=True)
+
+    # ② A/B 변형 지시 우선 적용 (variant_config > feedback)
+    if post_id is not None:
+        try:
+            from db.models import Content
+
+            def _apply_variant(db: "Session") -> str | None:
+                content = db.query(Content).filter(Content.post_id == post_id).first()
+                if content and content.variant_config:
+                    variant_extra = content.variant_config.get("extra_instructions")
+                    if variant_extra:
+                        logger.info(
+                            "[A/B] 변형 지시 적용: post_id=%d label=%s",
+                            post_id, content.variant_label,
+                        )
+                        return variant_extra
+                return None
+
+            if session is not None:
+                variant = _apply_variant(session)
+            else:
+                from db.session import SessionLocal
+                with SessionLocal() as db:
+                    variant = _apply_variant(db)
+            if variant:
+                extra = variant
+        except Exception:
+            logger.debug("variant_config 로드 실패 — 무시", exc_info=True)
+
+    return extra
 
 
 def apply_feedback(insights: dict) -> None:
