@@ -24,6 +24,7 @@ def _make_mock_scene(scene_type="text_only", video_mode="t2v", text_lines=None):
     scene.video_init_image = None
     scene.video_generation_failed = False
     scene.image_url = None
+    scene.estimated_tts_sec = 0.0
     return scene
 
 

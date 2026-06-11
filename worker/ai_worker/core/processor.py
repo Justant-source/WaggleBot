@@ -288,39 +288,9 @@ class RobustProcessor:
             best_comments = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
             comment_texts = [f"{c.author}: {c.content[:100]}" for c in best_comments]
 
-            # 피드백 설정 로드 (feedback_config.json)
-            extra_instructions: str | None = None
-            try:
-                from analytics.feedback import load_feedback_config
-                fb = load_feedback_config()
-                extra_instructions = fb.get("extra_instructions") or None
-                # mood_weights에서 가중치 1.1 초과 mood를 선호 힌트로 주입
-                mood_weights: dict = fb.get("mood_weights") or {}
-                preferred = sorted(
-                    [m for m, w in mood_weights.items() if float(w) > 1.1],
-                    key=lambda m: -float(mood_weights[m]),
-                )
-                if preferred:
-                    hint = f"성과 분석 기반 선호 mood: {', '.join(preferred[:3])}."
-                    extra_instructions = f"{extra_instructions}\n{hint}" if extra_instructions else hint
-            except Exception:
-                logger.debug("feedback_config 로드 실패 — 무시", exc_info=True)
-
-            # A/B 변형 설정 우선 적용 (variant_config > feedback)
-            try:
-                existing_content = session.query(Content).filter(
-                    Content.post_id == post.id
-                ).first()
-                if existing_content and existing_content.variant_config:
-                    variant_extra = existing_content.variant_config.get("extra_instructions")
-                    if variant_extra:
-                        extra_instructions = variant_extra
-                        logger.info(
-                            "[A/B] 변형 설정 적용: post_id=%d label=%s",
-                            post.id, existing_content.variant_label,
-                        )
-            except Exception:
-                logger.debug("variant_config 로드 실패 — 무시", exc_info=True)
+            # 피드백 설정 + A/B 변형 지시 조립 (활성/레거시 경로 공통 helper)
+            from analytics.feedback import build_extra_instructions
+            extra_instructions: str | None = build_extra_instructions(post.id, session)
 
             # LLM 대본 생성 (post_id 전달 → LLM 이력 로그 연결)
             script = generate_script(
@@ -531,7 +501,7 @@ class RobustProcessor:
         logger.error(
             "⛔ 최종 실패 처리: post_id=%d → FAILED | "
             "failure_type=%s | attempts=%d | error=%s",
-            post.id,
+            _post_id,
             failure_type.value if failure_type else "unknown",
             attempts,
             str(last_error)[:100] if last_error else "N/A"
@@ -800,6 +770,7 @@ class RobustProcessor:
                 # 5-Phase content_processor 파이프라인
                 from ai_worker.script.chunker import chunk_with_llm
                 from ai_worker.scene.analyzer import analyze_resources
+                from analytics.feedback import build_extra_instructions
 
                 _images: list[str] = post.images if isinstance(post.images, list) else []
                 _profile = analyze_resources(post, _images)
@@ -807,11 +778,18 @@ class RobustProcessor:
                     "[Pipeline LLM+TTS] content_processor 모드: 전략=%s 이미지=%d",
                     _profile.strategy, _profile.image_count,
                 )
+                # 활성 경로에도 제목·베스트 댓글·피드백 지시 전달 (레거시 경로와 동일)
+                _best = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
+                _comment_texts = [f"{c.author}: {c.content[:100]}" for c in _best]
+                _extra = build_extra_instructions(post_id, session)
                 _raw = await chunk_with_llm(
                     post.content or "",
                     _profile,
                     post_id=post_id,
                     extended=True,
+                    title=post.title,
+                    best_comments=_comment_texts,
+                    extra_instructions=_extra or "",
                 )
                 script = ScriptData(
                     hook=_raw.get("hook", ""),

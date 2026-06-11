@@ -1005,6 +1005,12 @@ def distribute_images(
         tts_emotion: TTS 감정 키
         mood: 콘텐츠 mood 키
     """
+    # 4-튜플 (text, voice, block_type, author) → 5-튜플 (…, pre_split_lines=None)로 정규화
+    body_items = [
+        item if len(item) == 5 else (*item, None)
+        for item in body_items
+    ]
+
     remaining_imgs = images[:max_images]
 
     def _make(

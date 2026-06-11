@@ -106,12 +106,18 @@ def test_retry_policy():
     log.info("✓ 커스텀 재시도 정책 설정 성공\n")
 
 
-async def test_llm_error_no_retry():
+def test_llm_error_no_retry():
     """LLM 에러 시 즉시 중단 테스트"""
+    asyncio.run(_async_test_llm_error_no_retry())
+
+
+async def _async_test_llm_error_no_retry():
     log.info("=== LLM 에러 즉시 중단 테스트 ===")
 
     mock_post = create_mock_post()
     mock_session = Mock()
+    # _mark_post_failed 내부: session.query(Post).filter_by(id=...).first() → mock_post 반환
+    mock_session.query.return_value.filter_by.return_value.first.return_value = mock_post
 
     processor = RobustProcessor(
         retry_policy=RetryPolicy(max_attempts=3, initial_delay=0.1)

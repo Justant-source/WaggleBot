@@ -98,9 +98,9 @@ class TestComfyUIClient:
         assert workflow_path.exists()
 
         data = json.loads(workflow_path.read_text(encoding="utf-8"))
-        # 업스케일은 LTXVLatentUpscale 노드가 있어야 한다
+        # 업스케일은 LTXVLatentUpsampler 노드가 있어야 한다 (ComfyUI 실제 노드명)
         class_types = {node.get("class_type") for node in data.values()}
-        assert "LTXVLatentUpscale" in class_types
+        assert "LTXVLatentUpsampler" in class_types
 
     def test_patch_workflow(self):
         """_patch_workflow가 노드 inputs를 정확히 교체한다."""
@@ -267,10 +267,16 @@ class TestComfyUIClient:
         assert "gemma" in gemma_nodes[0]["inputs"]["gemma_path"].lower()
 
     def test_all_workflows_use_fp8_checkpoints(self):
-        """모든 워크플로우의 LTX-2 체크포인트가 FP8이다 (FP4 미사용 확인)."""
+        """모든 워크플로우의 LTX-2 체크포인트가 허용 목록에 속한다 (FP4 미사용 확인).
+
+        distilled 워크플로우는 BF16 embeddings connector를 사용 (별도 모델 파일).
+        FP4는 RTX 3090(Ampere)에서 하드웨어 가속 불가 — 절대 허용 안 함.
+        """
         valid_ckpts = {
             "ltx-2-19b-dev-fp8.safetensors",
             "ltx-2-19b-distilled-fp8.safetensors",
+            # distilled 워크플로우의 embeddings connector (BF16): 별도 파일 형태
+            "ltx-2-19b-embeddings_connector_distill_bf16.safetensors",
         }
         # ckpt_name, ltxv_path: LTX-2 체크포인트를 참조하는 키
         ckpt_keys = {"ckpt_name", "ltxv_path"}
