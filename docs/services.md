@@ -1,6 +1,6 @@
 # WaggleBot — Docker 서비스 구성
 
-> **last-verified:** 2026-06-11 (commit `913e606`)
+> **last-verified:** 2026-06-11 (commit `3ba0d15`)
 > **scope:** Docker 서비스 포트/볼륨/환경변수/의존성 — SSOT
 
 ## 서비스 의존성 그래프

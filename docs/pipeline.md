@@ -1,6 +1,6 @@
 # WaggleBot — AI 파이프라인 (8-Phase)
 
-> **last-verified:** 2026-06-11 (commit `913e606`)
+> **last-verified:** 2026-06-11 (commit `3ba0d15`)
 > **scope:** 8-Phase AI 파이프라인 상세, LLM 라우팅, 4단계 폴백 — SSOT
 
 ## 개요

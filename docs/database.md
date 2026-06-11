@@ -1,6 +1,6 @@
 # WaggleBot — 데이터베이스 스키마
 
-> **last-verified:** 2026-06-11 (commit `913e606`)
+> **last-verified:** 2026-06-11 (commit `3ba0d15`)
 > **scope:** DB 스키마, SQLAlchemy 패턴, ScriptData JSON 구조 — SSOT
 
 DB: MariaDB 11, 데이터베이스명: `wagglebot`
@@ -21,6 +21,10 @@ erDiagram
         DOUBLE engagement_score
         INT retry_count
         VARCHAR(1000) last_error
+        INT ai_score
+        VARCHAR(500) ai_reason
+        TINYINT ai_recommended
+        DATETIME ai_analyzed_at
         DATETIME created_at
         DATETIME updated_at
     }
@@ -45,6 +49,8 @@ erDiagram
         VARCHAR(64) variant_group
         VARCHAR(32) variant_label
         JSON variant_config
+        VARCHAR(32) tts_voice
+        VARCHAR(1000) gen_instructions
         DATETIME created_at
     }
 
@@ -101,8 +107,12 @@ erDiagram
 | `engagement_score` | DOUBLE | 스코어링: `조회×0.1 + 좋아요×2.0 + 댓글×1.5 + 베스트공감×0.5`, 6시간 반감기 |
 | `retry_count` | INT | 파이프라인 재시도 횟수 (MAX=3) |
 | `last_error` | VARCHAR(1000) | 마지막 파이프라인 실패 원인 (`repr(exc)[:1000]`). 재시도 시 NULL 초기화 |
+| `ai_score` | INT | AI 옥석판별 점수 (0~100). `ai_fitness` 잡 결과 |
+| `ai_reason` | VARCHAR(500) | AI 점수 산정 이유 |
+| `ai_recommended` | TINYINT(1) | AI 추천 여부 (1=추천, 0=비추천) |
+| `ai_analyzed_at` | DATETIME | AI 분석 완료 시각 |
 
-**인덱스:** `status + engagement_score DESC` (처리 대기 조회용)
+**인덱스:** `status + engagement_score DESC` (처리 대기 조회용), `status + ai_score` (AI 필터링용)
 
 ### comments
 게시글의 댓글. Phase 2 LLM 청킹 시 컨텍스트로 활용.
@@ -131,6 +141,8 @@ erDiagram
 | `variant_group` | VARCHAR(64) | A/B 테스트 그룹 |
 | `variant_label` | VARCHAR(32) | A/B 테스트 레이블 |
 | `variant_config` | JSON | A/B 테스트 설정값 |
+| `tts_voice` | VARCHAR(32) | 게시글별 TTS 음성 키 (없으면 pipeline.json 기본값 사용) |
+| `gen_instructions` | VARCHAR(1000) | 에디터에서 대본 재생성 시 사용한 추가 지시문 |
 
 **ScriptData 구조 (summary_text JSON):**
 ```json

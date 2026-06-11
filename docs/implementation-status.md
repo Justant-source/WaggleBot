@@ -1,6 +1,6 @@
 # WaggleBot — 구현 현황
 
-> **last-verified:** 2026-06-11 (commit `913e606`)
+> **last-verified:** 2026-06-11 (commit `3ba0d15`)
 > **scope:** 구현 완료·미완료 현황, 버그 픽스 이력
 
 현재 코드베이스의 구현 완료/미완료 상태 정리. (2026-06-11 기준)
@@ -100,7 +100,7 @@ worker/
 ├── db/
 │   ├── models.py                        ✅ Post/Comment/Content/LLMLog/ScriptData + last_error
 │   ├── session.py                       ✅ SessionLocal
-│   └── migrations/                      ✅ 006개 SQL + runner.py
+│   └── migrations/                      ✅ 007개 SQL + runner.py
 ├── ai_worker/
 │   ├── core/
 │   │   ├── main.py                      ✅ 진입점 + _mark_post_failed(last_error 저장)
@@ -188,10 +188,13 @@ telegram/
 | 2차 | `a96cdfc` | TTS 캐시 손상 폴백, 0-duration 프레임 필터, post None 검사, 타이머 누수 |
 | 3차 | `c655a4b` | TTS URL 오독, subprocess timeout, hash 충돌, migration DDL 원자성, llm-logs 경쟁 조건 |
 | 4차 | `6b5c20d` | HD 렌더 중복 방지, mood_weights 피드백 주입, ComfyUI 워크플로우 mtime 캐시 |
-| 5차 (미커밋) | — | TTS 프리뷰 ImportError, 비디오 단일 인코딩, 실패 원인 UI, 프롬프트 강화 (6종), GPU 효율, 갤러리 프리뷰 모달 |
-| 6차 (미커밋) | — | VoiceCatalogService JSON 파싱 버그, ai_fitness JSONDecoder 강화, parseProgress camelCase 변환, settings UI(upload_privacy·llm_prompt_cache), ProgressController 원자적 retry |
-| 7차 (미커밋) | — | processor.py post_id NameError 2건, HD 렌더 voice_key 미전달, SettingsService DEFAULTS 누락 키 추가 |
-| 8차 (미커밋) | — | _handle_upload commit 누락 (upload_meta 미저장·중복 업로드·UPLOADED 상태 미갱신) |
+| 5차 | `913e606` | WP-1~8 전체: TTS 프리뷰 ImportError, 비디오 단일 인코딩, 실패 원인 UI, 프롬프트 강화 6종, Fish Speech 워밍업 스킵, Phase 5∥6 병렬, 갤러리 모달, VoiceCatalogService, ai_fitness JSONDecoder, parseProgress camelCase, ProgressController 원자적 retry, HD 렌더 voice_key, _handle_upload commit 누락 |
+| 6차 | `7f4904c` | 모바일 햄버거, 갤러리 페이지네이션, 비디오 프롬프트 버그 + e2e 15개 |
+| 7차 | `bc269b6` | 수신함 일괄 승인/거절/크롤링 API 에러 핸들링 누락 |
+| 8차 | `3df1358` | 에디터 상세 페이지 API 에러 핸들링 누락 |
+| 9차 | `5290f78` | processor.py use_content_processor fresh config 읽기 (frozen cfg 버그) |
+| 10차 | `ec4a28d` | normalizer.py 컨테이너 경로(parents[3]→[2])·max_chars 계산 버그, ab_test.py 경로 버그 |
+| 11차 | `ed9f9e8` | analytics/feedback.py mood_weights 레거시 키(shocking/funny…) → 9-mood 시스템 교체 |
 
 ## 다음 개선 우선순위
 

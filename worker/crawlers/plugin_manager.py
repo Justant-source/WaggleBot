@@ -93,6 +93,21 @@ class CrawlerRegistry:
         """사이트 코드가 등록되어 있는지 확인."""
         return site_code in cls._crawlers
 
+    @classmethod
+    def unregister(cls, site_code: str) -> bool:
+        """특정 크롤러 등록 해제 (테스트용)."""
+        if site_code in cls._crawlers:
+            del cls._crawlers[site_code]
+            cls._metadata.pop(site_code, None)
+            return True
+        return False
+
+    @classmethod
+    def clear(cls) -> None:
+        """레지스트리 전체 초기화 (테스트용)."""
+        cls._crawlers.clear()
+        cls._metadata.clear()
+
 
 # ===========================================================================
 # 편의 함수
@@ -106,3 +121,41 @@ def get_crawler(site_code: str) -> BaseCrawler:
 def list_crawlers() -> List[dict]:
     """등록된 크롤러 목록 반환 (편의 함수)."""
     return CrawlerRegistry.list_crawlers()
+
+
+def auto_discover(package: str) -> int:
+    """패키지를 스캔하여 크롤러를 자동 발견·등록한다.
+
+    @CrawlerRegistry.register() 데코레이터를 재실행하기 위해
+    이미 임포트된 모듈은 reload한다.
+
+    Returns:
+        발견된 크롤러 수
+    """
+    import importlib
+    import pkgutil
+    import sys
+
+    try:
+        pkg = importlib.import_module(package)
+    except ImportError:
+        log.warning("auto_discover: 패키지 '%s' 로드 실패", package)
+        return 0
+
+    # base.py · plugin_manager.py는 제외 — reload 시 BaseCrawler 클래스 객체가
+    # 새로 생성돼 issubclass 체크가 실패하므로
+    _SKIP = {"base", "plugin_manager"}
+
+    for _, module_name, is_pkg in pkgutil.iter_modules(pkg.__path__):
+        if module_name.startswith('_') or is_pkg or module_name in _SKIP:
+            continue
+        full_name = f"{package}.{module_name}"
+        try:
+            if full_name in sys.modules:
+                importlib.reload(sys.modules[full_name])
+            else:
+                importlib.import_module(full_name)
+        except Exception as e:
+            log.debug("auto_discover: '%s' 로드 실패: %s", full_name, e)
+
+    return len(CrawlerRegistry._crawlers)
