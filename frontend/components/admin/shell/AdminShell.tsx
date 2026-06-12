@@ -47,7 +47,7 @@ export function AdminShell({ children }: Props) {
             </div>
           </div>
         )}
-        <main className="flex-1 overflow-auto bg-gray-50">
+        <main className="flex-1 overflow-auto bg-muted/40">
           <div className="p-6">{children}</div>
         </main>
       </div>
