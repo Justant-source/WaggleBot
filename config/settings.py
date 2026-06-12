@@ -207,6 +207,13 @@ def save_credentials_config(creds: dict[str, dict]) -> None:
     with open(_CREDENTIALS_PATH, "w", encoding="utf-8") as f:
         json.dump(creds, f, ensure_ascii=False, indent=2)
 
+# ---------------------------------------------------------------------------
+# Telegram 크롤러 알림 (telegram-bridge hook 경유)
+# ---------------------------------------------------------------------------
+TELEGRAM_HOOK_URL: str = os.getenv("TELEGRAM_HOOK_URL", "http://telegram-bridge:3847/hook")
+TELEGRAM_CRAWL_ALERT_ENABLED: bool = os.getenv("TELEGRAM_CRAWL_ALERT", "false").lower() == "true"
+TELEGRAM_CRAWL_ALERT_THRESHOLD: float = float(os.getenv("TELEGRAM_ALERT_THRESHOLD", "100"))
+
 AUDIO_DIR: Path = Path(os.getenv(
     "AUDIO_DIR",
     str(_PROJECT_ROOT / "assets" / "audio"),

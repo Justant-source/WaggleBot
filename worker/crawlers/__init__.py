@@ -3,3 +3,6 @@ import crawlers.nate_pann  # noqa: F401
 import crawlers.bobaedream  # noqa: F401
 import crawlers.dcinside  # noqa: F401
 import crawlers.fmkorea  # noqa: F401
+import crawlers.instiz  # noqa: F401
+import crawlers.theqoo  # noqa: F401
+import crawlers.mlbpark  # noqa: F401

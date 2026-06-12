@@ -34,6 +34,9 @@ services:
     environment:
       DATABASE_URL: mysql+pymysql://wagglebot:${MARIADB_PASSWORD:-wagglebot}@db/wagglebot
       CRAWL_INTERVAL_HOURS: ${CRAWL_INTERVAL_HOURS:-1}
+      TELEGRAM_HOOK_URL: ${TELEGRAM_HOOK_URL:-http://telegram-bridge:3847/hook}
+      TELEGRAM_CRAWL_ALERT: ${TELEGRAM_CRAWL_ALERT:-false}
+      TELEGRAM_ALERT_THRESHOLD: ${TELEGRAM_ALERT_THRESHOLD:-100}
     command: python main.py
 
   fish-speech:

@@ -19,6 +19,9 @@ from config.settings import (
     BROWSER_PROFILES,
     REQUEST_HEADERS,
     REQUEST_TIMEOUT,
+    TELEGRAM_CRAWL_ALERT_ENABLED,
+    TELEGRAM_CRAWL_ALERT_THRESHOLD,
+    TELEGRAM_HOOK_URL,
 )
 from db.models import Post, Comment, PostStatus
 
@@ -199,7 +202,7 @@ class BaseCrawler(ABC):
                 continue
 
             try:
-                self._upsert(session, origin_id, detail)
+                self._upsert(session, origin_id, detail, url=item["url"])
                 session.commit()
                 saved += 1
             except Exception as e:
@@ -215,6 +218,26 @@ class BaseCrawler(ABC):
             "[%s] Crawl batch done: saved=%d, skipped=%d, total=%d",
             self.site_code, saved, skipped, len(listings),
         )
+
+    def _notify_tray(self, title: str, url: str, score: float, auto_approved: bool) -> None:
+        """고점수/자동승인 게시글 수집 시 Telegram 트레이 알림 (TELEGRAM_CRAWL_ALERT=true일 때만)."""
+        if not TELEGRAM_CRAWL_ALERT_ENABLED:
+            return
+        label = "🚀 자동승인" if auto_approved else "🔥 인기글"
+        message = (
+            f"{label} [{self.site_code}]\n"
+            f"점수: {score:.0f}점\n"
+            f"{title[:60]}\n\n"
+            f"{url}"
+        )
+        try:
+            requests.post(
+                TELEGRAM_HOOK_URL,
+                json={"event": "notification", "data": {"title": label, "message": message}},
+                timeout=5,
+            )
+        except Exception as _exc:
+            log.debug("Telegram 트레이 알림 전송 실패: %s", _exc)
 
     @staticmethod
     def calculate_engagement_score(
@@ -240,7 +263,7 @@ class BaseCrawler(ABC):
         decay = 0.5 ** (age_hours / 6.0)
         return round(raw_score * decay, 1)
 
-    def _upsert(self, session: Session, origin_id: str, detail: dict):
+    def _upsert(self, session: Session, origin_id: str, detail: dict, url: str = ""):
         post = (
             session.query(Post)
             .filter_by(site_code=self.site_code, origin_id=origin_id)
@@ -320,6 +343,11 @@ class BaseCrawler(ABC):
                 "New post: %s:%s — %s (score=%.1f, status=%s)",
                 self.site_code, origin_id, detail["title"], score, post.status.value,
             )
+
+            # 트레이 알림: 자동승인됐거나 점수가 임계값 이상인 신규 게시글
+            auto_approved = post.status == PostStatus.APPROVED
+            if auto_approved or score >= TELEGRAM_CRAWL_ALERT_THRESHOLD:
+                self._notify_tray(detail["title"], url, score, auto_approved)
 
         self._sync_comments(session, post, detail.get("comments", []))
 

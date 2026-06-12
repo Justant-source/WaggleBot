@@ -75,8 +75,14 @@ graph TD
   DATABASE_URL=mysql+pymysql://wagglebot:...@db/wagglebot
   CRAWL_INTERVAL_HOURS=1
   ```
-- **크롤러 플러그인:** `worker/crawlers/` — nate_pann, bobaedream, dcinside, fmkorea
+- **크롤러 플러그인:** `worker/crawlers/` — nate_pann, bobaedream, dcinside, fmkorea, **instiz, theqoo, mlbpark**
 - **동적 사이트 목록:** `CrawlerRegistry.list_crawlers()` (하드코딩 금지)
+- **환경변수 (Telegram 알림):**
+  ```
+  TELEGRAM_CRAWL_ALERT=false        # true로 설정하면 고점수 게시글 즉시 알림
+  TELEGRAM_ALERT_THRESHOLD=100      # 이 점수 이상이면 알림 발송
+  TELEGRAM_HOOK_URL=http://telegram-bridge:3847/hook
+  ```
 
 ---
 

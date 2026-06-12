@@ -164,8 +164,8 @@ def run_all_tests():
         test_retry_policy()
         test_failure_logging()
 
-        # 비동기 테스트
-        asyncio.run(test_llm_error_no_retry())
+        # 비동기 테스트 (test_llm_error_no_retry는 내부에서 asyncio.run 호출)
+        test_llm_error_no_retry()
 
         log.info("========================================")
         log.info("✅ 모든 테스트 통과!")

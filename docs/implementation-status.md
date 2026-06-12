@@ -1,6 +1,6 @@
 # WaggleBot — 구현 현황
 
-> **last-verified:** 2026-06-12 (commit `656dffd`)
+> **last-verified:** 2026-06-12 (crawler-sites-and-alerts)
 > **scope:** 구현 완료·미완료 현황, 버그 픽스 이력
 
 현재 코드베이스의 구현 완료/미완료 상태 정리. (2026-06-11 기준)
@@ -14,7 +14,7 @@
 | `llm-worker` | ✅ 완전 구현 | Claude CLI 게이트웨이 |
 | `backend` | ✅ 완전 구현 | 전체 Controller + Domain + Service |
 | `frontend` | ✅ 완전 구현 | 7개 어드민 페이지 + 공용 컴포넌트 |
-| `worker/crawlers` | ✅ 완전 구현 | 4개 사이트 플러그인 + 플러그인 매니저 |
+| `worker/crawlers` | ✅ 완전 구현 | **7개** 사이트 플러그인 + 플러그인 매니저 + Telegram 트레이 알림 |
 | `worker/ai_worker` | ✅ 완전 구현 | 8-Phase 파이프라인 전체 |
 | `worker/db` | ✅ 완전 구현 | SQLAlchemy 모델 + 마이그레이션 |
 | `worker/uploaders` | ✅ 완전 구현 | YouTube 업로더 |
@@ -96,6 +96,9 @@ worker/
 │   ├── bobaedream.py                    ✅
 │   ├── dcinside.py                      ✅
 │   ├── fmkorea.py                       ✅
+│   ├── instiz.py                        ✅ 인스티즈 실시간 베스트
+│   ├── theqoo.py                        ✅ 더쿠 HOT 게시판
+│   ├── mlbpark.py                       ✅ MLB파크 불펜+자유게시판
 │   └── plugin_manager.py               ✅ CrawlerRegistry 동적 조회
 ├── db/
 │   ├── models.py                        ✅ Post/Comment/Content/LLMLog/ScriptData + last_error
@@ -241,13 +244,11 @@ telegram/
 - **VRAM 누수 모니터링**: `config/monitoring.py`에 `GPU_VRAM_WARNING=85`, `GPU_VRAM_CRITICAL=95` 추가. `worker/monitoring/alerting.py`의 GPU 체크 블록에 VRAM % 임계치 알림 추가 — WARNING은 로그 경고("누수 의심"), CRITICAL은 이메일+슬랙 발송. `worker/monitoring/daemon.py` 헬스 로그에 VRAM% 포함.
 - **pytest 컬렉션 픽스**: `worker/test/conftest.py`에 `test_fish_speech.py` 추가 — `async def test_*()` 함수를 `asyncio.run(main())`으로 직접 호출하는 라이브 통합 테스트 구조로 pytest-asyncio 없이 수집하면 실패. (`test_pipeline_phases.py`와 동일 패턴)
 
+### 크롤러 사이트 추가 + Telegram 트레이 알림 (2026-06-12)
+
+- **신규 크롤러 3종**: `instiz.py`(인스티즈 실시간 베스트), `theqoo.py`(더쿠 HOT, XE 기반), `mlbpark.py`(MLB파크 불펜+자유게시판). `@CrawlerRegistry.register()` 플러그인 패턴 준수 — `ENABLED_CRAWLERS`에 추가하면 즉시 동작.
+- **Telegram 트레이 알림**: `BaseCrawler._notify_tray()` 신규. 신규 게시글 저장 시 점수 ≥ `TELEGRAM_ALERT_THRESHOLD`(기본 100점) 또는 자동승인이면 telegram-bridge hook(`:3847/hook`)에 `notification` 이벤트 POST. `TELEGRAM_CRAWL_ALERT=false`(기본)로 비활성, `.env`에서 `true`로 전환. `docker-compose.yml` crawler 서비스에 환경변수 3개 추가.
+
 ## 다음 개선 우선순위
 
-현 상태로 전체 파이프라인이 동작 가능. 주요 선택적 개선 항목은 모두 완료됨.
-
-### 장기 개선 후보 (미구현)
-
-| 항목 | 설명 |
-|------|------|
-| 크롤러 사이트 추가 | 인스티즈, 더쿠, MLB파크 등 (ADDING_CRAWLER.md 참조) |
-| 크롤러 트레이 알림 | 크롤링 시 중요 게시글 즉시 텔레그램 알림 |
+현 상태로 전체 파이프라인이 동작 가능. 선택적 개선 항목 전부 완료됨.
