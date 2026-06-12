@@ -1,6 +1,6 @@
 # WaggleBot — AI 파이프라인 (8-Phase)
 
-> **last-verified:** 2026-06-11 (working tree, post-`50d62ef` — prompt_engine V3·클립 4~6초)
+> **last-verified:** 2026-06-12 (commit `656dffd` — TTS S1-mini·다크모드·VRAM 모니터링)
 > **scope:** 8-Phase AI 파이프라인 상세, LLM 라우팅, 4단계 폴백 — SSOT
 
 ## 개요

@@ -29,6 +29,8 @@ nul
 _proposals/
 _result/
 .claude/settings.local.json
+.claude/config.json
+.claude/*.lock
 .claude/history/
 .claude/cache/
 .claude/sessions/
@@ -48,6 +50,10 @@ worker/test/test_layout_output
 worker/test/test_llm_output
 worker/test/test_tts_output
 worker/test/test_scene_policy_visual_output
+worker/test/test_image_filter_output
+worker/test/test_prompt_engine_output
+worker/test/test_video_rendering_output
+worker/media/
 
 assets
 .venv

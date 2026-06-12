@@ -1,6 +1,6 @@
 # WaggleBot — Docker 서비스 구성
 
-> **last-verified:** 2026-06-11 (commit `3ba0d15`)
+> **last-verified:** 2026-06-12 (commit `656dffd`)
 > **scope:** Docker 서비스 포트/볼륨/환경변수/의존성 — SSOT
 
 ## 서비스 의존성 그래프
@@ -208,6 +208,7 @@ graph TD
 - **환경변수 (주요):**
   ```
   GPU_TEMP_WARNING=75    GPU_TEMP_CRITICAL=80
+  GPU_VRAM_WARNING=85    GPU_VRAM_CRITICAL=95
   DISK_USAGE_WARNING=80  DISK_USAGE_CRITICAL=90
   SLACK_ALERTS_ENABLED=false
   EMAIL_ALERTS_ENABLED=false

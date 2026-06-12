@@ -38,8 +38,7 @@ def crawl_job():
         enabled_sites = [s.strip() for s in ENABLED_CRAWLERS if s.strip()]
         log.info("Enabled crawlers: %s", enabled_sites)
 
-        session = SessionLocal()
-        try:
+        with SessionLocal() as session:
             for site_code in enabled_sites:
                 try:
                     log.info("-" * 60)
@@ -56,9 +55,6 @@ def crawl_job():
                 except Exception:
                     log.exception("Error running crawler '%s'", site_code)
                     session.rollback()
-
-        finally:
-            session.close()
 
         log.info("=" * 80)
         log.info("Crawl cycle complete")

@@ -1,6 +1,6 @@
 # WaggleBot — 구현 현황
 
-> **last-verified:** 2026-06-11 (commit `3ba0d15`)
+> **last-verified:** 2026-06-12 (commit `656dffd`)
 > **scope:** 구현 완료·미완료 현황, 버그 픽스 이력
 
 현재 코드베이스의 구현 완료/미완료 상태 정리. (2026-06-11 기준)
@@ -235,6 +235,12 @@ telegram/
 - **실게시글 E2E (post 9999910, 사내 스토커 누명 사연)**: APPROVED→PREVIEW_RENDERED 완주. 22씬(T2V 7, 정적 15), 클립 7/7 attempt-1 성공, 프레임 97~121(4.04~5.04초, 145 캡 이내), 앵커→씬 일관성 실증(휴게실·30대 남성·여성 후배가 전 씬 공유), call_type별 LLMLog 분리 기록 확인. 검증 체인 실전: 재시도 회복 2건(too_long·question_mark), 결정적 폴백 1건(korean_text) — 메타 유출 0. E2E 관찰 반영 튜닝: too_long 1200→1600자, 실패 사유별 재시도 힌트(`_RETRY_HINTS`).
 - **E2E 중 발견·수정한 파이프라인 결함 2건 (V3와 무관한 기존 버그)**: ① `FISH_SPEECH_TIMEOUT` 120→300초 — 리텐션 개편 후 대본 600자+ 전체 TTS 합성(문장당 ~13초×9)이 120초 초과 → 타임아웃·중복 큐잉 악순환 ② `llm_tts_stage` 종료 시 MariaDB errno 1020 — `mariadb:11` 롤링 태그가 11.8.8로 올라오며 `innodb_snapshot_isolation=ON` 기본화, 수십 분 트랜잭션 중 stamp_progress가 갱신한 contents 행을 오래된 스냅샷으로 UPDATE → 결정론적 실패. render_stage(L903)와 동일한 `session.rollback()` 패턴을 `processor.py` llm_tts_stage에 적용.
 
+### 다크모드 + pytest 컬렉션 픽스 (2026-06-12)
+
+- **다크모드**: `next-themes` ThemeProvider 연결 (`app/providers.tsx` 신규, `app/layout.tsx` 적용). 어드민 셸 3개(`AdminTopBar`, `AdminSidebar`, `AdminShell`) 하드코딩 색상(`bg-white`, `text-gray-*`, `border-gray-200` 등)을 CSS 변수 기반 Tailwind 시맨틱 클래스(`bg-background`, `text-foreground`, `border-border`, `text-muted-foreground`, `hover:bg-accent`)로 전환. `tailwind.config.js`의 `darkMode: ['class']`는 이미 설정되어 있었음. 활성 내비 항목에 `dark:bg-blue-900/30 dark:text-blue-300` 추가.
+- **VRAM 누수 모니터링**: `config/monitoring.py`에 `GPU_VRAM_WARNING=85`, `GPU_VRAM_CRITICAL=95` 추가. `worker/monitoring/alerting.py`의 GPU 체크 블록에 VRAM % 임계치 알림 추가 — WARNING은 로그 경고("누수 의심"), CRITICAL은 이메일+슬랙 발송. `worker/monitoring/daemon.py` 헬스 로그에 VRAM% 포함.
+- **pytest 컬렉션 픽스**: `worker/test/conftest.py`에 `test_fish_speech.py` 추가 — `async def test_*()` 함수를 `asyncio.run(main())`으로 직접 호출하는 라이브 통합 테스트 구조로 pytest-asyncio 없이 수집하면 실패. (`test_pipeline_phases.py`와 동일 패턴)
+
 ## 다음 개선 우선순위
 
 현 상태로 전체 파이프라인이 동작 가능. 주요 선택적 개선 항목은 모두 완료됨.
@@ -244,6 +250,4 @@ telegram/
 | 항목 | 설명 |
 |------|------|
 | 크롤러 사이트 추가 | 인스티즈, 더쿠, MLB파크 등 (ADDING_CRAWLER.md 참조) |
-| VRAM 누수 모니터링 | 장기 운영 시 nvidia-smi 주기적 로그 + 임계치 경보 |
-| 대시보드 다크모드 | Sidebar 토글 버튼 연결 (ThemeProvider 미구현) |
 | 크롤러 트레이 알림 | 크롤링 시 중요 게시글 즉시 텔레그램 알림 |

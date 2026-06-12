@@ -45,8 +45,7 @@ def run_once():
     enabled_sites = [s.strip() for s in ENABLED_CRAWLERS if s.strip()]
     log.info("Enabled crawlers: %s", enabled_sites)
 
-    session = SessionLocal()
-    try:
+    with SessionLocal() as session:
         for site_code in enabled_sites:
             try:
                 log.info("=" * 60)
@@ -63,9 +62,6 @@ def run_once():
             except Exception:
                 log.exception("Error running crawler '%s'", site_code)
                 session.rollback()
-
-    finally:
-        session.close()
 
     log.info("All crawlers completed")
 

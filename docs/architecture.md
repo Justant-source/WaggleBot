@@ -1,6 +1,6 @@
 # WaggleBot — 시스템 아키텍처
 
-> **last-verified:** 2026-06-11 (commit `3ba0d15`)
+> **last-verified:** 2026-06-12 (commit `656dffd`)
 > **scope:** 시스템 구조, Post 상태 전이, VRAM 배분 — SSOT
 
 커뮤니티 게시글을 자동으로 크롤링해 LLM 대본→TTS→비디오→업로드까지 처리하는 AI 컨텐츠 자동화 파이프라인.

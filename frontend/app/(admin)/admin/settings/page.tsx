@@ -4,6 +4,8 @@ import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { settingsApi } from '@/lib/api/settings'
+import { ttsApi } from '@/lib/api/tts'
+import type { VoiceInfo } from '@/lib/types'
 import { AdminSection } from '@/components/admin/AdminSection'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -38,6 +40,7 @@ export default function SettingsPage() {
   const [llmHealthStatus, setLlmHealthStatus] = useState<'unknown' | 'ok' | 'error'>('unknown')
   const [llmHealthChecking, setLlmHealthChecking] = useState(false)
 
+  const [voices, setVoices] = useState<VoiceInfo[]>([])
   const [apiKey, setApiKey] = useState('')
   const [apiKeyMasked, setApiKeyMasked] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState(false)
@@ -88,6 +91,7 @@ export default function SettingsPage() {
       const v = creds?.anthropic_api_key
       if (typeof v === 'string' && v.length > 0) setApiKeyMasked(v)
     }).catch(() => {})
+    ttsApi.voices().then((res) => setVoices(res.voices)).catch(() => {})
   }, [])
 
   const onSubmit = async (data: FormData) => {
@@ -269,17 +273,12 @@ export default function SettingsPage() {
             <Select value={ttsVoice} onValueChange={(v) => setValue('tts_voice', v)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="default">기본 남성 내레이터</SelectItem>
-                <SelectItem value="anna">Anna (여, 친근한 내레이션)</SelectItem>
-                <SelectItem value="han">Han (남, 자연스러운 대화체)</SelectItem>
-                <SelectItem value="krys">Krys (여, 뉴스/정보 전달형)</SelectItem>
-                <SelectItem value="sunny">Sunny (여, 따뜻한 내레이션)</SelectItem>
-                <SelectItem value="yohan">Yohan (남, 깊이 있는 내레이션)</SelectItem>
-                <SelectItem value="yura">Yura (여, 활기찬 대화체)</SelectItem>
-                <SelectItem value="manbo">Manbo (여, 유쾌한 대화체)</SelectItem>
+                {voices.map((v) => (
+                  <SelectItem key={v.key} value={v.key}>{v.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
-            <p className="mt-1 text-xs text-gray-400">Fish Speech 목소리 프리셋.</p>
+            <p className="mt-1 text-xs text-gray-400">Fish Speech 목소리 프리셋. (voices.json 기반)</p>
           </div>
         </div>
       </AdminSection>
