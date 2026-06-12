@@ -103,16 +103,20 @@ graph TD
 ---
 
 ### fish-speech
-- **역할:** Zero-shot 음성 클로닝 TTS (Fish Speech v1.5.1)
-- **이미지:** `fishaudio/fish-speech:v1.5.1` (외부 공식 이미지)
+- **역할:** Zero-shot 음성 클로닝 TTS (**OpenAudio S1-mini**, ADR-0005)
+- **이미지:** `wagglebot/fish-speech-s1:cuda` (S1 커밋 d3df50에서 로컬 빌드 — 사전빌드 태그는 s1-mini 비호환)
+  - 재빌드: `scripts/build_fish_speech_s1.sh`
 - **포트:** `8082→8080`
-- **GPU:** RTX 3090, VRAM ~5GB
+- **GPU:** RTX 3090, VRAM ~4GB
 - **볼륨:**
-  - `../assets/voices:/opt/fish-speech/references` — 참조 오디오 (WAV/MP3)
-  - `../checkpoints:/opt/fish-speech/checkpoints` — 모델 가중치
-- **모델:** `checkpoints/fish-speech-1.5/` (llama + decoder)
-- **시작 시간:** `start_period: 90s` (모델 로딩 대기)
-- **실행:** `python tools/api_server.py --half` (FP16)
+  - `../checkpoints/openaudio-s1-mini:/app/checkpoints/openaudio-s1-mini` — 모델 가중치 (서브디렉토리만)
+  - `../assets/voices:/app/references` — 참조 음성 (**UID 1000 소유 필수** — validate_env 쓰기 권한 검사)
+- **모델:** `checkpoints/openaudio-s1-mini/` (`download_openaudio_s1.sh`, gated HF — 로그인 필요)
+- **참조 구조:** `assets/voices/<key>/NN.wav + NN.lab` → `reference_id` 클로닝 (`prepare_voice.py`로 등록)
+- **env 오버라이드(필수):** `LLAMA_CHECKPOINT_PATH`/`DECODER_CHECKPOINT_PATH` — 이미지 기본값 s2-pro(VRAM 초과) 차단
+- **시작 시간:** `start_period: 180s` (모델 로딩 대기)
+- **healthcheck:** `curl`로 포트 리스닝 검사 (라우트 독립)
+- **롤백:** ADR-0005 참조 (구 v1.5.1 블록 복원, `checkpoints/fish-speech-1.5/` 보존)
 
 ---
 

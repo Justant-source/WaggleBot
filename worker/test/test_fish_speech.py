@@ -1,50 +1,40 @@
-"""Fish Speech TTS 집중 테스트 — 워밍업 + 중국어 혼입 + prefix 이상 검증.
+"""OpenAudio S1 TTS 통합 테스트 (라이브 — fish-speech 서버 필요).
 
-실행: python test/test_fish_speech.py
+새 fish_client.synthesize() 경로를 직접 호출해 reference_id 클로닝·감정 마커·
+장문 분할·후처리(loudnorm/배속)를 한 번에 검증한다.
+
+실행 (ai_worker 컨테이너 내부 — FISH_SPEECH_URL=http://fish-speech:8080):
+    docker compose -f env/docker-compose.yml exec ai_worker python test/test_fish_speech.py
+
+호스트에서 직접 실행 시 (포트 8082 매핑):
+    python worker/test/test_fish_speech.py --url http://localhost:8082
 
 사전 조건:
-  - fish-speech 컨테이너 실행 중 (docker compose up fish-speech)
-  - assets/voices/ 에 참조 오디오 존재
+  - fish-speech 컨테이너 healthy (OpenAudio S1-mini 로드)
+  - assets/voices/<key>/ 에 참조 음성 등록 (없으면 기본 음색으로 합성됨)
 
-결과물: _result/tts_test/ 에 WAV 파일 + 로그 저장
+결과물: worker/test/test_tts_output/ (WAV + summary.json + 로그)
 """
+import argparse
 import asyncio
-import base64
 import json
 import logging
+import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parent.parent  # /app (worker/)
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import httpx
 
-# 프로젝트 루트를 sys.path에 추가
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+from config.settings import FISH_SPEECH_URL, TTS_OUTPUT_FORMAT, VOICE_DEFAULT, VOICE_PRESETS
 
-from config.settings import (
-    FISH_SPEECH_TIMEOUT,
-    FISH_SPEECH_URL,
-    TTS_OUTPUT_FORMAT,
-    VOICE_DEFAULT,
-    VOICE_PRESETS,
-    VOICE_REFERENCE_TEXTS,
-)
-
-try:
-    from ai_worker.tts.normalizer import normalize_for_tts as _normalize_for_tts
-except Exception as _e:
-    logger.warning("tts.normalizer 로드 실패 (%s), 정규화 없이 진행", _e)
-    _normalize_for_tts = lambda text: text  # noqa: E731
-
-# ── 설정 ──
-# 호스트에서 실행 시 localhost 사용
-FISH_URL = FISH_SPEECH_URL.replace("fish-speech", "localhost")
-OUTPUT_DIR = PROJECT_ROOT / "_result" / "tts_test"
+OUTPUT_DIR = _ROOT / "test" / "test_tts_output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-VOICES_DIR = PROJECT_ROOT / "assets" / "voices"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,265 +46,153 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fish_test")
 
-# ── 테스트 문장 5개 (다양한 유형) ──
+# CLI에서 덮어쓸 수 있는 서버 URL (기본: 컨테이너 내부 주소)
+SERVER_URL = FISH_SPEECH_URL
+
 TEST_SENTENCES = [
-    {
-        "id": 1,
-        "text": "안녕하세요, 오늘 소개할 이야기는 정말 놀라운 사연입니다.",
-        "desc": "인트로 — 기본 내레이션",
-    },
-    {
-        "id": 2,
-        "text": "어제 퇴근길에 편의점에서 있었던 일인데, 진짜 소름 돋았어요.",
-        "desc": "본문 — 일상 서술체",
-    },
-    {
-        "id": 3,
-        "text": "댓글: 이거 실화냐? ㅋㅋㅋ 나도 비슷한 경험 있음",
-        "desc": "댓글 — 인터넷 슬랭 포함",
-    },
-    {
-        "id": 4,
-        "text": "3년 전에 200만원짜리 중고차를 샀는데, 알고보니 사고차였습니다.",
-        "desc": "숫자 + 한국어 변환 테스트",
-    },
-    {
-        "id": 5,
-        "text": "이 영상이 도움이 되셨다면 좋아요와 구독 부탁드립니다. 다음에 또 만나요!",
-        "desc": "아웃트로 — 마무리 멘트",
-    },
+    "안녕하세요, 오늘 소개할 이야기는 정말 놀라운 사연입니다.",
+    "어제 퇴근길에 편의점에서 있었던 일인데, 진짜 소름 돋았어요.",
+    "3년 전에 200만원짜리 중고차를 샀는데, 알고보니 사고차였습니다.",
+    "이 영상이 도움이 되셨다면 좋아요와 구독 부탁드립니다. 다음에 또 만나요!",
 ]
 
+LONG_TEXT = (
+    "제가 어렸을 때 살던 동네에는 작은 골목길이 하나 있었는데요, "
+    "그 골목 끝에는 오래된 구멍가게가 하나 있었습니다. "
+    "주인 할머니는 늘 정정하셨고, 동네 아이들에게 항상 사탕을 하나씩 쥐여 주시곤 했어요. "
+    "그런데 어느 날 갑자기 그 가게가 문을 닫았고, 할머니도 보이지 않으셨습니다. "
+    "한참이 지나서야 우리는 그 사정을 알게 되었습니다."
+)
 
-def _prepare_references(voice_key: str = VOICE_DEFAULT) -> list[dict]:
-    """참조 오디오 + 참조 텍스트 페이로드 생성."""
-    ref_filename = VOICE_PRESETS.get(voice_key, VOICE_PRESETS[VOICE_DEFAULT])
-    ref_audio = VOICES_DIR / ref_filename
-    if not ref_audio.exists():
-        logger.warning("참조 오디오 없음: %s", ref_audio)
-        return []
-    ref_text = VOICE_REFERENCE_TEXTS.get(voice_key, VOICE_REFERENCE_TEXTS.get(VOICE_DEFAULT, ""))
-    audio_b64 = base64.b64encode(ref_audio.read_bytes()).decode()
-    return [{"audio": audio_b64, "text": ref_text}]
+
+def _wav_secs(path: Path) -> float:
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, check=True,
+        )
+        return round(float(r.stdout.strip()), 2)
+    except Exception:
+        return 0.0
 
 
 async def check_server() -> bool:
-    """Fish Speech 서버 연결 확인."""
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{FISH_URL}/")
-            logger.info("서버 상태: HTTP %d (%s)", r.status_code, FISH_URL)
-            return r.status_code < 400
+            r = await client.get(f"{SERVER_URL}/")
+            logger.info("서버 응답: HTTP %d (%s)", r.status_code, SERVER_URL)
+            return True
     except Exception as exc:
-        logger.error("서버 연결 실패: %s", exc)
+        logger.error("서버 연결 실패 (%s): %s", SERVER_URL, exc)
         return False
 
 
-async def warmup_test() -> dict:
-    """워밍업 테스트 — 3회 요청, 각 요청의 응답 시간 및 오디오 크기 기록."""
+async def test_basic(synthesize) -> list[dict]:
     logger.info("=" * 60)
-    logger.info("워밍업 테스트 (3회)")
-    logger.info("=" * 60)
-
-    references = _prepare_references()
-    warmup_texts = ["안녕하세요.", "테스트 문장입니다.", "오늘 날씨가 좋습니다."]
+    logger.info("기본 합성 (%d문장, voice=%s)", len(TEST_SENTENCES), VOICE_DEFAULT)
     results = []
-
-    _timeout = httpx.Timeout(connect=10.0, write=FISH_SPEECH_TIMEOUT, read=FISH_SPEECH_TIMEOUT, pool=5.0)
-    async with httpx.AsyncClient(timeout=_timeout) as client:
-        for i, text in enumerate(warmup_texts):
-            out_path = OUTPUT_DIR / f"warmup_{i+1}.wav"
-            t0 = time.time()
-            try:
-                resp = await client.post(
-                    f"{FISH_URL}/v1/tts",
-                    json={"text": text, "format": TTS_OUTPUT_FORMAT, "references": references},
-                )
-                resp.raise_for_status()
-                elapsed = time.time() - t0
-                out_path.write_bytes(resp.content)
-                size_kb = len(resp.content) // 1024
-                logger.info(
-                    "  워밍업 %d/3: text=%r → %dKB, %.1f초",
-                    i + 1, text, size_kb, elapsed,
-                )
-                results.append({
-                    "attempt": i + 1,
-                    "text": text,
-                    "size_kb": size_kb,
-                    "elapsed_s": round(elapsed, 2),
-                    "file": str(out_path.name),
-                    "status": "ok",
-                })
-            except Exception as exc:
-                elapsed = time.time() - t0
-                logger.error("  워밍업 %d/3 실패: %s (%.1fs)", i + 1, exc, elapsed)
-                results.append({
-                    "attempt": i + 1,
-                    "text": text,
-                    "elapsed_s": round(elapsed, 2),
-                    "status": f"error: {exc}",
-                })
-
-    return {"warmup": results}
-
-
-async def synthesize_test() -> dict:
-    """5문장 합성 테스트 — 정규화 전후 텍스트 비교 + 오디오 저장."""
-    logger.info("")
-    logger.info("=" * 60)
-    logger.info("5문장 합성 테스트")
-    logger.info("=" * 60)
-
-    references = _prepare_references()
-    results = []
-
-    _timeout = httpx.Timeout(connect=10.0, write=FISH_SPEECH_TIMEOUT, read=FISH_SPEECH_TIMEOUT, pool=5.0)
-    async with httpx.AsyncClient(timeout=_timeout) as client:
-        for item in TEST_SENTENCES:
-            idx = item["id"]
-            raw_text = item["text"]
-            normalized = _normalize_for_tts(raw_text)
-
-            logger.info("")
-            logger.info("  [문장 %d] %s", idx, item["desc"])
-            logger.info("    원본:    %r", raw_text)
-            logger.info("    정규화:  %r", normalized)
-
-            # 실제 API에 전달되는 텍스트 (emotion_tag 없으므로 normalized 그대로)
-            final_text = normalized
-            logger.info("    최종전달: %r", final_text)
-
-            out_path = OUTPUT_DIR / f"sentence_{idx}.wav"
-            t0 = time.time()
-            try:
-                resp = await client.post(
-                    f"{FISH_URL}/v1/tts",
-                    json={"text": final_text, "format": TTS_OUTPUT_FORMAT, "references": references},
-                )
-                resp.raise_for_status()
-                elapsed = time.time() - t0
-                out_path.write_bytes(resp.content)
-                size_kb = len(resp.content) // 1024
-                logger.info("    → 생성 완료: %s (%dKB, %.1f초)", out_path.name, size_kb, elapsed)
-                results.append({
-                    "id": idx,
-                    "desc": item["desc"],
-                    "raw_text": raw_text,
-                    "normalized": normalized,
-                    "final_text": final_text,
-                    "size_kb": size_kb,
-                    "elapsed_s": round(elapsed, 2),
-                    "file": str(out_path.name),
-                    "status": "ok",
-                })
-            except Exception as exc:
-                elapsed = time.time() - t0
-                logger.error("    → 실패: %s (%.1fs)", exc, elapsed)
-                results.append({
-                    "id": idx,
-                    "desc": item["desc"],
-                    "raw_text": raw_text,
-                    "normalized": normalized,
-                    "final_text": final_text,
-                    "elapsed_s": round(elapsed, 2),
-                    "status": f"error: {exc}",
-                })
-
-    return {"sentences": results}
-
-
-async def no_reference_test() -> dict:
-    """참조 오디오 없이 합성 — 중국어 출력 여부 확인."""
-    logger.info("")
-    logger.info("=" * 60)
-    logger.info("참조 오디오 없이 합성 (중국어 출력 비교용)")
-    logger.info("=" * 60)
-
-    text = "안녕하세요, 테스트입니다."
-    out_path = OUTPUT_DIR / "no_reference.wav"
-
-    _timeout = httpx.Timeout(connect=10.0, write=FISH_SPEECH_TIMEOUT, read=FISH_SPEECH_TIMEOUT, pool=5.0)
-    async with httpx.AsyncClient(timeout=_timeout) as client:
+    for i, text in enumerate(TEST_SENTENCES, start=1):
+        out = OUTPUT_DIR / f"basic_{i}.wav"
         t0 = time.time()
         try:
-            resp = await client.post(
-                f"{FISH_URL}/v1/tts",
-                json={"text": text, "format": TTS_OUTPUT_FORMAT, "references": []},
-            )
-            resp.raise_for_status()
-            elapsed = time.time() - t0
-            out_path.write_bytes(resp.content)
-            size_kb = len(resp.content) // 1024
-            logger.info("  참조없음 합성: %dKB, %.1f초 → %s", size_kb, elapsed, out_path.name)
-            return {"no_reference": {"size_kb": size_kb, "elapsed_s": round(elapsed, 2), "file": str(out_path.name), "status": "ok"}}
+            await synthesize(text=text, output_path=out)
+            secs = _wav_secs(out)
+            spc = round(secs / max(len(text), 1), 3)
+            logger.info("  [%d] %.1fs (%.3f초/자, %.1fs 소요): %s", i, secs, spc, time.time() - t0, text[:30])
+            results.append({"id": i, "text": text, "secs": secs, "secs_per_char": spc, "status": "ok"})
         except Exception as exc:
-            elapsed = time.time() - t0
-            logger.error("  참조없음 합성 실패: %s", exc)
-            return {"no_reference": {"elapsed_s": round(elapsed, 2), "status": f"error: {exc}"}}
+            logger.error("  [%d] 실패: %s", i, exc)
+            results.append({"id": i, "text": text, "status": f"error: {exc}"})
+    return results
+
+
+async def test_emotion(synthesize) -> list[dict]:
+    logger.info("=" * 60)
+    logger.info("감정 마커 A/B (동일 문장, 마커별)")
+    text = "정말 믿을 수 없는 일이 벌어졌어요."
+    results = []
+    for emo in ("", "sad", "whispering", "surprised"):
+        out = OUTPUT_DIR / f"emotion_{emo or 'none'}.wav"
+        try:
+            await synthesize(text=text, output_path=out, emotion=emo)
+            secs = _wav_secs(out)
+            logger.info("  emotion=%-10s → %.1fs (%s)", emo or "(none)", secs, out.name)
+            results.append({"emotion": emo, "secs": secs, "status": "ok"})
+        except Exception as exc:
+            logger.error("  emotion=%s 실패: %s", emo, exc)
+            results.append({"emotion": emo, "status": f"error: {exc}"})
+    return results
+
+
+async def test_long_split(synthesize) -> dict:
+    logger.info("=" * 60)
+    logger.info("장문 분할 합성 (%d자 → 세그먼트 분할·병합)", len(LONG_TEXT))
+    out = OUTPUT_DIR / "long_split.wav"
+    try:
+        await synthesize(text=LONG_TEXT, output_path=out)
+        secs = _wav_secs(out)
+        logger.info("  %d자 → %.1fs (%s)", len(LONG_TEXT), secs, out.name)
+        return {"chars": len(LONG_TEXT), "secs": secs, "status": "ok"}
+    except Exception as exc:
+        logger.error("  실패: %s", exc)
+        return {"chars": len(LONG_TEXT), "status": f"error: {exc}"}
+
+
+async def test_voices(synthesize) -> list[dict]:
+    logger.info("=" * 60)
+    logger.info("음성별 클로닝 (등록된 voice 프리셋)")
+    text = "안녕하세요, 이 목소리로 합성한 테스트입니다."
+    results = []
+    for vk in VOICE_PRESETS:
+        out = OUTPUT_DIR / f"voice_{vk}.wav"
+        try:
+            await synthesize(text=text, voice_key=vk, output_path=out)
+            secs = _wav_secs(out)
+            logger.info("  voice=%-10s → %.1fs", vk, secs)
+            results.append({"voice": vk, "secs": secs, "status": "ok"})
+        except Exception as exc:
+            logger.error("  voice=%s 실패: %s", vk, exc)
+            results.append({"voice": vk, "status": f"error: {exc}"})
+    return results
 
 
 async def main() -> None:
-    logger.info("Fish Speech TTS 집중 테스트 시작")
-    logger.info("서버: %s", FISH_URL)
-    logger.info("출력: %s", OUTPUT_DIR)
-    logger.info("")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--url", help="fish-speech 서버 URL 오버라이드 (예: http://localhost:8082)")
+    parser.add_argument("--skip-voices", action="store_true", help="음성별 클로닝 테스트 생략")
+    args = parser.parse_args()
 
-    # 1) 서버 연결 확인
+    global SERVER_URL
+    if args.url:
+        SERVER_URL = args.url
+        # fish_client는 config의 FISH_SPEECH_URL을 사용하므로 환경에 맞춰 실행 권장.
+        logger.warning("--url 지정됨(%s). fish_client.synthesize는 config FISH_SPEECH_URL(%s)을 사용함에 유의.",
+                       args.url, FISH_SPEECH_URL)
+
+    logger.info("OpenAudio S1 TTS 통합 테스트 — 서버 %s, 출력 %s", SERVER_URL, OUTPUT_DIR)
+
     if not await check_server():
-        logger.error("Fish Speech 서버 연결 불가 — 테스트 중단")
+        logger.error("서버 연결 불가 — 테스트 중단 (fish-speech healthy 확인)")
         sys.exit(1)
 
-    # 2) 워밍업
-    warmup_results = await warmup_test()
+    from ai_worker.tts.fish_client import synthesize
 
-    # 3) 5문장 합성
-    sentence_results = await synthesize_test()
+    summary: dict = {"timestamp": datetime.now().isoformat(), "server": SERVER_URL}
+    summary["basic"] = await test_basic(synthesize)
+    summary["emotion"] = await test_emotion(synthesize)
+    summary["long_split"] = await test_long_split(synthesize)
+    if not args.skip_voices:
+        summary["voices"] = await test_voices(synthesize)
 
-    # 4) 참조 없는 합성 (비교용)
-    no_ref_results = await no_reference_test()
+    (OUTPUT_DIR / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
 
-    # 5) 결과 요약 저장
-    all_results = {
-        "timestamp": datetime.now().isoformat(),
-        "server_url": FISH_URL,
-        "voice_key": VOICE_DEFAULT,
-        **warmup_results,
-        **sentence_results,
-        **no_ref_results,
-    }
-    result_json_path = OUTPUT_DIR / "test_results.json"
-    result_json_path.write_text(json.dumps(all_results, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # 6) 콘솔 요약
-    logger.info("")
     logger.info("=" * 60)
-    logger.info("테스트 결과 요약")
-    logger.info("=" * 60)
-
-    warmup_ok = sum(1 for r in all_results["warmup"] if r["status"] == "ok")
-    logger.info("  워밍업: %d/3 성공", warmup_ok)
-
-    sentence_ok = sum(1 for r in all_results["sentences"] if r["status"] == "ok")
-    logger.info("  5문장:  %d/5 성공", sentence_ok)
-
-    no_ref_status = all_results["no_reference"]["status"]
-    logger.info("  참조없음: %s", no_ref_status)
-
-    logger.info("")
-    logger.info("결과 파일: %s", OUTPUT_DIR)
-    logger.info("  WAV: warmup_1~3.wav, sentence_1~5.wav, no_reference.wav")
-    logger.info("  로그: test_log.txt")
-    logger.info("  JSON: test_results.json")
-
-    # 정규화 비교표
-    logger.info("")
-    logger.info("── 정규화 전후 비교 ──")
-    for r in all_results["sentences"]:
-        logger.info("  [%d] 원본:   %s", r["id"], r["raw_text"])
-        logger.info("      정규화: %s", r["normalized"])
-        logger.info("      전달:   %s", r["final_text"])
-        logger.info("")
+    ok = sum(1 for r in summary["basic"] if r.get("status") == "ok")
+    logger.info("기본 합성: %d/%d 성공", ok, len(summary["basic"]))
+    logger.info("결과: %s (WAV + summary.json + test_log.txt)", OUTPUT_DIR)
 
 
 if __name__ == "__main__":

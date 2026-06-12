@@ -77,6 +77,18 @@ def native_number(n: int) -> str:
     return result
 
 
+# 자릿수 단위 읽기 (전화번호·소수점 이하) — 0은 "공"으로 발음
+_PHONE_DIGITS: dict[str, str] = {
+    "0": "공", "1": "일", "2": "이", "3": "삼", "4": "사",
+    "5": "오", "6": "육", "7": "칠", "8": "팔", "9": "구",
+}
+
+
+def read_digits(digits: str) -> str:
+    """숫자 문자열을 한 자리씩 읽는다 (전화번호·소수점 이하). 예: '010' → '공 일 공'."""
+    return " ".join(_PHONE_DIGITS[c] for c in digits if c.isdigit())
+
+
 def convert_number_with_counter(match: re.Match) -> str:  # type: ignore[type-arg]
     """숫자+단위 조합을 한국어 읽기로 변환하는 re.sub 콜백."""
     try:

@@ -194,6 +194,21 @@ telegram/
 | 8차 | `3df1358` | 에디터 상세 페이지 API 에러 핸들링 누락 |
 | 9차 | `5290f78` | processor.py use_content_processor fresh config 읽기 (frozen cfg 버그) |
 | 10차 | `ec4a28d` | normalizer.py 컨테이너 경로(parents[3]→[2])·max_chars 계산 버그, ab_test.py 경로 버그 |
+
+## TTS OpenAudio S1-mini 업그레이드 (2026-06-12, ADR-0005)
+
+| 영역 | 변경 |
+|------|------|
+| 모델/서버 | Fish Speech 1.5.1 → OpenAudio S1-mini, server-cuda 이미지 digest 고정, env 기반 체크포인트 오버라이드, curl healthcheck, start_period 180s. `scripts/download_openaudio_s1.sh`(gated HF) 신규 |
+| 참조 음성 | base64 평면파일 → `reference_id` 폴더 구조(`assets/voices/<key>/NN.wav+NN.lab`) + memory cache. voices.json v2(ref_dir/params). assets/voices를 UID 1000 소유로 (validate_env) |
+| 클라이언트 | `fish_client.py` 재작성: 참조 해석 체인, 감정 마커 주입, 장문 분할·concat, WAV 헤더 길이검증, loudnorm+aresample 후처리. `language` 필드 제거, top_p/normalize 추가 |
+| 정규화 | `normalizer.py`: 슬랭 로더 merge 버그 수정, 조사 교정 슬랭 경계 한정(마을→마를 회귀 해결), 숫자 확장(소수/콤마/범위/유월·시월/단위/전화), 영문 약어 별도 패스+내장 사전(CCTV/SNS/AI 등, assets/는 gitignore라 코드 내장), ㅋㅋ→(laughing) 게이트 |
+| 감정 배선 | content_processor·layout·_tts·dashboard handlers에 `emotion=scene.tts_emotion` 전달. `TTS_EMOTION_MARKERS` 신규(EMOTION_TAGS와 별개 축) |
+| 음성 등록 | `worker/tools/prepare_voice.py` 신규(faster-whisper 자동 전사). requirements에 faster-whisper |
+| 테스트 | `test_tts_normalizer.py` 신규(29 케이스, 오프라인 통과), `test_fish_speech.py` 재작성(URL 버그 수정, synthesize 통합 경로) |
+
+> ⚠ **라이브 검증(A3) 미완료** — gated 모델 다운로드(사용자 HF 인증) 후 fish-speech 교체 필요.
+> 실측 VRAM/RTF·WAV 샘플레이트·reference_id 동작은 최초 기동 시 확인 (ADR-0005 미해결 항목).
 | 11차 | `ed9f9e8` | analytics/feedback.py mood_weights 레거시 키(shocking/funny…) → 9-mood 시스템 교체 |
 
 ### 대본 리텐션 프롬프트 개편 (2026-06-11)

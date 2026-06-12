@@ -212,7 +212,8 @@ def _scenes_to_plan_and_sentences(
         if scene.type == "intro":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
-            sentences.append({"text": text, "section": "hook", "audio": audio, "voice_override": None})
+            sentences.append({"text": text, "section": "hook", "audio": audio, "voice_override": None,
+                              "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "intro", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "image_text":
@@ -223,6 +224,7 @@ def _scenes_to_plan_and_sentences(
                 "voice_override": scene.voice_override,
                 "block_type": getattr(scene, "block_type", "body"),
                 "author": getattr(scene, "author", None),
+                "tts_emotion": getattr(scene, "tts_emotion", ""),
             }
             psl = getattr(scene, "pre_split_lines", None)
             if psl:
@@ -242,6 +244,7 @@ def _scenes_to_plan_and_sentences(
                     "voice_override": scene.voice_override,
                     "block_type": getattr(scene, "block_type", "body"),
                     "author": getattr(scene, "author", None),
+                    "tts_emotion": getattr(scene, "tts_emotion", ""),
                 }
                 if psl:
                     sent_dict["lines"] = psl
@@ -259,6 +262,7 @@ def _scenes_to_plan_and_sentences(
                     "voice_override": scene.voice_override,
                     "block_type": getattr(scene, "block_type", "body"),
                     "author": getattr(scene, "author", None),
+                    "tts_emotion": getattr(scene, "tts_emotion", ""),
                 }
                 if psl:
                     sent_dict["lines"] = psl
@@ -270,7 +274,8 @@ def _scenes_to_plan_and_sentences(
             sent_idx_val: Optional[int] = None
             if text:
                 sent_idx_val = len(sentences)
-                sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override})
+                sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override,
+                                  "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "image_only", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "outro":
@@ -278,7 +283,8 @@ def _scenes_to_plan_and_sentences(
             sent_idx_val = None
             if text:
                 sent_idx_val = len(sentences)
-                sentences.append({"text": text, "section": "closer", "audio": audio, "voice_override": None})
+                sentences.append({"text": text, "section": "closer", "audio": audio, "voice_override": None,
+                                  "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "outro", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
 
     return sentences, plan, images

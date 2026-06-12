@@ -37,19 +37,31 @@ services:
     command: python main.py
 
   fish-speech:
-    image: fishaudio/fish-speech:v1.5.1
+    # OpenAudio S1-mini — 공식 fishaudio/fish-speech S1 커밋(d3df50, 2026-01-08)에서
+    # 로컬 빌드한 이미지 (ADR-0005). 사전빌드 태그는 s1-mini 비호환:
+    #   server-cuda(rolling)=S2 AutoTokenizer→tiktoken 못읽음, v1.5.1=modded_dac 미지원.
+    # 재빌드: scripts/build_fish_speech_s1.sh 참조.
+    # 롤백: 이미지를 fishaudio/fish-speech:v1.5.1 로, 체크포인트/엔트리포인트 구 블록 복원.
+    image: wagglebot/fish-speech-s1:cuda
     container_name: fish-speech
     restart: unless-stopped
     runtime: nvidia
     ports:
       - "8082:8080"
     volumes:
-      - ../assets/voices:/opt/fish-speech/references
-      - ../checkpoints:/opt/fish-speech/checkpoints
+      # 서브디렉토리만 마운트 — ComfyUI 모델(checkpoints/*)을 컨테이너에 노출하지 않음
+      - ../checkpoints/openaudio-s1-mini:/app/checkpoints/openaudio-s1-mini
+      # ⚠ assets/voices는 UID 1000 소유여야 함 (validate_env가 /app/references 쓰기 권한 요구)
+      - ../assets/voices:/app/references
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - CUDA_VISIBLE_DEVICES=0
+      # 이미지 기본값은 s2-pro(4B, VRAM 초과) — S1-mini로 반드시 오버라이드
+      - LLAMA_CHECKPOINT_PATH=checkpoints/openaudio-s1-mini
+      - DECODER_CHECKPOINT_PATH=checkpoints/openaudio-s1-mini/codec.pth
+      - DECODER_CONFIG_NAME=modded_dac_vq
+      # COMPILE=1  # torch.compile (시작 느림) — A3 RTF 측정 후 판단
     deploy:
       resources:
         reservations:
@@ -57,24 +69,13 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    working_dir: /opt/fish-speech
-    # v1.5.1 이미지: /opt/fish-speech/ 설치, common.sh 없음, python 직접 실행
-    entrypoint:
-      - /bin/bash
-      - -c
-      - >-
-        python tools/api_server.py
-        --listen 0.0.0.0:8080
-        --llama-checkpoint-path checkpoints/fish-speech-1.5
-        --decoder-checkpoint-path checkpoints/fish-speech-1.5/firefly-gan-vq-fsq-8x1024-21hz-generator.pth
-        --decoder-config-name firefly_gan_vq
-        --half
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/').read()"]
+      # 라우트 독립적 포트 리스닝 검사 (uvicorn은 모델 로드 완료 후 바인딩 → TCP open ≈ ready)
+      test: ["CMD-SHELL", "curl -s -o /dev/null --max-time 5 http://localhost:8080/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 90s
+      start_period: 180s
 
   comfyui:
     build:

@@ -151,7 +151,11 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
             for j, line in enumerate(scene.text_lines):
                 text = line if isinstance(line, str) else line.get("text", "")
                 try:
-                    tts_kwargs: dict = {"text": text, "scene_type": scene.type}
+                    tts_kwargs: dict = {
+                        "text": text,
+                        "scene_type": scene.type,
+                        "emotion": getattr(scene, "tts_emotion", ""),
+                    }
                     if scene.voice_override:
                         tts_kwargs["voice_key"] = scene.voice_override
                     audio_path = await synthesize(**tts_kwargs)

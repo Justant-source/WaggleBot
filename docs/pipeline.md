@@ -118,11 +118,17 @@ flowchart TD
 `VIDEO_GEN_ENABLED=true`일 때 두 Phase가 `asyncio.gather`로 동시 실행된다.
 Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므로 안전하게 병렬화 가능.
 
-**Phase 5 — TTS 생성**
-- Fish Speech 1.5 (`http://fish-speech:8080`)
-- `config/settings.py`의 `VOICE_PRESETS`로 참조 오디오 선택
+**Phase 5 — TTS 생성** (OpenAudio S1-mini, ADR-0005)
+- `worker/ai_worker/tts/fish_client.py`의 `synthesize(text, scene_type, voice_key, emotion)` 경유 (`http://fish-speech:8080`)
+- **참조 음성:** `assets/voices/<key>/NN.wav+NN.lab` 존재 시 `reference_id` 클로닝(+memory cache), 없으면 base64 폴백, 그것도 없으면 기본 음색 + 경고
+- **감정 마커:** `scene.tts_emotion`(scene_policy.json mood) → `TTS_EMOTION_MARKERS` → 정규화 텍스트 앞에 주입 (`(sad)` 등). content_processor·renderer 양 경로 모두 전달
+- **정규화:** `normalize_for_tts()` — 슬랭/약어/숫자(소수·범위·전화·단위·유월/시월)·조사 교정(슬랭 경계 한정)
+- **장문 분할:** 정규화 후 >150자면 문장 경계 분할 → 세그먼트별 합성 → concat → 후처리 1회
+- **후처리:** 무음단축 → loudnorm → atempo(기본 1.2배) → **44100Hz mono 강제**(렌더러 concat 호환)
+- **길이 검증:** WAV 헤더 파싱으로 초/자 계산, 0.05~0.35 범위 밖이면 재생성(비한국어/잘림 감지)
 - 결과: `scene.text_lines = [{"text": "...", "audio": "/path/to/audio.wav"}]`
-- Fish Speech 워밍업 센티널 (`MEDIA_DIR/tmp/fish_warmup_state.json`): 6시간 이내 재시작 시 풀 워밍업(9회 요청) 스킵
+- 워밍업 센티널 (`MEDIA_DIR/tmp/fish_warmup_state.json`): 6시간 이내 재시작 시 풀 워밍업 스킵
+- 음성 등록: `python -m tools.prepare_voice`(faster-whisper 자동 전사). 동일 key 재등록 시 fish-speech 재시작 필요(메모리 캐시 스테일)
 
 **Phase 6 — video_prompt 생성 (prompt_engine V3)**
 `VIDEO_GEN_ENABLED=true`일 때만 실행.

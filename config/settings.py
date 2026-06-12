@@ -37,6 +37,8 @@ from config.monitoring import (  # noqa: E402
     HEALTH_CHECK_INTERVAL,
     GPU_TEMP_WARNING,
     GPU_TEMP_CRITICAL,
+    GPU_VRAM_WARNING,
+    GPU_VRAM_CRITICAL,
     DISK_USAGE_WARNING,
     DISK_USAGE_CRITICAL,
     MEMORY_USAGE_WARNING,
@@ -274,32 +276,46 @@ def get_llm_constraints_prompt() -> str:
 
 
 # ────────────────────────────────────────────
-# TTS — Fish Speech 1.5
+# TTS — OpenAudio S1-mini (fish-speech API 서버, ADR-0005)
 # ────────────────────────────────────────────
 FISH_SPEECH_URL = os.getenv("FISH_SPEECH_URL", "http://fish-speech:8080")
-FISH_SPEECH_TIMEOUT = 300  # seconds — 리텐션 개편 후 대본 600자+(9문장) 전체 합성이 문장당 ~13초로 120초를 초과 (타임아웃<합성시간이면 재시도 중복 큐잉 악순환)
+FISH_SPEECH_TIMEOUT = 300  # seconds — 대본 600자+(9문장) 전체 합성이 타임아웃을 넘지 않도록 여유 확보
 
-# 참조 오디오 프리셋
-# key: voice_key, value: assets/voices/ 내 파일명
+# 참조 오디오 프리셋 (voices.json v2)
+# {key: {label, ref_dir, file, params}}
+#   ref_dir: assets/voices/ 하위 폴더명 → fish-speech reference_id (폴더 내 NN.wav+NN.lab)
+#   file:    레거시 평면 파일명 또는 "<key>/01.wav" (대시보드 sampleUrl·base64 폴백용)
+#   params:  per-voice 오버라이드 {temperature, top_p, speed} (없으면 전역 기본값)
 def _load_voice_presets() -> dict:
-    """config/voices.json에서 로드, 없으면 하드코딩 폴백."""
+    """config/voices.json(v2) 로드 → {key: {label, ref_dir, file, params}}.
+
+    v1 항목(file만 존재)은 ref_dir=None으로 자동 승격. 파일 없거나 파싱 실패 시 폴백.
+    """
     config_path = Path(__file__).parent / "voices.json"
     if config_path.exists():
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
-            return {v["key"]: v["file"] for v in data.get("voices", [])}
+            presets: dict = {}
+            for v in data.get("voices", []):
+                key = v["key"]
+                presets[key] = {
+                    "label": v.get("label", key),
+                    "ref_dir": v.get("ref_dir"),     # None이면 폴더 기반 클로닝 미사용
+                    "file": v.get("file"),           # 레거시 평면 파일 / sampleUrl 경로
+                    "params": v.get("params", {}),
+                }
+            if presets:
+                return presets
         except Exception:
             pass
-    # 폴백: 기존 하드코딩
+    # 폴백: 단일 기본 음성
     return {
-        "default": "korean_man_default.wav",
-        "anna":    "voice_preview_anna.mp3",
-        "han":     "voice_preview_han.mp3",
-        "krys":    "voice_preview_krys.mp3",
-        "sunny":   "voice_preview_sunny.mp3",
-        "yohan":   "voice_preview_yohan.mp3",
-        "yura":    "voice_preview_yura.mp3",
-        "manbo":   "voice_preview_manbo.mp3",
+        "default": {
+            "label": "기본 남성 내레이터",
+            "ref_dir": "default",
+            "file": "default/01.wav",
+            "params": {},
+        },
     }
 
 VOICE_PRESETS: dict = _load_voice_presets()
@@ -319,8 +335,8 @@ VOICE_REFERENCE_TEXTS: dict[str, str] = {
     "manbo":  "여돌 중에 제일 이쁘지 않음? 키키 하음 발언이 여돌 중에 제일 이물감 없고 유니크하다고 함 특히 금발 생머리가 잘 어울림 성격도 웃기고 몸선 춤선도 예쁘다고 함",
 }
 
-# 감정 태그 매핑 — Fish Speech 1.5는 (tag) 형식 미지원, 참조 오디오로 톤 결정
-# 향후 지원 모델 전환 시 재활성화 예정
+# 씬 타입별 감정 태그 (scene/director.py에서 SceneDecision.emotion_tag로 할당)
+# ⚠️ 아래 TTS_EMOTION_MARKERS와는 다른 축(씬 타입 vs tts_emotion) — 혼동 금지.
 EMOTION_TAGS: dict[str, str] = {
     "intro":     "",
     "image_text":  "",
@@ -328,15 +344,51 @@ EMOTION_TAGS: dict[str, str] = {
     "outro":     "",
 }
 
-# Fish Speech 생성 파라미터 — 한국어 안정성 튜닝 (2026-03-04)
-# temperature: 0.7(기본) → 0.5 — 중국어/일본어 회귀 감소, 자연스러운 억양 유지
-# repetition_penalty: 1.2(기본) → 1.3 — 반복 패턴 억제, 억양 왜곡 없는 수준
-FISH_SPEECH_TEMPERATURE: float = 0.5
-FISH_SPEECH_REPETITION_PENALTY: float = 1.3
+# tts_emotion(mood 프리셋, scene_policy.json) → OpenAudio S1 인라인 감정 마커.
+# fish_client가 정규화된 텍스트 앞에 마커를 주입 (TTS_EMOTION_ENABLED일 때).
+# S1 마커 목록에 없는 키(cheerful/friendly)는 가장 가까운 마커로 매핑.
+TTS_EMOTION_MARKERS: dict[str, str] = {
+    "gentle":     "(soft tone)",
+    "cheerful":   "(joyful)",
+    "serious":    "(serious)",
+    "sad":        "(sad)",
+    "whispering": "(whispering)",
+    "neutral":    "",
+    "friendly":   "(relaxed)",
+    "surprised":  "(surprised)",
+}
+
+# OpenAudio S1-mini 생성 파라미터 (ADR-0005)
+# 구 1.5 값(temp 0.5 / rep 1.3)은 참조 오디오 부재 시 중국어 회귀를 막던 방어책이었음.
+# S1 + 실제 참조 음성(reference_id) 환경에서는 모델 기본값(0.8/0.8/1.1)이 가장 자연스러움.
+FISH_SPEECH_TEMPERATURE: float = 0.8
+FISH_SPEECH_TOP_P: float = 0.8
+FISH_SPEECH_REPETITION_PENALTY: float = 1.1
+FISH_SPEECH_CHUNK_LENGTH: int = 200          # 서버 측 청크 길이 (100~1000)
+FISH_SPEECH_USE_MEMORY_CACHE: str = "on"     # reference_id 인코딩 캐시 ("on"|"off")
+FISH_SPEECH_NORMALIZE: bool = False          # 서버 텍스트 정규화 비활성 (자체 한국어 정규화 사용)
+FISH_SPEECH_SEED: int | None = None          # 재현용 시드 (None=랜덤)
 
 # 오디오 출력 설정
 TTS_OUTPUT_FORMAT = "wav"
 TTS_SAMPLE_RATE   = 44100
+
+# TTS 후처리·검증·분할
+TTS_SPEED: float = 1.2                        # atempo 배속 (피치 보존). per-voice params로 오버라이드 가능
+TTS_LOUDNORM_ENABLED: bool = True             # EBU R128 음량 정규화
+TTS_LOUDNORM_PARAMS: str = "I=-16:TP=-1.5:LRA=11"
+TTS_MAX_CHARS_PER_REQUEST: int = 150          # 초과 시 문장 경계로 분할 후 합성·병합
+TTS_MAX_SECS_PER_CHAR: float = 0.35           # 초과 시 비한국어 혼입 의심 → 재생성 (한국어 ~3~6자/초)
+TTS_MIN_SECS_PER_CHAR: float = 0.05           # 미만 시 잘림 의심 → 재생성 (10자 이상에만 적용)
+TTS_SHORT_TEXT_PADDING: bool = False          # 짧은 텍스트 한국어 패딩 (S1+참조에선 불필요, 기본 off)
+TTS_EMOTION_ENABLED: bool = True              # tts_emotion → 감정 마커 주입
+TTS_LAUGH_MARKER_ENABLED: bool = False        # ㅋㅋ/ㅎㅎ → (laughing) 변환 (실험적, 기본 off)
+
+# faster-whisper — 음성 자산 자동 전사 (worker/tools/prepare_voice.py)
+WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "large-v3")
+WHISPER_DEVICE: str = os.getenv("WHISPER_DEVICE", "cpu")        # cpu: VRAM 무경합(TTS/VIDEO와 분리)
+WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+WHISPER_DOWNLOAD_ROOT: Path = ASSETS_DIR / "models" / "faster-whisper"  # 호스트 마운트 → 리빌드에도 캐시 유지
 
 # ---------------------------------------------------------------------------
 # 하드웨어 설정 (RTX 3090 24GB)

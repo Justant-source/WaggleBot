@@ -1,12 +1,14 @@
 {
+  "version": 2,
+  "_comment": "음성 프리셋 v2. ref_dir=assets/voices/ 하위 폴더(=fish-speech reference_id, NN.wav+NN.lab). file=대시보드 sampleUrl·base64 폴백 경로. params=per-voice 오버라이드(temperature/top_p/speed). worker/tools/prepare_voice.py로 등록/갱신.",
   "voices": [
-    { "key": "default", "label": "기본 남성 내레이터",       "file": "korean_man_default.wav" },
-    { "key": "anna",    "label": "Anna (여성, 친근한 내레이션)", "file": "voice_preview_anna.mp3" },
-    { "key": "han",     "label": "Han (남성, 차분한 내레이션)",  "file": "voice_preview_han.mp3" },
-    { "key": "krys",    "label": "Krys (여성, 명랑한 내레이션)", "file": "voice_preview_krys.mp3" },
-    { "key": "sunny",   "label": "Sunny (여성, 밝고 energetic)", "file": "voice_preview_sunny.mp3" },
-    { "key": "yohan",   "label": "Yohan (남성, 젊고 활기찬)",    "file": "voice_preview_yohan.mp3" },
-    { "key": "yura",    "label": "Yura (여성, 감성적 내레이션)",  "file": "voice_preview_yura.mp3" },
-    { "key": "manbo",   "label": "Manbo (남성, 코믹한 내레이션)", "file": "voice_preview_manbo.mp3" }
+    { "key": "default", "label": "기본 남성 내레이터",        "ref_dir": "default", "file": "default/01.wav", "params": {} },
+    { "key": "anna",    "label": "Anna (여성, 친근한 내레이션)", "ref_dir": "anna",    "file": "anna/01.wav",    "params": {} },
+    { "key": "han",     "label": "Han (남성, 차분한 내레이션)",  "ref_dir": "han",     "file": "han/01.wav",     "params": {} },
+    { "key": "krys",    "label": "Krys (여성, 명랑한 내레이션)", "ref_dir": "krys",    "file": "krys/01.wav",    "params": {} },
+    { "key": "sunny",   "label": "Sunny (여성, 밝고 energetic)", "ref_dir": "sunny",   "file": "sunny/01.wav",   "params": {} },
+    { "key": "yohan",   "label": "Yohan (남성, 젊고 활기찬)",    "ref_dir": "yohan",   "file": "yohan/01.wav",   "params": {} },
+    { "key": "yura",    "label": "Yura (여성, 감성적 내레이션)",  "ref_dir": "yura",    "file": "yura/01.wav",    "params": {} },
+    { "key": "manbo",   "label": "Manbo (남성, 코믹한 내레이션)", "ref_dir": "manbo",   "file": "manbo/01.wav",   "params": {} }
   ]
 }

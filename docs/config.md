@@ -42,24 +42,38 @@ env/
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `FISH_SPEECH_URL` | `http://fish-speech:8080` | Fish Speech API |
-| `FISH_SPEECH_TIMEOUT` | `300` | TTS 요청 타임아웃 (초) — 대본 600자+ 전체 합성이 120초를 초과해 상향 (2026-06-11) |
-| `FISH_SPEECH_TEMPERATURE` | `0.5` | 생성 다양성 (0.7→0.5, 중국어 회귀 방지) |
-| `FISH_SPEECH_REPETITION_PENALTY` | `1.3` | 반복 억제 |
-| `TTS_OUTPUT_FORMAT` | `wav` | 출력 포맷 |
-| `TTS_SAMPLE_RATE` | `44100` | 샘플레이트 |
+| `FISH_SPEECH_URL` | `http://fish-speech:8080` | OpenAudio S1 API (호스트 매핑 포트는 **8082**) |
+| `FISH_SPEECH_TIMEOUT` | `300` | TTS 요청 타임아웃 (초) |
+| `FISH_SPEECH_TEMPERATURE` | `0.8` | 생성 다양성 (S1 기본값, ADR-0005) |
+| `FISH_SPEECH_TOP_P` | `0.8` | nucleus sampling |
+| `FISH_SPEECH_REPETITION_PENALTY` | `1.1` | 반복 억제 |
+| `FISH_SPEECH_NORMALIZE` | `False` | 서버 정규화 비활성 (자체 한국어 정규화 사용) |
+| `FISH_SPEECH_USE_MEMORY_CACHE` | `"on"` | reference_id 인코딩 캐시 |
+| `FISH_SPEECH_CHUNK_LENGTH` | `200` | 서버 청크 길이 |
+| `TTS_OUTPUT_FORMAT` / `TTS_SAMPLE_RATE` | `wav` / `44100` | 출력 포맷·샘플레이트 |
+| `TTS_SPEED` | `1.2` | 후처리 배속 (피치 보존). voices.json params로 per-voice 오버라이드 |
+| `TTS_LOUDNORM_ENABLED` / `_PARAMS` | `True` / `I=-16:TP=-1.5:LRA=11` | EBU R128 음량 정규화 (후 aresample 44100 — concat 호환) |
+| `TTS_MAX_CHARS_PER_REQUEST` | `150` | 초과 시 문장 경계 분할·병합 |
+| `TTS_MAX/MIN_SECS_PER_CHAR` | `0.35` / `0.05` | 길이 검증 상·하한 (비한국어/잘림 감지) |
+| `TTS_EMOTION_ENABLED` | `True` | tts_emotion → 감정 마커 주입 |
+| `TTS_LAUGH_MARKER_ENABLED` | `False` | ㅋㅋ→(laughing) (실험적) |
+| `TTS_SHORT_TEXT_PADDING` | `False` | 짧은 텍스트 패딩 (S1+참조에선 불필요) |
+| `WHISPER_MODEL` / `_DEVICE` / `_COMPUTE_TYPE` | `large-v3` / `cpu` / `int8` | prepare_voice 전사 (CPU, VRAM 무경합) |
 
-**VOICE_PRESETS (voice_key → assets/voices/ 파일명):**
-| voice_key | 파일명 | 설명 |
-|-----------|--------|------|
-| `default` | `korean_man_default.wav` | 기본 남성 내레이터 |
-| `anna` | `voice_preview_anna.mp3` | 여, 친근한 내레이션 |
-| `yura` | `voice_preview_yura.mp3` | 여, 활기찬 대화체 (기본 TTS 보이스) |
-| `han` | `voice_preview_han.mp3` | 남, 자연스러운 대화체 |
-| `krys` | `voice_preview_krys.mp3` | 여, 뉴스/정보 전달형 |
-| `sunny` | `voice_preview_sunny.mp3` | 여, 따뜻한 내레이션 |
-| `yohan` | `voice_preview_yohan.mp3` | 남, 깊이 있는 내레이션 |
-| `manbo` | `voice_preview_manbo.mp3` | 여, 유쾌한 대화체 |
+> `KOREAN_CHARS_PER_SEC=4.0`은 speed 1.2 가정값 — per-voice `speed` 오버라이드는
+> `estimate_tts_duration`/클립 길이 추정을 왜곡하므로 신중히 사용.
+
+**TTS_EMOTION_MARKERS (tts_emotion → S1 마커):**
+gentle→`(soft tone)`, cheerful→`(joyful)`, serious→`(serious)`, sad→`(sad)`,
+whispering→`(whispering)`, neutral→`""`, friendly→`(relaxed)`, surprised→`(surprised)`.
+⚠ 씬타입 키의 `EMOTION_TAGS`와는 다른 축.
+
+**VOICE_PRESETS (voices.json v2): `{key: {label, ref_dir, file, params}}`**
+- `ref_dir`: `assets/voices/<key>/` 폴더 (NN.wav+NN.lab) = fish-speech `reference_id`
+- `file`: 대시보드 sampleUrl(`/api/media/voices/<file>`)·base64 폴백 경로 (`<key>/01.wav`)
+- `params`: per-voice 오버라이드 `{temperature, top_p, speed}` (없으면 전역 기본값)
+- 등록/갱신: `python -m tools.prepare_voice --input <녹음> --key <키> --label <라벨>`
+- 키: default, anna, han, krys, sunny, yohan, yura, manbo
 
 ### 비디오 설정 (LTX-2)
 

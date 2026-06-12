@@ -37,12 +37,18 @@ def run_monitoring_loop():
             health_status = alert_manager.check_health()
 
             # 헬스 상태 요약 출력
+            vram_str = (
+                f"{health_status['gpu_memory_percent']:.1f}"
+                if health_status.get('gpu_memory_percent') is not None
+                else 'N/A'
+            )
             log.info(
-                "CPU: %.1f%% | MEM: %.1f%% | DISK: %.1f%% | GPU: %s°C | DB: %s",
+                "CPU: %.1f%% | MEM: %.1f%% | DISK: %.1f%% | GPU: %s°C VRAM: %s%% | DB: %s",
                 health_status.get('cpu_percent') or 0,
                 health_status.get('memory_percent') or 0,
                 health_status.get('disk_percent') or 0,
                 health_status.get('gpu_temp') or 'N/A',
+                vram_str,
                 'OK' if health_status.get('db_connected') else 'FAIL'
             )
 

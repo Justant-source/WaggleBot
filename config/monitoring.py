@@ -16,6 +16,9 @@ HEALTH_CHECK_INTERVAL: int = int(os.getenv("HEALTH_CHECK_INTERVAL", "300"))  # 5
 # 임계값
 GPU_TEMP_WARNING: int = int(os.getenv("GPU_TEMP_WARNING", "75"))
 GPU_TEMP_CRITICAL: int = int(os.getenv("GPU_TEMP_CRITICAL", "80"))
+# RTX 3090 24GB: TTS ~5GB + Video ~12.7GB = ~17GB 정상 사용 → 85%는 누수 의심 수준
+GPU_VRAM_WARNING: int = int(os.getenv("GPU_VRAM_WARNING", "85"))
+GPU_VRAM_CRITICAL: int = int(os.getenv("GPU_VRAM_CRITICAL", "95"))
 DISK_USAGE_WARNING: int = int(os.getenv("DISK_USAGE_WARNING", "80"))
 DISK_USAGE_CRITICAL: int = int(os.getenv("DISK_USAGE_CRITICAL", "90"))
 MEMORY_USAGE_WARNING: int = int(os.getenv("MEMORY_USAGE_WARNING", "85"))

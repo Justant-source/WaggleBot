@@ -36,6 +36,7 @@ async def _tts_chunk_async(
     scene_type: str = "image_text",
     pre_audio: str | None = None,
     voice_key: str = "default",
+    emotion: str = "",
 ) -> float:
     """문장 TTS 생성. pre_audio가 유효하면 재사용, 없으면 Fish Speech 호출."""
     import asyncio
@@ -54,10 +55,13 @@ async def _tts_chunk_async(
             logger.debug("[layout] TTS 재사용: 프레임=%d %s", idx, pre_path.name)
             return _get_audio_duration(out_path)
 
-    # Fish Speech 신규 생성
+    # Fish Speech 신규 생성 (Phase 5 실패 시 폴백 경로)
     for attempt in range(2):
         try:
-            await fish_synthesize(text=text, scene_type=scene_type, voice_key=voice_key, output_path=out_path)
+            await fish_synthesize(
+                text=text, scene_type=scene_type, voice_key=voice_key,
+                output_path=out_path, emotion=emotion,
+            )
             break
         except Exception:
             if attempt == 0:
@@ -90,7 +94,10 @@ async def _generate_tts_chunks(
             pre_audio = sent.get("audio")
             scene_type = entry.get("type", "image_text")
             chunk_voice = sent.get("voice_override") or voice
-            dur = await _tts_chunk_async(text, frame_idx, output_dir, scene_type, pre_audio, chunk_voice)
+            chunk_emotion = sent.get("tts_emotion", "")
+            dur = await _tts_chunk_async(
+                text, frame_idx, output_dir, scene_type, pre_audio, chunk_voice, chunk_emotion,
+            )
 
             # 제목(intro) 읽기 후 본문 시작 전 숨고르기 삽입
             if scene_type == "intro" and dur > 0:

@@ -111,7 +111,10 @@ def _handle_tts_preview(job: Job) -> dict:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     audio_path = asyncio.run(
-        synthesize(text, voice_key=voice_key, output_path=output_path)
+        synthesize(
+            text, voice_key=voice_key, output_path=output_path,
+            emotion=payload.get("emotion", ""),
+        )
     )
     return {"preview_path": str(audio_path)}
 

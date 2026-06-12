@@ -233,6 +233,24 @@ class AlertManager:
                         msg = f"GPU 온도 경고: {gpu.temperature}°C"
                         self.send_alert(AlertLevel.WARNING, msg)
                         health_status['alerts'].append(msg)
+
+                    # VRAM 사용률 체크 (파이프라인 유휴 중 누수 감지)
+                    vram_pct = health_status['gpu_memory_percent'] or 0
+                    vram_used_gb = gpu.memoryUsed / 1024 if gpu.memoryTotal > 0 else 0
+                    if vram_pct >= settings.GPU_VRAM_CRITICAL:
+                        msg = (
+                            f"VRAM 사용률 CRITICAL: {vram_pct:.1f}% "
+                            f"({vram_used_gb:.1f}GB / {gpu.memoryTotal / 1024:.0f}GB)"
+                        )
+                        self.send_alert(AlertLevel.CRITICAL, msg)
+                        health_status['alerts'].append(msg)
+                    elif vram_pct >= settings.GPU_VRAM_WARNING:
+                        msg = (
+                            f"VRAM 사용률 경고: {vram_pct:.1f}% "
+                            f"({vram_used_gb:.1f}GB / {gpu.memoryTotal / 1024:.0f}GB) — 누수 의심"
+                        )
+                        self.send_alert(AlertLevel.WARNING, msg)
+                        health_status['alerts'].append(msg)
             except Exception:
                 log.exception("Failed to get GPU status")
 
