@@ -161,7 +161,7 @@ worker/
 
 ---
 
-## ⬜ 선택 구현 / 미완료
+## ✅ 선택 구현 완료
 
 ### telegram-bridge (`telegram/`)
 
