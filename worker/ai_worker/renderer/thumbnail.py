@@ -391,13 +391,194 @@ def _draw_icon(
 
 
 # ---------------------------------------------------------------------------
+# 와글 브랜드 썸네일
+# ---------------------------------------------------------------------------
+_W_YELLOW: tuple[int, int, int] = (251, 208, 36)   # #FBD024
+_W_INK: tuple[int, int, int] = (26, 26, 26)         # #1A1A1A
+_W_WHITE: tuple[int, int, int] = (255, 255, 255)
+_W_HEADER_H = 80
+_W_TEXT_ZONE_W = 700    # 좌측 텍스트 영역 너비 (55%)
+_W_IMG_X = 704          # 우측 이미지 영역 시작 x
+_W_PAD = 44             # 텍스트 수평 패딩
+
+
+def _w_font(size: int, font_path: Optional[Path] = None) -> ImageFont.FreeTypeFont:
+    """와글 썸네일용 NotoSansKR-Bold 폰트 로드."""
+    candidates: list[Path] = []
+    if font_path:
+        candidates.append(font_path)
+    if ASSETS_DIR.exists():
+        candidates.extend(ASSETS_DIR.glob("**/NotoSansKR-Bold.ttf"))
+        candidates.extend(ASSETS_DIR.glob("**/NanumGothicBold.ttf"))
+        candidates.extend(ASSETS_DIR.glob("**/NanumGothic*.ttf"))
+    candidates += [
+        Path("/usr/share/fonts/truetype/noto/NotoSansKR-Bold.ttf"),
+        Path("/usr/share/fonts/noto-cjk/NotoSansCJKkr-Bold.otf"),
+        Path("/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"),
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                return ImageFont.truetype(str(p), size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+
+def _w_wrap(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
+    """픽셀 너비 기준 keep-all 줄바꿈."""
+    tmp = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+
+    def width(s: str) -> float:
+        try:
+            return font.getlength(s)
+        except AttributeError:
+            return float(tmp.textbbox((0, 0), s, font=font)[2])
+
+    if width(text) <= max_w:
+        return [text]
+
+    words = text.split()
+    lines: list[str] = []
+    cur = ""
+    for word in words:
+        candidate = f"{cur} {word}" if cur else word
+        if width(candidate) <= max_w:
+            cur = candidate
+        else:
+            if cur:
+                lines.append(cur)
+            # 단어 자체가 너무 길면 글자 단위 분리
+            if width(word) > max_w:
+                chunk = ""
+                for ch in word:
+                    if width(chunk + ch) > max_w and chunk:
+                        lines.append(chunk)
+                        chunk = ch
+                    else:
+                        chunk += ch
+                cur = chunk
+            else:
+                cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def _w_draw_header(canvas: Image.Image, bold_font: ImageFont.FreeTypeFont) -> None:
+    """와글 브랜드 헤더바 (1280×80px, #FBD024)."""
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle([(0, 0), (_THUMB_W, _W_HEADER_H)], fill=_W_YELLOW)
+
+    cy = _W_HEADER_H // 2
+    # 뒤로가기 (←) 선
+    draw.line([(52, cy - 14), (36, cy), (52, cy + 14)], fill=_W_INK, width=5)
+    # 햄버거 (≡)
+    for dy in (-11, 0, 11):
+        draw.line([(_THUMB_W - 68, cy + dy), (_THUMB_W - 38, cy + dy)], fill=_W_INK, width=4)
+
+    # 채널명 "와글"
+    try:
+        ch_font = _w_font(40)
+    except Exception:
+        ch_font = bold_font
+    draw_ch = ImageDraw.Draw(canvas)
+    bbox = draw_ch.textbbox((0, 0), "와글", font=ch_font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw_ch.text(
+        (_THUMB_W // 2 - tw // 2, (_W_HEADER_H - th) // 2),
+        "와글", font=ch_font, fill=_W_INK,
+    )
+
+
+def _generate_waggle(
+    hook_text: str,
+    images: list[str],
+    output_path: Path,
+) -> Path:
+    """와글 브랜드 YouTube 썸네일 (1280×720).
+
+    레이아웃:
+      - 흰 배경 + 노란 헤더 바 (80px)
+      - 좌측(55%) 굵은 검정 훅 텍스트 (최대 3줄, 자동 크기 조절)
+      - 우측(45%) 게시글 이미지 (fill-cover) 또는 노란 패널
+      - 텍스트 아래 노란 액센트 바
+    """
+    canvas = Image.new("RGB", (_THUMB_W, _THUMB_H), _W_WHITE)
+    draw = ImageDraw.Draw(canvas)
+
+    # 우측 이미지
+    right_img: Optional[Image.Image] = None
+    if images:
+        right_img = _download_image(images[0])
+
+    text_max_w = (_W_TEXT_ZONE_W if right_img else _THUMB_W) - _W_PAD * 2
+
+    # 우측 패널 (이미지 or 노란 액센트 컬럼)
+    if right_img:
+        rz_w = _THUMB_W - _W_IMG_X
+        rz_h = _THUMB_H - _W_HEADER_H
+        img_c = _fill_crop(right_img, rz_w, rz_h)
+        canvas.paste(img_c, (_W_IMG_X, _W_HEADER_H))
+    else:
+        # 이미지 없을 때 우측 좁은 노란 패널 (100px)
+        draw.rectangle(
+            [(_THUMB_W - 100, _W_HEADER_H), (_THUMB_W, _THUMB_H)],
+            fill=_W_YELLOW,
+        )
+        text_max_w = (_THUMB_W - 100) - _W_PAD * 2
+
+    # 폰트 크기 자동 결정 (최대 3줄)
+    best_font = _w_font(76)
+    best_lines = _w_wrap(hook_text, best_font, text_max_w)
+    for fs in (68, 60, 52):
+        if len(best_lines) <= 3:
+            break
+        best_font = _w_font(fs)
+        best_lines = _w_wrap(hook_text, best_font, text_max_w)
+    lines = best_lines[:3]
+    font = best_font
+
+    # 텍스트 수직 중앙 배치
+    try:
+        sample_bbox = ImageDraw.Draw(canvas).textbbox((0, 0), "가", font=font)
+        line_h = (sample_bbox[3] - sample_bbox[1]) + 22
+    except Exception:
+        line_h = font.size + 22 if hasattr(font, "size") else 98
+
+    total_text_h = len(lines) * line_h
+    text_area_top = _W_HEADER_H + 30
+    text_area_h = _THUMB_H - _W_HEADER_H - 30
+    start_y = text_area_top + max(0, (text_area_h - total_text_h) // 2)
+
+    for i, line in enumerate(lines):
+        draw.text((_W_PAD, start_y + i * line_h), line, font=font, fill=_W_INK)
+
+    # 노란 액센트 바 (텍스트 아래)
+    accent_y = start_y + total_text_h + 20
+    if accent_y + 8 < _THUMB_H - 40:
+        draw.rectangle(
+            [(_W_PAD, accent_y), (_W_PAD + 180, accent_y + 8)],
+            fill=_W_YELLOW,
+        )
+
+    # 헤더를 마지막에 (이미지 위에 그려지도록)
+    _w_draw_header(canvas, font)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.convert("RGB").save(str(output_path), "JPEG", quality=92)
+    logger.info("와글 썸네일 저장: %s", output_path)
+    return output_path
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 def generate_thumbnail(
     hook_text: str,
     images: list[str],
     output_path: Path,
-    style: str = "dramatic",
+    style: str = "waggle",
     font_path: Optional[Path] = None,
 ) -> Path:
     """YouTube 썸네일 생성 (1280x720).
@@ -406,12 +587,15 @@ def generate_thumbnail(
         hook_text: 썸네일에 표시할 후킹 텍스트
         images: 배경에 사용할 이미지 URL 목록 (첫 번째 사용)
         output_path: 저장 경로 (.jpg)
-        style: 'dramatic' | 'question' | 'funny' | 'news'
-        font_path: 커스텀 폰트 경로 (Optional)
+        style: 'waggle'(기본) | 'dramatic' | 'question' | 'funny' | 'news'
+        font_path: 커스텀 폰트 경로 (Optional, waggle 스타일에서는 무시)
 
     Returns:
         저장된 썸네일 경로
     """
+    if style == "waggle":
+        return _generate_waggle(hook_text, images, output_path)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     cfg = _STYLES.get(style, _STYLES[_DEFAULT_STYLE])

@@ -75,7 +75,7 @@ def compose_thumbnail(
     site_code: str,
     origin_id: str,
     *,
-    style: str = "dramatic",
+    style: str = "waggle",
 ) -> Path:
     """YouTube 썸네일 생성 (1280×720).
 
@@ -84,7 +84,7 @@ def compose_thumbnail(
         images: 배경 이미지 URL 목록
         site_code: 사이트 코드
         origin_id: 게시글 원본 ID
-        style: 'dramatic' | 'question' | 'funny' | 'news'
+        style: 'waggle'(기본) | 'dramatic' | 'question' | 'funny' | 'news'
     Returns:
         생성된 JPG 파일 경로
     """

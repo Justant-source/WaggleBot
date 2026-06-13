@@ -188,24 +188,7 @@ class RobustProcessor:
                 try:
                     images = post.images if isinstance(post.images, list) else []
                     thumb_path = get_thumbnail_path(post.site_code, post.origin_id)
-                    _MOOD_TO_STYLE = {
-                        "humor":       "funny",
-                        "touching":    "dramatic",
-                        "anger":       "dramatic",
-                        "sadness":     "dramatic",
-                        "horror":      "dramatic",
-                        "info":        "news",
-                        "controversy": "dramatic",
-                        "daily":       "funny",
-                        "shock":       "dramatic",
-                        # legacy keys
-                        "funny": "funny",
-                        "shocking": "dramatic",
-                        "serious": "news",
-                        "heartwarming": "dramatic",
-                    }
-                    thumb_style = _MOOD_TO_STYLE.get(script.mood, "dramatic")
-                    generate_thumbnail(script.hook, images, thumb_path, style=thumb_style)
+                    generate_thumbnail(script.hook, images, thumb_path, style="waggle")
                     content = session.query(Content).filter(Content.post_id == post.id).first()
                     if content is not None:
                         upload_meta = dict(content.upload_meta or {})
@@ -869,23 +852,6 @@ class RobustProcessor:
         파이프라인 병렬화에서 독립적으로 호출되는 2단계.
         완료 시 post.status → PREVIEW_RENDERED.
         """
-        _MOOD_TO_STYLE = {
-            "humor":       "funny",
-            "touching":    "dramatic",
-            "anger":       "dramatic",
-            "sadness":     "dramatic",
-            "horror":      "dramatic",
-            "info":        "news",
-            "controversy": "dramatic",
-            "daily":       "funny",
-            "shock":       "dramatic",
-            # legacy keys
-            "funny": "funny",
-            "shocking": "dramatic",
-            "serious": "news",
-            "heartwarming": "dramatic",
-        }
-
         with SessionLocal() as session:
             post = session.query(Post).filter_by(id=post_id).first()
             if post is None:
@@ -954,8 +920,7 @@ class RobustProcessor:
             try:
                 images = post.images if isinstance(post.images, list) else []
                 thumb_path = get_thumbnail_path(post.site_code, post.origin_id)
-                thumb_style = _MOOD_TO_STYLE.get(script.mood, "dramatic")
-                generate_thumbnail(script.hook, images, thumb_path, style=thumb_style)
+                generate_thumbnail(script.hook, images, thumb_path, style="waggle")
                 content = session.query(Content).filter_by(post_id=post_id).first()
                 if content is not None:
                     upload_meta = dict(content.upload_meta or {})
