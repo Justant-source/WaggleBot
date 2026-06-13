@@ -1174,7 +1174,9 @@ class SceneDirector:
         self.post_id = post_id
         self.image_cache_dir = image_cache_dir
         self.narrator_voice = narrator_voice   # 사연자 내레이터 voice_key
-        self._character_voices: dict[str, str] = {}  # character_label → voice_key
+        self._character_voices: dict[str, str] = {}       # character_label → voice_key
+        self._comment_author_voices: dict[str, str] = {}  # author → voice_key
+        self._chat_sender_voices: dict[str, str] = {}     # sender → voice_key
         # 실제 댓글 DB 객체 목록 (Comment 모델). LLM 우회로 직접 전달받아 댓글씬 생성.
         self._db_comments: list = list(comments) if comments else []
         # LLM이 추출한 채팅 메시지 목록. [{"sender":str,"text":str,"is_mine":bool}]
@@ -1339,6 +1341,10 @@ class SceneDirector:
             if chat_rule.get("enabled", True):
                 per_scene: int = int(chat_rule.get("max_messages_per_scene", 4))
                 chat_dwell: float = float(chat_rule.get("dwell_sec", 3.5))
+                # 배치 경계와 무관하게 발신자별 일관된 목소리 사전 배정
+                for _m in self._chat_messages:
+                    _m.setdefault("voice", self._assign_chat_voice(
+                        _m.get("sender") or "상대방", bool(_m.get("is_mine", False))))
                 for i in range(0, len(self._chat_messages), per_scene):
                     batch = self._chat_messages[i : i + per_scene]
                     scenes.append(SceneDecision(
@@ -1375,6 +1381,7 @@ class SceneDirector:
                         "content": getattr(c, "content", "") or "",
                         "likes": getattr(c, "likes", 0) or 0,
                         "is_best": (i == 0),  # 추천 1위 → BEST
+                        "voice": self._assign_comment_voice(getattr(c, "author", None) or "익명"),
                     }
                     for i, c in enumerate(sorted_cmts)
                 ]
@@ -1598,6 +1605,34 @@ class SceneDirector:
         voice = pick_voice(gender, age, exclude=used)
         self._character_voices[label] = voice
         logger.debug("[director] character '%s' → voice=%s", label, voice)
+        return voice
+
+    def _assign_comment_voice(self, author: str) -> str | None:
+        """댓글 작성자별 voice를 결정적으로 배정 (동일 작성자 = 동일 목소리)."""
+        key = author or "익명"
+        if key in self._comment_author_voices:
+            return self._comment_author_voices[key]
+        if self.comment_voices:
+            voice: str = self.comment_voices[(hash(key) & 0x7FFFFFFF) % len(self.comment_voices)]
+        else:
+            voice = self.narrator_voice  # type: ignore[assignment]
+        self._comment_author_voices[key] = voice
+        logger.debug("[director] comment author '%s' → voice=%s", key, voice)
+        return voice
+
+    def _assign_chat_voice(self, sender: str, is_mine: bool) -> str | None:
+        """채팅: 내 메시지=내레이터, 상대=발신자별 일관된 별도 목소리."""
+        if is_mine:
+            return self.narrator_voice  # "나" = 사연자 내레이터 목소리
+        key = sender or "상대방"
+        if key in self._chat_sender_voices:
+            return self._chat_sender_voices[key]
+        from ai_worker.script.voice_assigner import pick_voice
+        used = ({self.narrator_voice} if self.narrator_voice else set()) \
+            | set(self._chat_sender_voices.values()) | set(self._character_voices.values())
+        voice = pick_voice("", "", exclude=used)
+        self._chat_sender_voices[key] = voice
+        logger.debug("[director] chat sender '%s' → voice=%s", key, voice)
         return voice
 
     def _make_scene(

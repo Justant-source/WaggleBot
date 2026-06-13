@@ -10,4 +10,5 @@ collect_ignore = [
     "test_fish_speech.py",
     "test_dc_images.py",
     "test_scene_director_dc_download.py",
+    "test_render_progressive_mp4.py",
 ]

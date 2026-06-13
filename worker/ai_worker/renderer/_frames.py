@@ -902,10 +902,12 @@ def _render_comments_frame(
     font_dir: Path,
     out_path: Path,
     content_top: int,
+    reveal_count: int | None = None,
 ) -> Path:
     """씬 comments — 정렬바 + 커뮤니티 댓글 세로 리스트.
 
     comment_items: [{"author":str, "content":str, "likes":int, "is_best":bool}]
+    reveal_count: 누적 공개 개수(1~N). None이면 전체 표시(레거시 동작).
     """
     from ai_worker.renderer.layout import _load_font
 
@@ -990,14 +992,29 @@ def _render_comments_frame(
     # ── 댓글 행 ────────────────────────────────────────────────────────────
     text_x = pad_x + av_d + av_gap
     text_area_w = cw - text_x - pad_x
-
     av_font_size = max(14, int(av_d * 0.42))
 
-    for c_i, item in enumerate(comment_items):
-        # 화면 하단 여백 초과 방지 — 최소 1행 이상은 표시
-        if c_i > 0 and y + row_pad_top + nick_lh + row_pad_bot > ch - 60:
-            break
+    # 노출 범위 결정 (reveal_count=None이면 전체)
+    visible = comment_items if reveal_count is None else comment_items[:reveal_count]
 
+    # 최신 항목이 항상 보이도록 오래된 항목부터 drop (bottom-anchor window)
+    def _row_h(item: dict) -> int:
+        """댓글 1행의 픽셀 높이 측정 (draw 없이)."""
+        content_text = item.get("content", "")
+        c_lines = _wrap_korean(content_text, text_font, text_area_w, keep_all=True)
+        n_lines = min(len(c_lines), text_max_lines)
+        row_inner = nick_lh + 8 + (n_lines * text_lh) + 8 + footer_lh
+        return row_pad_top + row_inner + row_pad_bot + divider_th
+
+    heights = [_row_h(it) for it in visible]
+    band_h = (ch - 60) - y  # 정렬바 구분선 아래 ~ 하단 여백
+
+    start = 0
+    while sum(heights[start:]) > band_h and start < len(visible) - 1:
+        start += 1
+    draw_items = visible[start:]
+
+    for c_i, item in enumerate(draw_items):
         row_y = y + row_pad_top
 
         # 아바타 원
@@ -1078,12 +1095,14 @@ def _render_chat_frame(
     font_dir: Path,
     out_path: Path,
     content_top: int,
+    reveal_count: int | None = None,
 ) -> Path:
     """카카오톡 스타일 대화 버블 씬.
 
     messages: [{"sender":str, "text":str, "is_mine":bool}]
       - is_mine=True  → 우측 노란 버블 (#FFE100)
       - is_mine=False → 좌측 회색 버블 + 아바타 + sender 이름
+    reveal_count: 누적 공개 개수(1~N). None이면 전체 표시.
     """
     from ai_worker.renderer.layout import _load_font
 
@@ -1126,14 +1145,52 @@ def _render_chat_frame(
         "#E74C3C", "#1ABC9C", "#F39C12", "#2980B9",
     ]
 
+    bottom_limit: int = CANVAS_H - 80
+
+    # ── bottom-anchor 슬라이딩 윈도우 ──────────────────────────────────────
+    visible = messages if reveal_count is None else messages[:reveal_count]
+
+    def _msg_h(msg: dict, prev_s: str | None) -> int:
+        """채팅 메시지 1개의 픽셀 높이 측정 (draw 없이)."""
+        sender = msg.get("sender") or "상대방"
+        text = (msg.get("text") or "").strip()
+        is_mine = bool(msg.get("is_mine", False))
+        if not text:
+            return 0
+        inner_w = (mine_mw if is_mine else other_mw) - (mine_px if is_mine else other_px) * 2
+        wrapped = _wrap_korean(text, font_msg, inner_w, keep_all=True) or [text[:30]]
+        bubble_inner_h = len(wrapped) * line_h
+        py = mine_py if is_mine else other_py
+        bubble_h = bubble_inner_h + py * 2
+        h = 0
+        if prev_s is not None and sender != prev_s:
+            h += group_gap - msg_gap
+        if not is_mine and sender != prev_s:
+            h += name_fs + 6
+        h += bubble_h + msg_gap
+        return h
+
+    heights: list[int] = []
+    ps: str | None = None
+    for _m in visible:
+        heights.append(_msg_h(_m, ps))
+        if (_m.get("text") or "").strip():
+            ps = _m.get("sender") or "상대방"
+
+    band_h = bottom_limit - (content_top + pad_top)
+
+    start = 0
+    while sum(heights[start:]) > band_h and start < len(visible) - 1:
+        start += 1
+    draw_msgs = visible[start:]
+
     img = base_frame.copy()
     draw = ImageDraw.Draw(img)
 
     y: int = content_top + pad_top
-    bottom_limit: int = CANVAS_H - 80
-    prev_sender: str | None = None
+    prev_sender: str | None = None  # 윈도우 첫 메시지가 항상 발신자 이름 표시
 
-    for msg in messages:
+    for msg in draw_msgs:
         sender: str = msg.get("sender") or "상대방"
         text: str   = (msg.get("text") or "").strip()
         is_mine: bool = bool(msg.get("is_mine", False))

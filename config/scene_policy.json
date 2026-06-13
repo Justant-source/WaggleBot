@@ -108,18 +108,18 @@
       "layout": "chat",
       "enabled": true,
       "max_messages_per_scene": 4,
-      "narrate": false,
+      "narrate": true,
       "dwell_sec": 3.5,
-      "note": "is_mine=true→우측 노란 버블, false→좌측 회색 버블+아바타. sent_idx=None(무음 체류)"
+      "note": "is_mine=true→우측 노란 버블, false→좌측 회색 버블+아바타. 메시지별 TTS 낭독, 화자별 다른 목소리"
     },
     "comments": {
       "description": "실제 커뮤니티 댓글 리스트 화면 — DB 원본 top-N, LLM 우회",
       "layout": "comments",
       "enabled": true,
       "top_n": 5,
-      "narrate": false,
+      "narrate": true,
       "dwell_sec": 4.0,
-      "note": "likes 내림차순 정렬. 1위 is_best=true. sent_idx=None(무음 체류)"
+      "note": "likes 내림차순 정렬. 1위 is_best=true. 댓글별 TTS 낭독, 작성자별 다른 목소리"
     }
   },
 

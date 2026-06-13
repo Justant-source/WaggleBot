@@ -291,25 +291,55 @@ def _scenes_to_plan_and_sentences(
             plan.append({"type": "outro", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "comments":
-            # 무음 체류 씬 — TTS 없이 dwell_sec 동안 정지 (sent_idx=None)
-            dwell = getattr(scene, "dwell_sec", 4.0)
-            plan.append({
-                "type": "comments",
-                "sent_idx": None,
-                "img_idx": None,
-                "scene_idx": scene_i,
-                "dwell_sec": float(dwell),
-            })
+            # 항목당 1개 TTS 엔트리 — text_only 패턴과 동일하게 점진적 낭독
+            items = getattr(scene, "comment_items", None) or []
+            for k, item in enumerate(items):
+                content = (item.get("content") or "").strip()
+                if not content:
+                    # 빈 댓글 — TTS 엔트리 생략(0-dur 방지), item_idx(k)는 유지
+                    continue
+                sent_idx = len(sentences)
+                sentences.append({
+                    "text": content,
+                    "section": "comment",
+                    "audio": item.get("audio"),
+                    "voice_override": item.get("voice"),
+                    "block_type": "comment",
+                    "author": item.get("author"),
+                    "tts_emotion": "",
+                })
+                plan.append({
+                    "type": "comments",
+                    "sent_idx": sent_idx,
+                    "img_idx": None,
+                    "scene_idx": scene_i,
+                    "item_idx": k,  # 0..k 누적 공개 인덱스 (전체 리스트 기준)
+                })
 
         elif scene.type == "chat":
-            dwell = getattr(scene, "dwell_sec", 3.5)
-            plan.append({
-                "type": "chat",
-                "sent_idx": None,
-                "img_idx": None,
-                "scene_idx": scene_i,
-                "dwell_sec": float(dwell),
-            })
+            # 항목당 1개 TTS 엔트리 — 시간 순서대로 점진적 낭독
+            msgs = getattr(scene, "chat_messages", None) or []
+            for k, msg in enumerate(msgs):
+                text = (msg.get("text") or "").strip()
+                if not text:
+                    continue
+                sent_idx = len(sentences)
+                sentences.append({
+                    "text": text,
+                    "section": "body",
+                    "audio": msg.get("audio"),
+                    "voice_override": msg.get("voice"),
+                    "block_type": "chat",
+                    "author": msg.get("sender"),
+                    "tts_emotion": "",
+                })
+                plan.append({
+                    "type": "chat",
+                    "sent_idx": sent_idx,
+                    "img_idx": None,
+                    "scene_idx": scene_i,
+                    "item_idx": k,  # 0..k 누적 공개 인덱스
+                })
 
     return sentences, plan, images
 
@@ -529,19 +559,23 @@ def _render_pipeline(
                 )
 
             elif scene_type == "comments":
-                # 댓글 씬: SceneDecision에서 comment_items 추출
+                # 댓글 씬: SceneDecision에서 comment_items 추출, reveal_count로 누적 공개
                 scene = _get_scene_for_entry(entry, sentences, scenes_list)
                 items = getattr(scene, "comment_items", None) if scene else None
+                reveal = entry.get("item_idx")
                 _render_comments_frame(
                     base_frame, items or [], layout, font_dir, frame_path, content_top,
+                    reveal_count=(reveal + 1) if reveal is not None else None,
                 )
 
             elif scene_type == "chat":
-                # 채팅 버블 씬: SceneDecision에서 chat_messages 추출
+                # 채팅 버블 씬: SceneDecision에서 chat_messages 추출, reveal_count로 누적 공개
                 scene = _get_scene_for_entry(entry, sentences, scenes_list)
                 msgs = getattr(scene, "chat_messages", None) if scene else None
+                reveal = entry.get("item_idx")
                 _render_chat_frame(
                     base_frame, msgs or [], layout, font_dir, frame_path, content_top,
+                    reveal_count=(reveal + 1) if reveal is not None else None,
                 )
 
             frame_paths.append(frame_path)
