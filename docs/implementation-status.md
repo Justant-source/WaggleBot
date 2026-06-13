@@ -1,6 +1,6 @@
 # WaggleBot — 구현 현황
 
-> **last-verified:** 2026-06-12 (crawler-sites-and-alerts)
+> **last-verified:** 2026-06-13 (layout-v3-and-multi-voice)
 > **scope:** 구현 완료·미완료 현황, 버그 픽스 이력
 
 현재 코드베이스의 구현 완료/미완료 상태 정리. (2026-06-11 기준)
@@ -248,6 +248,45 @@ telegram/
 
 - **신규 크롤러 3종**: `instiz.py`(인스티즈 실시간 베스트), `theqoo.py`(더쿠 HOT, XE 기반), `mlbpark.py`(MLB파크 불펜+자유게시판). `@CrawlerRegistry.register()` 플러그인 패턴 준수 — `ENABLED_CRAWLERS`에 추가하면 즉시 동작.
 - **Telegram 트레이 알림**: `BaseCrawler._notify_tray()` 신규. 신규 게시글 저장 시 점수 ≥ `TELEGRAM_ALERT_THRESHOLD`(기본 100점) 또는 자동승인이면 telegram-bridge hook(`:3847/hook`)에 `notification` 이벤트 POST. `TELEGRAM_CRAWL_ALERT=false`(기본)로 비활성, `.env`에서 `true`로 전환. `docker-compose.yml` crawler 서비스에 환경변수 3개 추가.
+
+### 크롤러 4종 파서 수정 (2026-06-13)
+
+- **dcinside.py**: 출처 regex greedy 변경 + `[원본 보기]` 제거 + 이미지 전용 글 보완 로직
+- **instiz.py**: Brotli 압축 미지원 수정 + parse_post 셀렉터 교정
+- **mlbpark.py**: tbl_type01/t_left/view_context/reply_list 셀렉터 교정
+- **theqoo.py**: Rhymix HTML 구조 대응 + 댓글 AJAX API 교체 (`dispTheqooContentCommentListTheqoo`)
+- **crawler.py**: Accept-Encoding에서 `br` 제거(brotli 패키지 미설치 환경 대비)
+- `test_crawlers_e2e.py` E2E 테스트 추가
+
+### LLM JSON 파싱 견고화 + DECLINED 분기 (2026-06-13)
+
+- `transport.py` `extract_json_object`: 코드 펜스 제거 + 모든 `{` 위치에서 raw_decode — 프록시가 ```json 펜스·prose를 붙이는 경우 hook 누락 ValueError → FAILED를 방지
+- `LLMContentRefusalError` 신규 — 콘텐츠 거부는 DECLINED로 분기(재시도 차단)
+- `main.py` `_mark_post_declined` 신규; llm_tts_worker에서 거부 예외 포착 → DECLINED 마킹
+- `scene_director` max_tokens 2048→4096 (씬 다수 잘림 방지)
+- `test_llm_json_robust.py` 신규
+
+### 다화자 TTS 자동 배정 (2026-06-13)
+
+- `voices.json` v3: gender/age_range 메타데이터 + 음성 24개(19개 신규)
+- `voice_assigner.py` 신규: `pick_voice(gender, age, exclude)` — 성별 우선·연령 근접 선택
+- `chunker.py`: narrator_gender/age + speaker/character 화자 태깅 스키마 추가
+- `ScriptData.narrator_voice` 필드 추가 — `llm_tts_stage` → `render_stage` SceneDirector까지 전달
+- `content_processor.py`·`processor.py` 양쪽 SceneDirector에 narrator_voice 배선
+
+### 와글 브랜드 숏폼 레이아웃 v3 (2026-06-13)
+
+Claude Design 핸드오프 기반으로 렌더러 전면 교체. 컨테이너 PNG 테스트 ALL PASS.
+
+| 항목 | 내용 |
+|------|------|
+| **P1 핵심 비주얼** | 옐로우 헤더 `#FBD024` h150 + 코드드로잉 제목블록(메타줄·구분선) + 굵은 검정 자막(흐림 제거) + 자연비율 contain 이미지 |
+| **P2 아웃트로** | 마스코트(PIL 코드드로잉) + 참여유도 질문 5종 + 댓글입력창 목업 (구독유도 제거) |
+| **P3 영상 자연비율** | `_render_video_segment` ffprobe → contain 계산 → `force_original_aspect_ratio=decrease` |
+| **P4 댓글 씬** | `SceneType="comments"` 신규 + `comment_items` 필드 + DB 원본 likes 직접 전달 + `_render_comments_frame` |
+| **기타** | `_title_block_bottom_y()` 순수헬퍼(가변 제목 높이 일원화) · `_fmt_count`/`_relative_time` 유틸 |
+
+> ⚠ **P5 대화 캡처(아이폰/카톡 버블 렌더러)** — 별도 후속 세션에서 구현 예정.
 
 ## 다음 개선 우선순위
 
