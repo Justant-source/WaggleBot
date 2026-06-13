@@ -8,11 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import type { LlmLog } from '@/lib/types'
 import { Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 
-const CALL_TYPES = [
-  'chunk', 'generate_script', 'scene_director', 'video_prompt',
-  'translate', 'comment_summarize', 'feedback',
-]
-
 function LogRow({ log }: { log: LlmLog }) {
   const [expanded, setExpanded] = useState(false)
   const hasDetail = log.promptText || log.rawResponse
@@ -72,8 +67,11 @@ export default function LlmLogsPage() {
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [callTypes, setCallTypes] = useState<string[]>([])
   const [callTypeFilter, setCallTypeFilter] = useState<string>('all')
   const [successFilter, setSuccessFilter] = useState<string>('all')
+
+  useEffect(() => { llmLogsApi.callTypes().then(setCallTypes).catch(() => {}) }, [])
 
   useEffect(() => {
     setPage(0)
@@ -104,7 +102,7 @@ export default function LlmLogsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">전체 callType</SelectItem>
-              {CALL_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              {callTypes.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={successFilter} onValueChange={setSuccessFilter}>

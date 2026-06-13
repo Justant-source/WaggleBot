@@ -7,6 +7,8 @@ import org.springframework.data.domain.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/llm-logs")
 @RequiredArgsConstructor
@@ -35,6 +37,11 @@ public class LlmLogController {
                 : cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
         }, pageable);
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/call-types")
+    public ResponseEntity<List<String>> callTypes() {
+        return ResponseEntity.ok(logRepo.findDistinctCallTypes());
     }
 
     @GetMapping("/{id}")
