@@ -310,6 +310,8 @@ def _load_voice_presets() -> dict:
                     "ref_dir": v.get("ref_dir"),     # None이면 폴더 기반 클로닝 미사용
                     "file": v.get("file"),           # 레거시 평면 파일 / sampleUrl 경로
                     "params": v.get("params", {}),
+                    "gender": v.get("gender", ""),        # "male" | "female" | ""
+                    "age_range": v.get("age_range", []),  # [min_age, max_age]
                 }
             if presets:
                 return presets

@@ -1,14 +1,31 @@
 {
-  "version": 2,
-  "_comment": "음성 프리셋 v2. ref_dir=assets/voices/ 하위 폴더(=fish-speech reference_id, NN.wav+NN.lab). file=대시보드 sampleUrl·base64 폴백 경로. params=per-voice 오버라이드(temperature/top_p/speed). worker/tools/prepare_voice.py로 등록/갱신.",
+  "version": 3,
+  "_comment": "음성 프리셋 v3. ref_dir=assets/voices/ 하위 폴더(=fish-speech reference_id, NN.wav+NN.lab). gender=male|female|neutral. age_range=[min,max]. worker/tools/prepare_voice.py로 등록/갱신.",
   "voices": [
-    { "key": "default", "label": "기본 남성 내레이터",        "ref_dir": "default", "file": "default/01.wav", "params": {} },
-    { "key": "anna",    "label": "Anna (여성, 친근한 내레이션)", "ref_dir": "anna",    "file": "anna/01.wav",    "params": {} },
-    { "key": "han",     "label": "Han (남성, 차분한 내레이션)",  "ref_dir": "han",     "file": "han/01.wav",     "params": {} },
-    { "key": "krys",    "label": "Krys (여성, 명랑한 내레이션)", "ref_dir": "krys",    "file": "krys/01.wav",    "params": {} },
-    { "key": "sunny",   "label": "Sunny (여성, 밝고 energetic)", "ref_dir": "sunny",   "file": "sunny/01.wav",   "params": {} },
-    { "key": "yohan",   "label": "Yohan (남성, 젊고 활기찬)",    "ref_dir": "yohan",   "file": "yohan/01.wav",   "params": {} },
-    { "key": "yura",    "label": "Yura (여성, 감성적 내레이션)",  "ref_dir": "yura",    "file": "yura/01.wav",    "params": {} },
-    { "key": "manbo",   "label": "Manbo (남성, 코믹한 내레이션)", "ref_dir": "manbo",   "file": "manbo/01.wav",   "params": {} }
+    { "key": "default",   "label": "기본 남성 내레이터",              "gender": "male",   "age_range": [43, 47], "ref_dir": "default",   "file": "default/01.wav",   "params": {} },
+    { "key": "anna",      "label": "Anna (여성, 친근한 내레이션)",      "gender": "female", "age_range": [33, 37], "ref_dir": "anna",      "file": "anna/01.wav",      "params": {} },
+    { "key": "krys",      "label": "Krys (여성, 뉴스/정보 전달형)",     "gender": "female", "age_range": [43, 47], "ref_dir": "krys",      "file": "krys/01.wav",      "params": {} },
+    { "key": "sunny",     "label": "Sunny (여성, 밝고 energetic)",      "gender": "female", "age_range": [30, 34], "ref_dir": "sunny",     "file": "sunny/01.wav",     "params": {} },
+    { "key": "yohan",     "label": "Yohan (남성, 젊고 활기찬)",          "gender": "male",   "age_range": [36, 39], "ref_dir": "yohan",     "file": "yohan/01.wav",     "params": {} },
+
+    { "key": "anna_kim",  "label": "Anna Kim (여성, 부드럽고 차분)",    "gender": "female", "age_range": [23, 27], "ref_dir": "anna_kim",  "file": "anna_kim/01.wav",  "params": {} },
+    { "key": "blondie",   "label": "Blondie (여성, 라디오호스트 톤)",    "gender": "female", "age_range": [20, 24], "ref_dir": "blondie",   "file": "blondie/01.wav",   "params": {} },
+    { "key": "callie",    "label": "Callie (여성, 발랄하고 친근)",       "gender": "female", "age_range": [30, 34], "ref_dir": "callie",    "file": "callie/01.wav",    "params": {} },
+    { "key": "christian", "label": "Christian (남성, 다이나믹한 내레이션)","gender": "male",  "age_range": [43, 47], "ref_dir": "christian", "file": "christian/01.wav", "params": {} },
+    { "key": "deep_lax",  "label": "Deep Lax (남성, 중후한 동기부여)",    "gender": "male",   "age_range": [50, 54], "ref_dir": "deep_lax",  "file": "deep_lax/01.wav",  "params": {} },
+    { "key": "han",       "label": "Han (여성, 자연스러운 대화체)",       "gender": "female", "age_range": [30, 34], "ref_dir": "han",       "file": "han/01.wav",       "params": {} },
+    { "key": "hope",      "label": "Hope (여성, 명확하고 카리스마)",      "gender": "female", "age_range": [43, 47], "ref_dir": "hope",      "file": "hope/01.wav",      "params": {} },
+    { "key": "ivanna",    "label": "Ivanna (여성, 캐주얼하고 다재다능)",  "gender": "female", "age_range": [40, 44], "ref_dir": "ivanna",    "file": "ivanna/01.wav",    "params": {} },
+    { "key": "krishna",   "label": "Krishna (남성, 에너지틱하고 표현력)", "gender": "male",   "age_range": [36, 39], "ref_dir": "krishna",   "file": "krishna/01.wav",   "params": {} },
+    { "key": "lucy",      "label": "Lucy (여성, 발랄하고 캐주얼)",        "gender": "female", "age_range": [36, 39], "ref_dir": "lucy",      "file": "lucy/01.wav",      "params": {} },
+    { "key": "manbo",     "label": "Manbo (남성, 격려하고 명확)",         "gender": "male",   "age_range": [43, 47], "ref_dir": "manbo",     "file": "manbo/01.wav",     "params": {} },
+    { "key": "manu",      "label": "Manu (남성, 부드럽고 차분)",          "gender": "male",   "age_range": [36, 39], "ref_dir": "manu",      "file": "manu/01.wav",      "params": {} },
+    { "key": "miguel",    "label": "Miguel (남성, 깊고 웅장한 목소리)",   "gender": "male",   "age_range": [55, 59], "ref_dir": "miguel",    "file": "miguel/01.wav",    "params": {} },
+    { "key": "min_jun",   "label": "Min-Jun (남성, 차분하고 절제된)",     "gender": "male",   "age_range": [43, 47], "ref_dir": "min_jun",   "file": "min_jun/01.wav",   "params": {} },
+    { "key": "norah",     "label": "Norah (여성, 따뜻하고 친절)",         "gender": "female", "age_range": [46, 49], "ref_dir": "norah",     "file": "norah/01.wav",     "params": {} },
+    { "key": "tara",      "label": "Tara (여성, 대화체적이고 표현력)",    "gender": "female", "age_range": [33, 37], "ref_dir": "tara",      "file": "tara/01.wav",      "params": {} },
+    { "key": "theo",      "label": "Theo (남성, 따뜻하고 부드러운)",      "gender": "male",   "age_range": [43, 47], "ref_dir": "theo",      "file": "theo/01.wav",      "params": {} },
+    { "key": "yohan_koo", "label": "Yohan Koo (남성, 격려하고 청아한)",   "gender": "male",   "age_range": [36, 39], "ref_dir": "yohan_koo", "file": "yohan_koo/01.wav", "params": {} },
+    { "key": "yura",      "label": "Yura (여성, 활기찬 대화체)",          "gender": "female", "age_range": [26, 29], "ref_dir": "yura",      "file": "yura/01.wav",      "params": {} }
   ]
 }

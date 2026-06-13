@@ -51,13 +51,17 @@ def build_chunking_system(*, extended: bool = False) -> str:
     extended_fields = (
         f'  "title_suggestion": "YouTube 쇼츠 제목 (50자 이내)",\n'
         f'  "tags": ["태그1", "태그2", "태그3"],\n'
-        f'  "mood": "humor | touching | anger | sadness | horror | info | controversy | daily | shock 중 하나"\n'
+        f'  "mood": "humor | touching | anger | sadness | horror | info | controversy | daily | shock 중 하나",\n'
+        f'  "narrator_gender": "male | female",\n'
+        f'  "narrator_age": "10s | 20s | 30s | 40s | 50s | 60s"\n'
         if extended else ""
     )
     example_extended = (
         '  "title_suggestion": "내 주차자리 뺏은 옆집의 충격 결말",\n'
         '  "tags": ["주차빌런", "아파트", "사이다"],\n'
-        '  "mood": "controversy"\n'
+        '  "mood": "controversy",\n'
+        '  "narrator_gender": "female",\n'
+        '  "narrator_age": "30s"\n'
         if extended else ""
     )
 
@@ -180,6 +184,9 @@ def build_chunking_system(*, extended: bool = False) -> str:
         "- 등장인물 호칭은 처음 소개한 표현을 끝까지 유지하세요. "
         '"남친" → "그 남자" → "그분"처럼 표류하면 시청자가 인물을 놓칩니다. '
         "예외: 감정 전환 연출로 호칭을 의도적으로 바꾸는 것은 1회만 허용 (예: 배신 장면 이후 \"남친\" → \"그 인간\").\n"
+        "- **화자 태깅 (다중 음성)**: 본문 중 다른 인물의 **직접 발화**(카톡, 대화, 인용문)는 별도 body 항목으로 분리하고 "
+        '`"speaker": "character"`, `"character_label"`, `"character_gender"`, `"character_age"` 4개 필드를 추가하세요. '
+        "내레이터가 서술하는 문장은 speaker 생략(기본 narrator). 같은 인물은 동일 character_label을 반드시 사용하세요.\n"
         "- mood 판정 (위에서부터 순서대로 처음 해당하는 것 선택):\n"
         "  ① 공포·소름·미스터리가 핵심 → horror\n"
         "  ② 반전·믿기 힘든 사실이 핵심 → shock\n"
@@ -198,7 +205,8 @@ def build_chunking_system(*, extended: bool = False) -> str:
         '  "body": [\n'
         '    {"line_count": 2, "lines": ["20자 이하 줄 1", "20자 이하 줄 2"]},\n'
         '    {"line_count": 1, "lines": ["20자 이하 단일 줄"]},\n'
-        '    {"line_count": 1, "lines": ["닉네임: 댓글 내용"], "type": "comment"}\n'
+        '    {"line_count": 1, "lines": ["닉네임: 댓글 내용"], "type": "comment"},\n'
+        '    {"line_count": 1, "lines": ["대사 내용"], "speaker": "character", "character_label": "등장인물명(예:남자친구)", "character_gender": "male|female", "character_age": "20s|30s|..."}\n'
         '  ],\n'
         f'  "closer": "마무리 멘트 (최대 {MAX_BODY_CHARS}자)",\n'
         f"{extended_fields}"
@@ -408,6 +416,13 @@ async def chunk_with_llm(
                 error_message=error_msg,
                 duration_ms=timer.elapsed_ms,
             )
+
+    # LLM이 JSON을 반환하지 않은 경우 (콘텐츠 거부 또는 파싱 불가)
+    if not result:
+        from ai_worker.llm.transport import LLMContentRefusalError
+        raise LLMContentRefusalError(
+            "LLM이 유효한 JSON 대본을 반환하지 않음 — 콘텐츠 거부 또는 응답 파싱 실패"
+        )
 
     # 필수 키 검증
     for key in ("hook", "body", "closer"):
