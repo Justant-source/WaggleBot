@@ -30,6 +30,9 @@ public interface PostRepository extends JpaRepository<Post, Long>, JpaSpecificat
     @Query("SELECT COUNT(p) FROM Post p WHERE p.status = :status AND p.updatedAt > :since")
     long countByStatusAndUpdatedAtAfter(@Param("status") PostStatus status, @Param("since") LocalDateTime since);
 
+    @Query("SELECT DISTINCT p.siteCode FROM Post p WHERE p.siteCode IS NOT NULL ORDER BY p.siteCode")
+    List<String> findDistinctSiteCodes();
+
     @Transactional
     @Modifying
     @Query("UPDATE Post p SET p.status = 'APPROVED', p.retryCount = p.retryCount + 1, p.lastError = NULL WHERE p.id = :id")

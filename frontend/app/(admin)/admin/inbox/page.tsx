@@ -18,8 +18,6 @@ import { useInboxStore } from '@/lib/store/inboxStore'
 import { usePollingJob } from '@/lib/hooks/usePollingJob'
 import { Loader2, RefreshCw, CheckCheck, X, Image as ImageIcon, Search, Sparkles, XCircle } from 'lucide-react'
 
-const SITE_CODES = ['nate_pann', 'bobaedream', 'dcinside', 'fmkorea']
-
 interface PostStats { views?: number; likes?: number; comments_count?: number }
 
 function getTier(score: number) {
@@ -48,6 +46,7 @@ function apiErr(e: any): string {
 
 export default function InboxPage() {
   const [data, setData] = useState<{ posts: Post[]; total: number; counts: { tier1: number; tier2: number; tier3: number } } | null>(null)
+  const [siteCodes, setSiteCodes] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [crawlJobId, setCrawlJobId] = useState<number | null>(null)
   const [detailIdx, setDetailIdx] = useState<number | null>(null)
@@ -87,6 +86,7 @@ export default function InboxPage() {
     finally { setLoading(false) }
   }
 
+  useEffect(() => { inboxApi.sites().then(setSiteCodes).catch(() => {}) }, [])
   useEffect(() => { load() }, [page, siteFilter, tierFilter, activeQ, sort, todayOnly, recommendedOnly])
 
   const handleFilterChange = () => {
@@ -326,7 +326,7 @@ export default function InboxPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">전체 사이트</SelectItem>
-            {SITE_CODES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            {siteCodes.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={tierFilter} onValueChange={(v) => { setTierFilter(v); handleFilterChange() }}>

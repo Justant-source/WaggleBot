@@ -178,6 +178,11 @@ public class InboxController {
         return ResponseEntity.ok(Map.of("jobId", job.getId()));
     }
 
+    @GetMapping("/sites")
+    public ResponseEntity<List<String>> sites() {
+        return ResponseEntity.ok(postRepo.findDistinctSiteCodes());
+    }
+
     @PostMapping("/crawl")
     public ResponseEntity<Map<String, Object>> crawl() {
         var job = jobService.createJob(JobType.MANUAL_CRAWL, null, null);

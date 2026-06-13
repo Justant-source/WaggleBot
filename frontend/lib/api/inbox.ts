@@ -38,4 +38,6 @@ export const inboxApi = {
 
   analyzeBatch: (params: { ids?: number[]; limit?: number }) =>
     post<{ enqueued: number; jobIds: number[] }>('/api/inbox/analyze-batch', params),
+
+  sites: () => get<string[]>('/api/inbox/sites'),
 }
