@@ -1,6 +1,6 @@
 # WaggleBot — 구현 현황
 
-> **last-verified:** 2026-06-13 (layout-v3-and-multi-voice)
+> **last-verified:** 2026-06-13 (p5-chat-capture)
 > **scope:** 구현 완료·미완료 현황, 버그 픽스 이력
 
 현재 코드베이스의 구현 완료/미완료 상태 정리. (2026-06-11 기준)
@@ -284,10 +284,9 @@ Claude Design 핸드오프 기반으로 렌더러 전면 교체. 컨테이너 PN
 | **P2 아웃트로** | 마스코트(PIL 코드드로잉) + 참여유도 질문 5종 + 댓글입력창 목업 (구독유도 제거) |
 | **P3 영상 자연비율** | `_render_video_segment` ffprobe → contain 계산 → `force_original_aspect_ratio=decrease` |
 | **P4 댓글 씬** | `SceneType="comments"` 신규 + `comment_items` 필드 + DB 원본 likes 직접 전달 + `_render_comments_frame` |
+| **P5 대화 캡처** | `SceneType="chat"` + `_render_chat_frame` (is_mine 기준 좌/우 버블, 아바타, 발신자명) + chunker `chat_messages` 추출 + ScriptData 직렬화 + 전 processor 경로 배선 |
 | **기타** | `_title_block_bottom_y()` 순수헬퍼(가변 제목 높이 일원화) · `_fmt_count`/`_relative_time` 유틸 |
-
-> ⚠ **P5 대화 캡처(아이폰/카톡 버블 렌더러)** — 별도 후속 세션에서 구현 예정.
 
 ## 다음 개선 우선순위
 
-현 상태로 전체 파이프라인이 동작 가능. 선택적 개선 항목 전부 완료됨.
+현 상태로 전체 파이프라인이 동작 가능. 레이아웃 v3 + P1~P5 씬타입 전부 완료됨.
