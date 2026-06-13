@@ -41,6 +41,7 @@ export default function SettingsPage() {
   const [llmHealthChecking, setLlmHealthChecking] = useState(false)
 
   const [voices, setVoices] = useState<VoiceInfo[]>([])
+  const [commentVoices, setCommentVoices] = useState<string[]>([])
   const [apiKey, setApiKey] = useState('')
   const [apiKeyMasked, setApiKeyMasked] = useState<string | null>(null)
   const [savingKey, setSavingKey] = useState(false)
@@ -85,6 +86,7 @@ export default function SettingsPage() {
       if (cfg.upload_privacy === 'public' || cfg.upload_privacy === 'unlisted' || cfg.upload_privacy === 'private')
         setValue('upload_privacy', cfg.upload_privacy)
       if (cfg.max_chars_per_line) setValue('max_chars_per_line', Number(cfg.max_chars_per_line))
+      if (Array.isArray(cfg.comment_voices)) setCommentVoices(cfg.comment_voices as string[])
       setLoading(false)
     })
     settingsApi.getCredentials().then((creds) => {
@@ -103,6 +105,7 @@ export default function SettingsPage() {
         auto_upload: String(data.auto_upload),
         llm_prompt_cache: String(data.llm_prompt_cache),
         use_content_processor: String(data.use_content_processor),
+        comment_voices: commentVoices,
       })
       toast.success('설정 저장됨')
     } catch { toast.error('저장 실패') }
@@ -267,18 +270,58 @@ export default function SettingsPage() {
       </AdminSection>
 
       <AdminSection title="TTS">
-        <div className="max-w-sm space-y-4">
+        <div className="max-w-xl space-y-6">
           <div>
-            <Label className="mb-1 block">목소리</Label>
+            <Label className="mb-1 block">내레이터 기본 음성</Label>
             <Select value={ttsVoice} onValueChange={(v) => setValue('tts_voice', v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectTrigger className="max-w-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {voices.map((v) => (
                   <SelectItem key={v.key} value={v.key}>{v.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <p className="mt-1 text-xs text-gray-400">Fish Speech 목소리 프리셋. (voices.json 기반)</p>
+            <p className="mt-1 text-xs text-gray-400">포스트별 음성 미지정 시 사용하는 기본 내레이터. (voices.json 기반)</p>
+          </div>
+
+          <div>
+            <Label className="mb-2 block">댓글 화자 음성 후보</Label>
+            <p className="mb-3 text-xs text-gray-400">
+              댓글·대화 씬에서 각 화자에게 자동 배정할 음성 목록.
+              내레이터와 겹치지 않게 설정하세요. (다화자 TTS)
+            </p>
+            {voices.length > 0 ? (
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                {voices.map((v) => {
+                  const checked = commentVoices.includes(v.key)
+                  return (
+                    <label
+                      key={v.key}
+                      className={`flex cursor-pointer items-center gap-2 rounded border p-2 text-xs transition-colors ${
+                        checked ? 'border-primary bg-primary/5 text-primary' : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-3.5 w-3.5 shrink-0 accent-primary"
+                        checked={checked}
+                        onChange={() =>
+                          setCommentVoices((prev) =>
+                            prev.includes(v.key) ? prev.filter((k) => k !== v.key) : [...prev, v.key]
+                          )
+                        }
+                      />
+                      <span className="truncate">{v.label}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400">음성 목록 로딩 중...</p>
+            )}
+            <p className="mt-2 text-xs text-gray-400">
+              선택됨: {commentVoices.length > 0 ? commentVoices.join(', ') : '없음 (기본 내레이터만 사용)'}
+            </p>
           </div>
         </div>
       </AdminSection>
