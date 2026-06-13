@@ -161,6 +161,7 @@ class RobustProcessor:
                 _director = SceneDirector(
                     _profile, _images, _script_dict, mood=script.mood,
                     post_id=post.id, comments=_db_cmts,
+                    narrator_voice=script.narrator_voice or None,
                 )
                 _scenes = _director.direct()
                 logger.info("[Step 3/3] 씬=%d개", len(_scenes))
@@ -801,6 +802,17 @@ class RobustProcessor:
                     best_comments=_comment_texts,
                     extra_instructions=_extra or "",
                 )
+                from ai_worker.script.voice_assigner import pick_voice as _pick_voice
+                _narrator_voice = _pick_voice(
+                    _raw.get("narrator_gender", ""),
+                    _raw.get("narrator_age", ""),
+                )
+                logger.info(
+                    "[Pipeline LLM+TTS] narrator_voice=%s (gender=%s, age=%s)",
+                    _narrator_voice,
+                    _raw.get("narrator_gender", "—"),
+                    _raw.get("narrator_age", "—"),
+                )
                 script = ScriptData(
                     hook=_raw.get("hook", ""),
                     body=_raw.get("body", []),
@@ -808,6 +820,7 @@ class RobustProcessor:
                     title_suggestion=_raw.get("title_suggestion", ""),
                     tags=_raw.get("tags", []),
                     mood=_raw.get("mood", "daily"),
+                    narrator_voice=_narrator_voice,
                 )
             else:
                 # 레거시 generate_script 경로
@@ -903,6 +916,7 @@ class RobustProcessor:
             director = SceneDirector(
                 profile, images, script_dict, mood=script.mood,
                 post_id=post_id, comments=_db_cmts2,
+                narrator_voice=script.narrator_voice or None,
             )
             scenes = director.direct()
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))

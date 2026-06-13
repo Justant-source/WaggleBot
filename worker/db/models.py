@@ -265,6 +265,7 @@ class ScriptData:
     title_suggestion: str
     tags: list[str]
     mood: str = "daily"
+    narrator_voice: str = ""
 
     def to_plain_text(self) -> str:
         texts = [self.hook]
@@ -288,6 +289,7 @@ class ScriptData:
                 "title_suggestion": self.title_suggestion,
                 "tags": self.tags,
                 "mood": self.mood,
+                "narrator_voice": self.narrator_voice,
             },
             ensure_ascii=False,
         )
@@ -310,4 +312,5 @@ class ScriptData:
             title_suggestion=d["title_suggestion"],
             tags=d["tags"],
             mood=d.get("mood", "daily"),
+            narrator_voice=d.get("narrator_voice", ""),
         )
