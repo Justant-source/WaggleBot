@@ -37,7 +37,7 @@ from config.settings import EMOTION_TAGS, get_domain_setting
 
 logger = logging.getLogger(__name__)
 
-SceneType = Literal["intro", "video_text", "image_text", "text_only", "image_only", "outro", "comments"]
+SceneType = Literal["intro", "video_text", "image_text", "text_only", "image_only", "outro", "comments", "chat"]
 
 # 반전/충격 키워드가 등장하면 단독 강조 처리
 _HIGHLIGHT_KEYWORDS = ["반전", "충격", "결과", "결론", "사실", "진짜", "알고보니"]
@@ -77,7 +77,9 @@ class SceneDecision:
     merged_scene_indices: list[int] | None = None  # 병합된 원본 씬 인덱스들
     # --- 댓글 씬 전용 필드 ---
     comment_items: list[dict] | None = None  # [{"author","content","likes","is_best"}]
-    dwell_sec: float = 4.0                   # 무음 체류 시간 (comments 씬)
+    dwell_sec: float = 4.0                   # 무음 체류 시간 (comments/chat 씬)
+    # --- 채팅 씬 전용 필드 ---
+    chat_messages: list[dict] | None = None  # [{"sender":str,"text":str,"is_mine":bool}]
 
 
 @dataclass
@@ -1163,6 +1165,7 @@ class SceneDirector:
         image_cache_dir: Path | None = None,
         narrator_voice: str | None = None,
         comments: list | None = None,
+        chat_messages: list | None = None,
     ) -> None:
         self.profile = profile
         self._images: list[str] = list(images)
@@ -1174,6 +1177,8 @@ class SceneDirector:
         self._character_voices: dict[str, str] = {}  # character_label → voice_key
         # 실제 댓글 DB 객체 목록 (Comment 모델). LLM 우회로 직접 전달받아 댓글씬 생성.
         self._db_comments: list = list(comments) if comments else []
+        # LLM이 추출한 채팅 메시지 목록. [{"sender":str,"text":str,"is_mine":bool}]
+        self._chat_messages: list[dict] = list(chat_messages) if chat_messages else []
 
         if comment_voices is None:
             # pipeline.json에서 자동 로드 (processor.py 레거시 경로용)
@@ -1327,6 +1332,30 @@ class SceneDirector:
         used_img_count = sum(1 for s in body_scenes if s.image_url is not None)
         self._images = self._images[used_img_count:]
         scenes.extend(body_scenes)
+
+        # ── 채팅 씬 (댓글·아웃트로 직전) ──────────────────────────────────
+        if policy and self._chat_messages:
+            chat_rule = policy.get("scene_rules", {}).get("chat", {})
+            if chat_rule.get("enabled", True):
+                per_scene: int = int(chat_rule.get("max_messages_per_scene", 4))
+                chat_dwell: float = float(chat_rule.get("dwell_sec", 3.5))
+                for i in range(0, len(self._chat_messages), per_scene):
+                    batch = self._chat_messages[i : i + per_scene]
+                    scenes.append(SceneDecision(
+                        type="chat",
+                        text_lines=[],
+                        image_url=None,
+                        mood=mood,
+                        tts_emotion="",
+                        chat_messages=batch,
+                        dwell_sec=chat_dwell,
+                    ))
+                logger.debug(
+                    "채팅 씬 추가: %d개 메시지 → %d씬 (dwell=%.1fs)",
+                    len(self._chat_messages),
+                    len(range(0, len(self._chat_messages), per_scene)),
+                    chat_dwell,
+                )
 
         # ── 댓글 씬 (아웃트로 직전) ────────────────────────────────────────
         if policy:

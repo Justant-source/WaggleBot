@@ -262,6 +262,38 @@
         }
       }
     },
+    "chat": {
+      "description": "카카오톡 스타일 대화 버블 씬 — is_mine 기준 좌(상대)/우(나) 배치",
+      "dwell_sec": 3.5,
+      "side_pad": 40,
+      "pad_top": 36,
+      "bubble": {
+        "mine": {
+          "bg": "#FFE100",
+          "text_color": "#1A1A1A",
+          "radius": 18,
+          "max_width": 680,
+          "pad_x": 26,
+          "pad_y": 16
+        },
+        "other": {
+          "bg": "#F2F2F2",
+          "text_color": "#1A1A1A",
+          "radius": 18,
+          "max_width": 620,
+          "pad_x": 26,
+          "pad_y": 16
+        }
+      },
+      "font_size": 36,
+      "line_height": 50,
+      "name_font_size": 27,
+      "name_color": "#9C9C9C",
+      "avatar_d": 54,
+      "avatar_gap": 14,
+      "msg_gap": 10,
+      "group_gap": 28
+    },
     "comments": {
       "description": "커뮤니티 댓글 리스트 — 아바타·닉네임·BEST·추천수",
       "dwell_sec": 4.0,

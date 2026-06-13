@@ -53,7 +53,8 @@ def build_chunking_system(*, extended: bool = False) -> str:
         f'  "tags": ["태그1", "태그2", "태그3"],\n'
         f'  "mood": "humor | touching | anger | sadness | horror | info | controversy | daily | shock 중 하나",\n'
         f'  "narrator_gender": "male | female",\n'
-        f'  "narrator_age": "10s | 20s | 30s | 40s | 50s | 60s"\n'
+        f'  "narrator_age": "10s | 20s | 30s | 40s | 50s | 60s",\n'
+        f'  "chat_messages": [{{"sender": "나", "text": "메시지 원문", "is_mine": true}}, ...] or null\n'
         if extended else ""
     )
     example_extended = (
@@ -61,7 +62,8 @@ def build_chunking_system(*, extended: bool = False) -> str:
         '  "tags": ["주차빌런", "아파트", "사이다"],\n'
         '  "mood": "controversy",\n'
         '  "narrator_gender": "female",\n'
-        '  "narrator_age": "30s"\n'
+        '  "narrator_age": "30s",\n'
+        '  "chat_messages": null\n'
         if extended else ""
     )
 
@@ -187,6 +189,12 @@ def build_chunking_system(*, extended: bool = False) -> str:
         "- **화자 태깅 (다중 음성)**: 본문 중 다른 인물의 **직접 발화**(카톡, 대화, 인용문)는 별도 body 항목으로 분리하고 "
         '`"speaker": "character"`, `"character_label"`, `"character_gender"`, `"character_age"` 4개 필드를 추가하세요. '
         "내레이터가 서술하는 문장은 speaker 생략(기본 narrator). 같은 인물은 동일 character_label을 반드시 사용하세요.\n"
+        "## 5. 대화 캡처 추출 (chat_messages)\n"
+        "- 본문에 카카오톡·문자·DM 등 **실제 메시지 대화 로그**가 포함되어 있으면 `chat_messages` 배열을 채우세요.\n"
+        "- 각 항목: `{\"sender\": \"나\", \"text\": \"메시지 원문\", \"is_mine\": true}` — 보낸이가 글쓴이·사연자이면 `is_mine:true`, 상대방이면 `false`.\n"
+        "- 대화 원문을 최대한 그대로 가져오세요 (재구성·요약 금지). 단 개인정보(실명·연락처)는 익명화.\n"
+        "- 이야기의 핵심 반전·사이다·갈등이 드러나는 메시지 최대 8개를 선택하세요.\n"
+        "- 대화 로그가 없거나 추출 불필요하면 `\"chat_messages\": null`로 두세요.\n\n"
         "- mood 판정 (위에서부터 순서대로 처음 해당하는 것 선택):\n"
         "  ① 공포·소름·미스터리가 핵심 → horror\n"
         "  ② 반전·믿기 힘든 사실이 핵심 → shock\n"

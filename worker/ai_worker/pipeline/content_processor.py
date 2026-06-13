@@ -92,6 +92,14 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         extra_instructions=_extra or "",
     )
 
+    # ── chat_messages 추출 (LLM이 감지한 대화 로그) ──────────────
+    _chat_messages: list[dict] = [
+        m for m in (llm_output.get("chat_messages") or [])
+        if isinstance(m, dict) and m.get("text")
+    ]
+    if _chat_messages:
+        logger.info("[content_processor] chat_messages=%d개 감지", len(_chat_messages))
+
     # ── narrator voice 결정 (사연자 연령/성별 기반) ────────────────
     from ai_worker.script.voice_assigner import pick_voice as _pick_voice
     narrator_voice: str = _pick_voice(
@@ -138,6 +146,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         post_id=post.id,
         image_cache_dir=image_cache_dir if VIDEO_GEN_ENABLED else None,
         comments=_db_comments,
+        chat_messages=_chat_messages,
     )
     scenes: list[SceneDecision] = director.direct()
 

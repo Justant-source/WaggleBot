@@ -1068,6 +1068,170 @@ def _render_comments_frame(
 
 
 # ---------------------------------------------------------------------------
+# 채팅 버블 씬 (P5: KakaoTalk 스타일)
+# ---------------------------------------------------------------------------
+
+def _render_chat_frame(
+    base_frame: Image.Image,
+    messages: list[dict],
+    layout: dict,
+    font_dir: Path,
+    out_path: Path,
+    content_top: int,
+) -> Path:
+    """카카오톡 스타일 대화 버블 씬.
+
+    messages: [{"sender":str, "text":str, "is_mine":bool}]
+      - is_mine=True  → 우측 노란 버블 (#FFE100)
+      - is_mine=False → 좌측 회색 버블 + 아바타 + sender 이름
+    """
+    from ai_worker.renderer.layout import _load_font
+
+    sc = layout.get("scenes", {}).get("chat", {})
+    bubble_mine_cfg = sc.get("bubble", {}).get("mine", {})
+    bubble_other_cfg = sc.get("bubble", {}).get("other", {})
+
+    cw: int = layout["canvas"]["width"]
+
+    side_pad: int  = int(sc.get("side_pad", 40))
+    pad_top: int   = int(sc.get("pad_top", 36))
+    font_size: int = int(sc.get("font_size", 36))
+    line_h: int    = int(sc.get("line_height", 50))
+    name_fs: int   = int(sc.get("name_font_size", 27))
+    name_color: str = sc.get("name_color", "#9C9C9C")
+    av_d: int      = int(sc.get("avatar_d", 54))
+    av_gap: int    = int(sc.get("avatar_gap", 14))
+    msg_gap: int   = int(sc.get("msg_gap", 10))
+    group_gap: int = int(sc.get("group_gap", 28))
+
+    mine_bg: str   = bubble_mine_cfg.get("bg", "#FFE100")
+    mine_fg: str   = bubble_mine_cfg.get("text_color", "#1A1A1A")
+    mine_r: int    = int(bubble_mine_cfg.get("radius", 18))
+    mine_mw: int   = int(bubble_mine_cfg.get("max_width", 680))
+    mine_px: int   = int(bubble_mine_cfg.get("pad_x", 26))
+    mine_py: int   = int(bubble_mine_cfg.get("pad_y", 16))
+
+    other_bg: str  = bubble_other_cfg.get("bg", "#F2F2F2")
+    other_fg: str  = bubble_other_cfg.get("text_color", "#1A1A1A")
+    other_r: int   = int(bubble_other_cfg.get("radius", 18))
+    other_mw: int  = int(bubble_other_cfg.get("max_width", 620))
+    other_px: int  = int(bubble_other_cfg.get("pad_x", 26))
+    other_py: int  = int(bubble_other_cfg.get("pad_y", 16))
+
+    font_msg  = _load_font(font_dir, "NotoSansKR-Bold.ttf", font_size)
+    font_name = _load_font(font_dir, "NotoSansKR-Medium.ttf", name_fs)
+
+    _AV_PALETTE = [
+        "#4A90D9", "#E67E22", "#27AE60", "#9B59B6",
+        "#E74C3C", "#1ABC9C", "#F39C12", "#2980B9",
+    ]
+
+    img = base_frame.copy()
+    draw = ImageDraw.Draw(img)
+
+    y: int = content_top + pad_top
+    bottom_limit: int = CANVAS_H - 80
+    prev_sender: str | None = None
+
+    for msg in messages:
+        sender: str = msg.get("sender") or "상대방"
+        text: str   = (msg.get("text") or "").strip()
+        is_mine: bool = bool(msg.get("is_mine", False))
+
+        if not text:
+            continue
+
+        # 버블 내부 텍스트 줄바꿈
+        inner_w = (mine_mw if is_mine else other_mw) - (mine_px if is_mine else other_px) * 2
+        wrapped = _wrap_korean(text, font_msg, inner_w, keep_all=True)
+        if not wrapped:
+            wrapped = [text[:30]]
+
+        bubble_inner_h = len(wrapped) * line_h
+        py = mine_py if is_mine else other_py
+        bubble_h = bubble_inner_h + py * 2
+
+        # sender 전환 시 group_gap 추가
+        if prev_sender is not None and sender != prev_sender:
+            y += group_gap - msg_gap
+
+        # ── 상대방 메시지 (왼쪽) ──────────────────────────────────────────
+        if not is_mine:
+            # 처음 등장하는 sender 또는 sender 전환 시 이름 표시
+            if sender != prev_sender:
+                draw.text((side_pad + av_d + av_gap, y), sender,
+                          font=font_name, fill=name_color)
+                y += name_fs + 6
+
+            # 아바타 원
+            av_color = _AV_PALETTE[hash(sender) % len(_AV_PALETTE)]
+            draw.ellipse(
+                [(side_pad, y), (side_pad + av_d, y + av_d)],
+                fill=av_color,
+            )
+            av_char = sender[0] if sender else "익"
+            av_fs   = max(14, int(av_d * 0.44))
+            av_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", av_fs)
+            draw.text(
+                (side_pad + (av_d - int(_font_w(av_font, av_char))) // 2,
+                 y + int(av_d * 0.28)),
+                av_char, font=av_font, fill="#FFFFFF",
+            )
+
+            # 버블 폭: 최장 줄 기준 + 패딩
+            max_line_w = int(max((_font_w(font_msg, ln) for ln in wrapped), default=0))
+            bw = min(max_line_w + other_px * 2, other_mw)
+            bw = max(bw, 80)
+            bx = side_pad + av_d + av_gap
+            by = y
+
+            if by + bubble_h > bottom_limit:
+                break
+
+            try:
+                draw.rounded_rectangle([bx, by, bx + bw, by + bubble_h],
+                                       radius=other_r, fill=other_bg)
+            except AttributeError:
+                draw.rectangle([bx, by, bx + bw, by + bubble_h], fill=other_bg)
+
+            ty = by + other_py
+            for ln in wrapped:
+                draw.text((bx + other_px, ty), ln, font=font_msg, fill=other_fg)
+                ty += line_h
+
+            y = by + bubble_h + msg_gap
+
+        # ── 내 메시지 (오른쪽) ────────────────────────────────────────────
+        else:
+            max_line_w = int(max((_font_w(font_msg, ln) for ln in wrapped), default=0))
+            bw = min(max_line_w + mine_px * 2, mine_mw)
+            bw = max(bw, 80)
+            bx = cw - side_pad - bw
+            by = y
+
+            if by + bubble_h > bottom_limit:
+                break
+
+            try:
+                draw.rounded_rectangle([bx, by, bx + bw, by + bubble_h],
+                                       radius=mine_r, fill=mine_bg)
+            except AttributeError:
+                draw.rectangle([bx, by, bx + bw, by + bubble_h], fill=mine_bg)
+
+            ty = by + mine_py
+            for ln in wrapped:
+                draw.text((bx + mine_px, ty), ln, font=font_msg, fill=mine_fg)
+                ty += line_h
+
+            y = by + bubble_h + msg_gap
+
+        prev_sender = sender
+
+    img.save(str(out_path), "PNG")
+    return out_path
+
+
+# ---------------------------------------------------------------------------
 # 비디오 텍스트 오버레이 (P3: content_top 파라미터 추가)
 # ---------------------------------------------------------------------------
 

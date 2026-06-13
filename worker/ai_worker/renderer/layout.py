@@ -36,7 +36,7 @@ from ai_worker.renderer._frames import (
     _render_intro_frame, _render_image_text_frame,
     _render_text_only_frame, _render_image_only_frame,
     _render_outro_frame, _render_comments_frame,
-    _render_video_text_overlay, _wrap_korean, _draw_centered_text,
+    _render_video_text_overlay, _render_chat_frame, _wrap_korean, _draw_centered_text,
     _truncate, _fit_cover, _fit_contain, _paste_rounded, _load_image,
     _title_block_bottom_y, _fmt_count, _relative_time,
 )
@@ -301,6 +301,16 @@ def _scenes_to_plan_and_sentences(
                 "dwell_sec": float(dwell),
             })
 
+        elif scene.type == "chat":
+            dwell = getattr(scene, "dwell_sec", 3.5)
+            plan.append({
+                "type": "chat",
+                "sent_idx": None,
+                "img_idx": None,
+                "scene_idx": scene_i,
+                "dwell_sec": float(dwell),
+            })
+
     return sentences, plan, images
 
 
@@ -524,6 +534,14 @@ def _render_pipeline(
                 items = getattr(scene, "comment_items", None) if scene else None
                 _render_comments_frame(
                     base_frame, items or [], layout, font_dir, frame_path, content_top,
+                )
+
+            elif scene_type == "chat":
+                # 채팅 버블 씬: SceneDecision에서 chat_messages 추출
+                scene = _get_scene_for_entry(entry, sentences, scenes_list)
+                msgs = getattr(scene, "chat_messages", None) if scene else None
+                _render_chat_frame(
+                    base_frame, msgs or [], layout, font_dir, frame_path, content_top,
                 )
 
             frame_paths.append(frame_path)

@@ -266,6 +266,7 @@ class ScriptData:
     tags: list[str]
     mood: str = "daily"
     narrator_voice: str = ""
+    chat_messages: list[dict] = field(default_factory=list)
 
     def to_plain_text(self) -> str:
         texts = [self.hook]
@@ -290,6 +291,7 @@ class ScriptData:
                 "tags": self.tags,
                 "mood": self.mood,
                 "narrator_voice": self.narrator_voice,
+                "chat_messages": self.chat_messages,
             },
             ensure_ascii=False,
         )
@@ -313,4 +315,5 @@ class ScriptData:
             tags=d["tags"],
             mood=d.get("mood", "daily"),
             narrator_voice=d.get("narrator_voice", ""),
+            chat_messages=d.get("chat_messages") or [],
         )
