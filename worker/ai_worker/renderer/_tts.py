@@ -119,12 +119,14 @@ async def _generate_tts_chunks(
                     )
         else:
             out_path = output_dir / f"chunk_{frame_idx:03d}.wav"
+            # entry에 dwell_sec 지정 시 해당 값 우선 사용 (예: comments 씬 4.0초)
+            dwell = float(entry.get("dwell_sec", outro_duration))
             subprocess.run(
                 ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
-                 "-t", str(outro_duration), "-c:a", "pcm_s16le", str(out_path)],
+                 "-t", str(dwell), "-c:a", "pcm_s16le", str(out_path)],
                 capture_output=True, check=True, timeout=10,
             )
-            dur = outro_duration
+            dur = dwell
         durations.append(dur)
         logger.debug("[layout] TTS 프레임 %d: %.2fs", frame_idx, dur)
     return durations

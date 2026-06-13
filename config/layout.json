@@ -18,7 +18,7 @@
     "image_text_caption": {
       "max_chars": 40,
       "max_lines": 2,
-      "description": "이미지 하단 캡션"
+      "description": "이미지 상단 캡션"
     },
     "comment_line": {
       "max_chars": 60,
@@ -40,110 +40,206 @@
     "font_medium":  "assets/fonts/NotoSansKR-Medium.ttf",
     "font_regular": "assets/fonts/NotoSansKR-Regular.ttf",
     "background_color": "#FFFFFF",
-    "header_height": 160,
-    "header_color":  "#4A44FF",
-    "base_layout": "assets/backgrounds/base_layout.png",
-    "header_title": {
-      "comment": "모든 프레임 공통 — 헤더 안에 고정 출력되는 제목",
-      "x":50,
-      "y": 190,
-      "max_width": 980,
-      "font_size": 46,
-      "font_weight": "bold",
-      "align": "left",
-      "color": "#000000",
-      "max_chars": 40
+
+    "header": {
+      "height": 150,
+      "bg_color": "#FBD024",
+      "ink_color": "#1A1A1A",
+      "channel_name": "와글",
+      "title_font_size": 52,
+      "icon_stroke": 6
+    },
+
+    "title_block": {
+      "pad_top": 32,
+      "pad_x": 44,
+      "font_size": 50,
+      "color": "#161616",
+      "weight": "bold",
+      "line_height": 62,
+      "max_lines": 2,
+      "meta": {
+        "gap_top": 16,
+        "font_size": 28,
+        "color": "#9C9C9C",
+        "weight": "medium",
+        "sep": " │ ",
+        "author_fallback": "와글"
+      },
+      "divider": {
+        "gap_top": 20,
+        "thickness": 2,
+        "color": "#E7E7E7"
+      }
+    },
+
+    "content": {
+      "gap_top": 28
     }
   },
   "scenes": {
     "intro": {
-      "description": "제목만 — title_only.svg (베이스 프레임 그대로 사용)",
-      "title_max_chars": 18
+      "description": "첫 화면 — hook 자막(중앙) + 자연비율 표지 이미지",
+      "caption": {
+        "font_size": 50,
+        "color": "#161616",
+        "weight": "bold",
+        "align": "center",
+        "line_height": 62,
+        "max_lines": 2,
+        "pad_top": 56,
+        "max_width": 900
+      },
+      "media": {
+        "max_width": 820,
+        "radius": 8,
+        "fit_mode": "contain",
+        "gap_top": 56
+      }
     },
     "image_text": {
-      "description": "이미지 + 텍스트 — image_text.svg",
+      "description": "이미지 + 텍스트 — 자막(위) + 자연비율 이미지(좌우 흰여백)",
       "text_max_chars": 20,
+      "caption_above": {
+        "font_size": 50,
+        "color": "#161616",
+        "weight": "bold",
+        "align": "center",
+        "line_height": 62,
+        "max_lines": 2,
+        "pad_top": 56,
+        "max_width": 900
+      },
+      "media": {
+        "max_width": 820,
+        "radius": 8,
+        "fit_mode": "contain",
+        "gap_top": 48
+      },
+      "caption_below": {
+        "font_size": 44,
+        "color": "#161616",
+        "weight": "bold",
+        "align": "center",
+        "line_height": 58,
+        "max_lines": 2,
+        "gap_top": 44,
+        "max_width": 900
+      },
       "elements": {
         "image_area": {
-          "x": 90,
-          "y": 550,
-          "width": 900,
-          "height": 900,
-          "fit_mode": "cover",
-          "border_radius": 20
+          "x": 90, "y": 550,
+          "width": 820, "height": 820,
+          "fit_mode": "contain",
+          "border_radius": 8
         },
         "text_area": {
-          "x": 540,
-          "y": 1570,
+          "x": 540, "y": 450,
           "max_width": 900,
-          "font_size": 46,
-          "font_weight": "medium",
+          "font_size": 50,
+          "font_weight": "bold",
           "align": "center",
-          "color": "#000000",
-          "line_height": 70,
+          "color": "#161616",
+          "line_height": 62,
           "max_lines": 2
         }
       }
     },
     "text_only": {
-      "description": "텍스트만, 동적 Y좌표 — text_only.svg",
+      "description": "텍스트만 — 굵은 검정 중앙 자막 (흐림 없음, 위로 누적)",
       "text_max_chars": 20,
       "elements": {
         "text_area": {
           "x": 540,
           "max_width": 950,
-          "font_size": 46,
-          "font_weight": "medium",
+          "font_size": 50,
+          "font_weight": "bold",
           "align": "center",
-          "color": "#000000",
-          "prev_text_color": "#888888",
-          "line_height": 80,
-          "slot_gap": 10,
-          "y_coords": [550, 700, 850],
+          "color": "#161616",
+          "line_height": 71,
+          "slot_gap": 45,
+          "pad_top": 96,
+          "band_bottom_margin": 120,
           "max_slots": 3
         }
       }
     },
     "outro": {
-      "description": "이미지만 (남은 이미지 아웃트로) — image_only.svg",
-      "elements": {
-        "image_area": {
-          "x": 90,
-          "y": 550,
-          "width": 900,
-          "height": 1100,
-          "fit_mode": "cover",
-          "border_radius": 20
-        },
-        "overlay_text": {
-          "x": 540,
-          "y": 1700,
-          "max_width": 900,
-          "font_size": 75,
-          "font_weight": "regular",
-          "align": "center",
-          "color": "#FFFFFF",
-          "stroke_color": "#000000",
-          "stroke_width": 3
-        }
+      "description": "댓글 참여 유도 아웃트로 — 마스코트 + 질문 + 입력창 목업 (구독유도 없음)",
+      "mascot": {
+        "diameter": 220,
+        "circle_color": "#1A1A1A",
+        "feature_color": "#FBD024",
+        "pad_top": 180
+      },
+      "question": {
+        "font_size": 62,
+        "color": "#161616",
+        "weight": "bold",
+        "max_width": 900,
+        "gap_top": 60,
+        "line_height": 78
+      },
+      "sub_caption": {
+        "text": "생각을 댓글로 남겨주세요",
+        "font_size": 36,
+        "color": "#7A7A7A",
+        "gap_top": 40
+      },
+      "input_box": {
+        "width": 860,
+        "height": 88,
+        "bg": "#F2F2F2",
+        "border": "#E7E7E7",
+        "avatar_label": "나",
+        "avatar_size": 64,
+        "placeholder": "댓글 추가...",
+        "placeholder_color": "#9C9C9C",
+        "gap_top": 56
+      },
+      "cta_text": {
+        "text": "↓ 댓글 창에서 의견 나눠요",
+        "font_size": 30,
+        "color": "#7A7A7A",
+        "gap_top": 36
       }
     },
     "image_only": {
-      "description": "텍스트 없이 이미지만 전체 화면으로 표시 (인트로 배경 및 아웃트로)",
+      "description": "이미지만 — 자연비율 중앙 배치",
+      "media": {
+        "max_width": 820,
+        "radius": 8,
+        "fit_mode": "contain",
+        "pad_top": 80
+      },
       "elements": {
         "image_area": {
-          "x": 90,
-          "y": 550,
-          "width": 900,
-          "height": 900,
-          "fit_mode": "cover",
-          "border_radius": 20
+          "x": 90, "y": 550,
+          "width": 820, "height": 820,
+          "fit_mode": "contain",
+          "border_radius": 8
         }
       }
     },
     "video_text": {
-      "description": "비디오 배경 + 하단 텍스트 — LTX-Video 클립 위에 자막 렌더링",
+      "description": "영상 + 텍스트 — 자막(위) + 자연비율 비디오",
       "text_max_chars": 20,
+      "caption_above": {
+        "font_size": 50,
+        "color": "#161616",
+        "weight": "bold",
+        "align": "center",
+        "line_height": 62,
+        "max_lines": 2,
+        "pad_top": 56,
+        "max_width": 900
+      },
+      "video_area_new": {
+        "max_width": 820,
+        "radius": 8,
+        "fit_mode": "contain",
+        "gap_top": 50
+      },
       "elements": {
         "video_area": {
           "x": 90,
@@ -155,15 +251,54 @@
         },
         "text_area": {
           "x": 540,
-          "y": 1570,
+          "y": 450,
           "max_width": 900,
-          "font_size": 46,
-          "font_weight": "medium",
+          "font_size": 50,
+          "font_weight": "bold",
           "align": "center",
-          "color": "#000000",
-          "line_height": 70,
+          "color": "#161616",
+          "line_height": 62,
           "max_lines": 2
         }
+      }
+    },
+    "comments": {
+      "description": "커뮤니티 댓글 리스트 — 아바타·닉네임·BEST·추천수",
+      "dwell_sec": 4.0,
+      "sort_bar": {
+        "font_size": 34,
+        "count_color": "#161616",
+        "label": "추천순 ▾",
+        "label_color": "#9C9C9C",
+        "pad_top": 36,
+        "pad_x": 44
+      },
+      "row": {
+        "pad_x": 44,
+        "avatar_d": 64,
+        "avatar_gap": 20,
+        "nick_size": 29,
+        "nick_color": "#161616",
+        "text_size": 33,
+        "text_color": "#161616",
+        "text_max_lines": 3,
+        "time_color": "#9C9C9C",
+        "show_time": false,
+        "best_badge": {
+          "bg": "#FF5436",
+          "fg": "#FFFFFF",
+          "label": "BEST",
+          "font_size": 22,
+          "pad_x": 14,
+          "pad_y": 4,
+          "radius": 6
+        },
+        "footer_color": "#9C9C9C",
+        "footer_font_size": 26,
+        "divider": "#E7E7E7",
+        "divider_thickness": 1,
+        "row_pad_top": 28,
+        "row_pad_bot": 28
       }
     }
   },

@@ -153,7 +153,15 @@ class RobustProcessor:
                 )
 
                 # Phase 4: 씬 배분
-                _director = SceneDirector(_profile, _images, _script_dict, mood=script.mood, post_id=post.id)
+                _db_cmts = sorted(
+                    getattr(post, "comments", None) or [],
+                    key=lambda c: getattr(c, "likes", 0) or 0,
+                    reverse=True,
+                )
+                _director = SceneDirector(
+                    _profile, _images, _script_dict, mood=script.mood,
+                    post_id=post.id, comments=_db_cmts,
+                )
                 _scenes = _director.direct()
                 logger.info("[Step 3/3] 씬=%d개", len(_scenes))
 
@@ -887,7 +895,15 @@ class RobustProcessor:
 
             # Phase 4: 씬 배분
             stamp_progress(post_id, 4, "씬 구성")
-            director = SceneDirector(profile, images, script_dict, mood=script.mood, post_id=post_id)
+            _db_cmts2 = sorted(
+                getattr(post, "comments", None) or [],
+                key=lambda c: getattr(c, "likes", 0) or 0,
+                reverse=True,
+            )
+            director = SceneDirector(
+                profile, images, script_dict, mood=script.mood,
+                post_id=post_id, comments=_db_cmts2,
+            )
             scenes = director.direct()
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 

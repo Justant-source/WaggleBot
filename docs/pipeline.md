@@ -1,6 +1,6 @@
 # WaggleBot — AI 파이프라인 (8-Phase)
 
-> **last-verified:** 2026-06-12 (commit `656dffd` — TTS S1-mini·다크모드·VRAM 모니터링)
+> **last-verified:** 2026-06-13
 > **scope:** 8-Phase AI 파이프라인 상세, LLM 라우팅, 4단계 폴백 — SSOT
 
 ## 개요
@@ -88,7 +88,7 @@ flowchart TD
 
 ### Phase 4 — SceneDirector
 - **모델**: `sonnet` (call_type: `scene_director`)
-- 씬별 `type` (intro/image_text/text_only/outro) + `mood` 태그 할당
+- 씬별 `type` (intro / image_text / text_only / image_only / video_text / **comments**(신규) / outro) + `mood` 태그 할당
 - `config/scene_policy.json`에서 씬 타입별 정책 로드
 - 출력: `list[SceneDecision]`
 
@@ -168,6 +168,7 @@ flowchart LR
 - 자막: ASS 형식 (`subtitle_font`: NanumGothic)
 - 썸네일 동시 생성
 - BGM 볼륨: `bgm_volume=0.15`
+- **아웃트로:** 구독유도 → 댓글 참여 유도 질문 + 마스코트 목업으로 교체 (layout.json `scenes.outro`)
 
 ## LLM 모델 라우팅
 

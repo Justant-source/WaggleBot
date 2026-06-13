@@ -90,15 +90,27 @@
       "image_distribution_note": "공식: interval = total_lines / (remaining_images + 1)"
     },
     "outro": {
-      "description": "마지막 화면 — 고정 멘트 + mood별 아웃트로 폴더에서 랜덤 이미지",
-      "layout": "image_only",
-      "image_source": "outro_image_dir",
+      "description": "마지막 화면 — 참여 유도형 질문 + 마스코트 + 댓글 입력창 목업 (구독유도 제거)",
+      "layout": "outro",
       "fixed_texts": [
-        "여러분들의 생각은 어떤가요?",
-        "여러분들의 생각을 댓글로 남겨주세요!",
+        "여러분이라면 어떻게 하셨을까요?",
+        "이 상황, 어떻게 생각하시나요?",
+        "여러분의 생각을 댓글로 알려주세요!",
+        "이게 맞는 행동일까요?",
         "이 이야기, 어떻게 생각하시나요?"
       ],
-      "fixed_text_selection": "random"
+      "fixed_text_selection": "random",
+      "narrate": true,
+      "note": "TTS로 질문 문구 내레이션. 마스코트·입력창 목업은 _frames.py 코드 드로잉"
+    },
+    "comments": {
+      "description": "실제 커뮤니티 댓글 리스트 화면 — DB 원본 top-N, LLM 우회",
+      "layout": "comments",
+      "enabled": true,
+      "top_n": 5,
+      "narrate": false,
+      "dwell_sec": 4.0,
+      "note": "likes 내림차순 정렬. 1위 is_best=true. sent_idx=None(무음 체류)"
     }
   },
 

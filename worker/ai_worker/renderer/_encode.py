@@ -83,22 +83,24 @@ def _render_video_segment(
     layout: dict,
     font_dir: Path,
     output_path: Path,
+    content_top: int = 0,
 ) -> Path:
     """비디오 클립을 base_frame 위에 합성하여 세그먼트 mp4로 생성한다.
 
+    P3 (content_top > 0): 자연비율 contain 배치 — ffprobe로 클립 크기 측정 후
+    scale=nw:nh (크롭 없음) + 중앙 overlay. 자막은 caption_above 위치(위쪽).
+
+    P3 이전 (content_top == 0): 구 정사각 cover 방식 유지 (하위호환).
+
     resize/loop 중간 파일 없이 단일 FFmpeg 명령으로 처리한다:
     - demux 레벨 -stream_loop으로 재인코딩 없는 루프
-    - scale+crop+overlay를 filter_complex에 통합 → 인코딩 1회
+    - scale+overlay를 filter_complex에 통합 → h264_nvenc 인코딩 1회 (ADR-0002)
     """
+    import json as _json
     from ai_worker.renderer._frames import _render_video_text_overlay
 
-    va = layout["scenes"]["video_text"]["elements"]["video_area"]
     canvas_w = layout["canvas"]["width"]
     canvas_h = layout["canvas"]["height"]
-    va_w = va["width"]
-    va_h = va["height"]
-    va_x = va["x"]
-    va_y = va["y"]
     fps = 30
     frame_count = int(duration * fps)
 
@@ -109,17 +111,79 @@ def _render_video_segment(
     clip_path = Path(scene.video_clip_path)
 
     text_overlay_png = tmp_dir / f"txtoverlay_{output_path.stem}.png"
-    _render_video_text_overlay(text, layout, font_dir, text_overlay_png)
+    _render_video_text_overlay(text, layout, font_dir, text_overlay_png,
+                               content_top=content_top)
 
-    filter_complex = (
-        f"[0:v]loop=loop={frame_count}:size=1:start=0,"
-        f"setpts=N/{fps}/TB,fps={fps}[base];"
-        f"[1:v]scale={va_w}:{va_h}:force_original_aspect_ratio=increase,"
-        f"crop={va_w}:{va_h},fps={fps}[clip];"
-        f"[base][clip]overlay={va_x}:{va_y}:shortest=0[vwith];"
-        f"[2:v]scale={canvas_w}:{canvas_h}[txt];"
-        f"[vwith][txt]overlay=0:0[vout]"
-    )
+    if content_top > 0:
+        # ── P3: 자연비율 contain ────────────────────────────────────────
+        # ffprobe로 클립 원본 크기 측정
+        probe_result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_streams", "-select_streams", "v:0", str(clip_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        clip_w, clip_h = 1280, 720  # 측정 실패 시 기본값
+        if probe_result.returncode == 0:
+            try:
+                streams = _json.loads(probe_result.stdout).get("streams", [{}])
+                clip_w = int(streams[0].get("width", 1280))
+                clip_h = int(streams[0].get("height", 720))
+            except Exception:
+                pass
+
+        va_new = layout["scenes"]["video_text"].get("video_area_new", {})
+        media_max_w = va_new.get("max_width", 820)
+        media_gap = va_new.get("gap_top", 50)
+
+        # 자막 높이 추정 (최대 2줄 기준)
+        cap_cfg = layout["scenes"]["video_text"].get("caption_above", {})
+        cap_lh = cap_cfg.get("line_height", 62)
+        cap_pad = cap_cfg.get("pad_top", 56)
+        est_cap_h = cap_lh * 2  # 보수적 추정
+
+        media_y = content_top + cap_pad + est_cap_h + media_gap
+        media_max_h = max(100, canvas_h - media_y - 60)
+
+        # contain 계산 (짝수 보정 필수 — h264 요구사항)
+        scale = min(media_max_w / max(1, clip_w), media_max_h / max(1, clip_h))
+        nw = max(2, int(clip_w * scale))
+        nh = max(2, int(clip_h * scale))
+        nw -= nw % 2
+        nh -= nh % 2
+
+        clip_x = (canvas_w - nw) // 2
+        clip_y = media_y
+
+        filter_complex = (
+            f"[0:v]loop=loop={frame_count}:size=1:start=0,"
+            f"setpts=N/{fps}/TB,fps={fps}[base];"
+            f"[1:v]scale={nw}:{nh}:force_original_aspect_ratio=decrease,"
+            f"fps={fps}[clip];"
+            f"[base][clip]overlay={clip_x}:{clip_y}:shortest=0[vwith];"
+            f"[2:v]scale={canvas_w}:{canvas_h}[txt];"
+            f"[vwith][txt]overlay=0:0[vout]"
+        )
+        logger.debug(
+            "[encode] P3 contain: clip=%dx%d → %dx%d @(%d,%d)",
+            clip_w, clip_h, nw, nh, clip_x, clip_y,
+        )
+    else:
+        # ── 구 방식: 정사각 cover ───────────────────────────────────────
+        va = layout["scenes"]["video_text"]["elements"]["video_area"]
+        va_w = va["width"]
+        va_h = va["height"]
+        va_x = va["x"]
+        va_y = va["y"]
+
+        filter_complex = (
+            f"[0:v]loop=loop={frame_count}:size=1:start=0,"
+            f"setpts=N/{fps}/TB,fps={fps}[base];"
+            f"[1:v]scale={va_w}:{va_h}:force_original_aspect_ratio=increase,"
+            f"crop={va_w}:{va_h},fps={fps}[clip];"
+            f"[base][clip]overlay={va_x}:{va_y}:shortest=0[vwith];"
+            f"[2:v]scale={canvas_w}:{canvas_h}[txt];"
+            f"[vwith][txt]overlay=0:0[vout]"
+        )
 
     codec = _resolve_codec()
     enc_args = _get_encoder_args(codec)

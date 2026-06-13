@@ -37,7 +37,7 @@ from config.settings import EMOTION_TAGS, get_domain_setting
 
 logger = logging.getLogger(__name__)
 
-SceneType = Literal["intro", "video_text", "image_text", "text_only", "image_only", "outro"]
+SceneType = Literal["intro", "video_text", "image_text", "text_only", "image_only", "outro", "comments"]
 
 # 반전/충격 키워드가 등장하면 단독 강조 처리
 _HIGHLIGHT_KEYWORDS = ["반전", "충격", "결과", "결론", "사실", "진짜", "알고보니"]
@@ -75,6 +75,9 @@ class SceneDecision:
     estimated_tts_sec: float = 0.0           # TTS 예상 시간 (초) — 비디오 생성 시 목표 길이
     video_subtype: str | None = None         # "itv" | "ttv" | None (video_text에서만 사용)
     merged_scene_indices: list[int] | None = None  # 병합된 원본 씬 인덱스들
+    # --- 댓글 씬 전용 필드 ---
+    comment_items: list[dict] | None = None  # [{"author","content","likes","is_best"}]
+    dwell_sec: float = 4.0                   # 무음 체류 시간 (comments 씬)
 
 
 @dataclass
@@ -453,24 +456,15 @@ def _build_user_prompt(llm_input: dict) -> str:
 
 
 def _extract_json_from_response(raw: str) -> dict | None:
-    """LLM 응답에서 JSON 객체를 추출한다."""
-    # 1차: 코드 블록에서 추출
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-    if match:
-        try:
-            return _json.loads(match.group(1))
-        except _json.JSONDecodeError:
-            pass
+    """LLM 응답에서 JSON 객체를 추출한다.
 
-    # 2차: 전체 텍스트에서 JSON 객체 추출
-    match = re.search(r"\{.*\}", raw, re.DOTALL)
-    if match:
-        try:
-            return _json.loads(match.group(0))
-        except _json.JSONDecodeError:
-            pass
+    코드펜스·트레일링 prose·잡텍스트를 견고하게 흡수하는 공용 추출기를 사용한다.
+    실패 시 None을 반환해 호출자의 rule_based 폴백을 트리거한다.
+    """
+    from ai_worker.llm.transport import extract_json_object
 
-    return None
+    obj = extract_json_object(raw)
+    return obj if obj else None
 
 
 def _call_scene_director_llm(
@@ -505,7 +499,9 @@ def _call_scene_director_llm(
         with LLMCallTimer() as timer:
             raw = call_llm(
                 prompt=full_prompt,
-                max_tokens=2048,
+                # 씬 다수(20+) 게시글은 video_clips+static_scenes JSON이 2048에 잘려
+                # rule_based 폴백으로 떨어진다 → 4096으로 상향(품질 유지).
+                max_tokens=4096,
                 call_type="scene_director",
                 timeout=timeout,
                 post_id=post_id,
@@ -1165,13 +1161,19 @@ class SceneDirector:
         mood: str = "daily",
         post_id: int | None = None,
         image_cache_dir: Path | None = None,
+        narrator_voice: str | None = None,
+        comments: list | None = None,
     ) -> None:
         self.profile = profile
-        self._images: list[str] = list(images)   # 소모 추적용 복사본
+        self._images: list[str] = list(images)
         self.script = script
         self.mood = mood
         self.post_id = post_id
         self.image_cache_dir = image_cache_dir
+        self.narrator_voice = narrator_voice   # 사연자 내레이터 voice_key
+        self._character_voices: dict[str, str] = {}  # character_label → voice_key
+        # 실제 댓글 DB 객체 목록 (Comment 모델). LLM 우회로 직접 전달받아 댓글씬 생성.
+        self._db_comments: list = list(comments) if comments else []
 
         if comment_voices is None:
             # pipeline.json에서 자동 로드 (processor.py 레거시 경로용)
@@ -1280,10 +1282,19 @@ class SceneDirector:
                 block_type = item.get("type", "body")
                 author = item.get("author")
                 is_comment = block_type == "comment"
-                voice = random.choice(self.comment_voices) if is_comment and self.comment_voices else None
+                if is_comment and self.comment_voices:
+                    voice = random.choice(self.comment_voices)
+                elif item.get("speaker") == "character":
+                    voice = self._assign_character_voice(
+                        item.get("character_label", ""),
+                        item.get("character_gender", ""),
+                        item.get("character_age", ""),
+                    )
+                else:
+                    voice = self.narrator_voice  # None이면 TTS default 사용
                 body_items.append((text, voice, block_type, author, lines_raw if len(lines_raw) > 1 else None))
             else:
-                body_items.append((str(item), None, "body", None, None))
+                body_items.append((str(item), self.narrator_voice, "body", None, None))
 
         # 모드 결정: LLM vs rule_based
         director_mode = get_domain_setting(
@@ -1316,6 +1327,38 @@ class SceneDirector:
         used_img_count = sum(1 for s in body_scenes if s.image_url is not None)
         self._images = self._images[used_img_count:]
         scenes.extend(body_scenes)
+
+        # ── 댓글 씬 (아웃트로 직전) ────────────────────────────────────────
+        if policy:
+            comments_rule = policy.get("scene_rules", {}).get("comments", {})
+            if comments_rule.get("enabled", True) and self._db_comments:
+                top_n: int = comments_rule.get("top_n", 5)
+                dwell: float = float(comments_rule.get("dwell_sec", 4.0))
+                # likes 내림차순 정렬
+                sorted_cmts = sorted(
+                    self._db_comments,
+                    key=lambda c: getattr(c, "likes", 0) or 0,
+                    reverse=True,
+                )[:top_n]
+                comment_items: list[dict] = [
+                    {
+                        "author": getattr(c, "author", None) or "익명",
+                        "content": getattr(c, "content", "") or "",
+                        "likes": getattr(c, "likes", 0) or 0,
+                        "is_best": (i == 0),  # 추천 1위 → BEST
+                    }
+                    for i, c in enumerate(sorted_cmts)
+                ]
+                scenes.append(SceneDecision(
+                    type="comments",
+                    text_lines=[],
+                    image_url=None,
+                    mood=mood,
+                    tts_emotion="",
+                    comment_items=comment_items,
+                    dwell_sec=dwell,
+                ))
+                logger.debug("댓글 씬 추가: %d개 댓글 (dwell=%.1fs)", len(comment_items), dwell)
 
         # ── Outro ──────────────────────────────────────────────────────
         outro_asset = _pick_asset("outro_image_dir")
@@ -1516,6 +1559,17 @@ class SceneDirector:
     # ------------------------------------------------------------------
     # Private helpers (레거시 — distribute_images()로 대체됨, 하위 호환 유지)
     # ------------------------------------------------------------------
+
+    def _assign_character_voice(self, label: str, gender: str, age: str) -> str:
+        """character_label별 voice_key를 캐시·할당한다. 동일 인물은 동일 목소리."""
+        if label in self._character_voices:
+            return self._character_voices[label]
+        from ai_worker.script.voice_assigner import pick_voice
+        used = ({self.narrator_voice} if self.narrator_voice else set()) | set(self._character_voices.values())
+        voice = pick_voice(gender, age, exclude=used)
+        self._character_voices[label] = voice
+        logger.debug("[director] character '%s' → voice=%s", label, voice)
+        return voice
 
     def _make_scene(
         self,

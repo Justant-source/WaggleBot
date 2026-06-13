@@ -32,10 +32,13 @@ from config.settings import ASSETS_DIR, MEDIA_DIR
 # ── 내부 모듈 re-import (기존 import 경로 호환) ──
 from ai_worker.renderer._frames import (
     CANVAS_W, CANVAS_H, HEADER_H, HEADER_COLOR,
-    _create_base_frame, _render_intro_frame, _render_image_text_frame,
-    _render_text_only_frame, _render_image_only_frame, _render_outro_frame,
+    _create_base_frame, _create_header_only_frame,
+    _render_intro_frame, _render_image_text_frame,
+    _render_text_only_frame, _render_image_only_frame,
+    _render_outro_frame, _render_comments_frame,
     _render_video_text_overlay, _wrap_korean, _draw_centered_text,
-    _truncate, _fit_cover, _paste_rounded, _load_image,
+    _truncate, _fit_cover, _fit_contain, _paste_rounded, _load_image,
+    _title_block_bottom_y, _fmt_count, _relative_time,
 )
 from ai_worker.renderer._tts import (
     _tts_chunk_async, _generate_tts_chunks, _merge_chunks,
@@ -287,6 +290,17 @@ def _scenes_to_plan_and_sentences(
                                   "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "outro", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
 
+        elif scene.type == "comments":
+            # 무음 체류 씬 — TTS 없이 dwell_sec 동안 정지 (sent_idx=None)
+            dwell = getattr(scene, "dwell_sec", 4.0)
+            plan.append({
+                "type": "comments",
+                "sent_idx": None,
+                "img_idx": None,
+                "scene_idx": scene_i,
+                "dwell_sec": float(dwell),
+            })
+
     return sentences, plan, images
 
 
@@ -342,6 +356,7 @@ def _render_pipeline(
     tts_audio_cache: Path | None = None,
     bgm_path: Path | None = None,
     scenes_list: list | None = None,
+    meta: dict | None = None,
 ) -> Path:
     """sentences / plan / images 를 받아 mp4를 생성한다."""
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
@@ -349,8 +364,11 @@ def _render_pipeline(
 
     try:
         # ── Step 2: 베이스 프레임 베이킹 ──────────────────────
-        base_frame = _create_base_frame(layout, title, font_dir, ASSETS_DIR)
-        logger.info("[layout] 베이스 프레임 생성 완료 (제목 헤더 고정)")
+        # content_top: 제목블록 아래 콘텐츠 시작 Y (린치핀 — 모든 씬 공유)
+        content_top = _title_block_bottom_y(layout, title, font_dir)
+        base_frame = _create_base_frame(layout, title, font_dir, ASSETS_DIR, meta=meta)
+        header_only_frame = _create_header_only_frame(layout, font_dir)
+        logger.info("[layout] 베이스 프레임 생성 완료 (content_top=%d)", content_top)
 
         # ── Step 4: 이미지 사전 다운로드 ──────────────────────
         image_cache: dict[int, Optional["Image.Image"]] = {}
@@ -415,7 +433,8 @@ def _render_pipeline(
         # ── Step 7: text_only용 줄바꿈 사전 계산 ──────────────
         sc_to = layout["scenes"]["text_only"]
         to_ta = sc_to["elements"]["text_area"]
-        to_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", to_ta["font_size"])
+        # Bold 폰트로 줄바꿈 계산 (v3: 자막이 Bold로 바뀜)
+        to_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", to_ta["font_size"])
         to_max_w = to_ta["max_width"]
         to_max_chars = sc_to.get("text_max_chars", 0)
 
@@ -444,7 +463,12 @@ def _render_pipeline(
                 text_only_history = []
 
             if scene_type == "intro":
-                _render_intro_frame(base_frame, frame_path)
+                img_pil = image_cache.get(img_idx) if img_idx is not None else None
+                hook_text = sentences[sent_idx]["text"] if sent_idx is not None else ""
+                _render_intro_frame(
+                    base_frame, img_pil, hook_text,
+                    layout, font_dir, frame_path, content_top,
+                )
 
             elif scene_type == "image_text":
                 img_pil = image_cache.get(img_idx) if img_idx is not None else None
@@ -452,17 +476,18 @@ def _render_pipeline(
                 if img_pil is None:
                     logger.warning("[layout] 프레임 %d: image_text→text_only 폴백 (이미지 없음)", frame_idx)
                     lines = sentences[sent_idx].get("lines", [text]) if sent_idx is not None else [text]
-                    fallback_entry = {"lines": lines, "is_new": True,
-                                      "block_type": entry.get("block_type", "body"),
-                                      "author": entry.get("author")}
-                    _render_text_only_frame(base_frame, [fallback_entry], layout, font_dir, frame_path)
+                    fallback_entry = {"lines": lines,
+                                      "block_type": entry.get("block_type", "body")}
+                    _render_text_only_frame(
+                        base_frame, [fallback_entry], layout, font_dir, frame_path, content_top,
+                    )
                 else:
-                    _render_image_text_frame(base_frame, img_pil, text, layout, font_dir, frame_path)
+                    _render_image_text_frame(
+                        base_frame, img_pil, text, layout, font_dir, frame_path, content_top,
+                    )
 
             elif scene_type == "text_only":
-                for prev in text_only_history:
-                    prev["is_new"] = False
-
+                # v3: 이전 슬롯 흐림(greying) 제거 — 전 슬롯 동일 검정
                 new_lines = sentences[sent_idx]["lines"] if sent_idx is not None else []
 
                 if len(text_only_history) >= max_slots:
@@ -474,19 +499,32 @@ def _render_pipeline(
                 sent_data = sentences[sent_idx] if sent_idx is not None else {}
                 text_only_history.append({
                     "lines": new_lines,
-                    "is_new": True,
                     "block_type": sent_data.get("block_type", "body"),
-                    "author": sent_data.get("author"),
                 })
-                _render_text_only_frame(base_frame, text_only_history, layout, font_dir, frame_path)
+                _render_text_only_frame(
+                    base_frame, text_only_history, layout, font_dir, frame_path, content_top,
+                )
 
             elif scene_type == "image_only":
                 img_pil = image_cache.get(img_idx) if img_idx is not None else None
-                _render_image_only_frame(base_frame, img_pil, layout, frame_path)
+                _render_image_only_frame(
+                    base_frame, img_pil, layout, frame_path, content_top,
+                )
 
             elif scene_type == "outro":
-                img_pil = image_cache.get(img_idx) if img_idx is not None else None
-                _render_outro_frame(base_frame, img_pil, "", layout, font_dir, frame_path)
+                # 아웃트로는 헤더only 프레임 사용 (제목블록 없음)
+                outro_text = sentences[sent_idx]["text"] if sent_idx is not None else ""
+                _render_outro_frame(
+                    header_only_frame, outro_text, layout, font_dir, frame_path,
+                )
+
+            elif scene_type == "comments":
+                # 댓글 씬: SceneDecision에서 comment_items 추출
+                scene = _get_scene_for_entry(entry, sentences, scenes_list)
+                items = getattr(scene, "comment_items", None) if scene else None
+                _render_comments_frame(
+                    base_frame, items or [], layout, font_dir, frame_path, content_top,
+                )
 
             frame_paths.append(frame_path)
 
@@ -524,6 +562,7 @@ def _render_pipeline(
                             layout=layout,
                             font_dir=font_dir,
                             output_path=segment_path,
+                            content_top=content_top,
                         )
                     except Exception as e:
                         logger.warning(
@@ -841,6 +880,16 @@ def render_layout_video_from_scenes(
                 )
             break
 
+    # ── 메타 정보 빌드 (제목블록 메타줄 표시용) ──────────────────────────
+    _stats: dict = post.stats if isinstance(post.stats, dict) else {}
+    _author_raw: str = getattr(post, "author", None) or ""
+    meta: dict = {
+        "author": _author_raw or None,          # None이면 config author_fallback("와글") 사용
+        "time": _relative_time(getattr(post, "created_at", None)),
+        "views": _fmt_count(_stats.get("views")),
+        "comments": _stats.get("comments_count") or 0,
+    }
+
     return _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
@@ -848,4 +897,5 @@ def render_layout_video_from_scenes(
         tts_audio_cache=tts_audio_cache,
         bgm_path=bgm_path,
         scenes_list=scenes,
+        meta=meta,
     )

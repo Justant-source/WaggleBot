@@ -92,6 +92,19 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         extra_instructions=_extra or "",
     )
 
+    # ── narrator voice 결정 (사연자 연령/성별 기반) ────────────────
+    from ai_worker.script.voice_assigner import pick_voice as _pick_voice
+    narrator_voice: str = _pick_voice(
+        llm_output.get("narrator_gender", ""),
+        llm_output.get("narrator_age", ""),
+    )
+    logger.info(
+        "[content_processor] narrator_voice=%s (gender=%s, age=%s)",
+        narrator_voice,
+        llm_output.get("narrator_gender", "—"),
+        llm_output.get("narrator_age", "—"),
+    )
+
     # ── Phase 3: 물리적 검증 (max_chars 보정) ─────────────────────
     script: dict = validate_and_fix(llm_output)
     logger.info(
@@ -110,12 +123,21 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
     if VIDEO_GEN_ENABLED:
         image_cache_dir.mkdir(parents=True, exist_ok=True)
 
+    # 댓글 씬용: DB 원본 댓글을 LLM 우회로 직접 전달 (likes 데이터 보존)
+    _db_comments = sorted(
+        getattr(post, "comments", None) or [],
+        key=lambda c: getattr(c, "likes", 0) or 0,
+        reverse=True,
+    )
+
     director = SceneDirector(
         profile, images, script,
         mood=script.get("mood", "daily"),
         comment_voices=comment_voices,
+        narrator_voice=narrator_voice,
         post_id=post.id,
         image_cache_dir=image_cache_dir if VIDEO_GEN_ENABLED else None,
+        comments=_db_comments,
     )
     scenes: list[SceneDecision] = director.direct()
 
