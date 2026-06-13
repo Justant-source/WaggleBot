@@ -35,6 +35,17 @@ function tierBadge(score: number) {
   return <Badge variant="outline">하위</Badge>
 }
 
+/** axios 에러에서 사용자에게 보여줄 원인 문자열 추출 (DevTools 없이 진단 가능하도록). */
+function apiErr(e: any): string {
+  if (e?.response) {
+    const d = e.response.data
+    const msg = (d && (d.error || d.message)) || ''
+    return `HTTP ${e.response.status}${msg ? ` · ${msg}` : ''}`
+  }
+  if (e?.code === 'ECONNABORTED') return '시간 초과(timeout)'
+  return e?.message || '네트워크 오류(응답 없음)'
+}
+
 export default function InboxPage() {
   const [data, setData] = useState<{ posts: Post[]; total: number; counts: { tier1: number; tier2: number; tier3: number } } | null>(null)
   const [loading, setLoading] = useState(true)
@@ -108,8 +119,8 @@ export default function InboxPage() {
     try {
       await inboxApi.approve(id)
       toast.success('승인됨')
-    } catch {
-      toast.error('승인 실패')
+    } catch (e) {
+      toast.error(`승인 실패 — ${apiErr(e)}`)
       load()
     }
   }
@@ -129,8 +140,8 @@ export default function InboxPage() {
     try {
       await inboxApi.decline(id)
       toast.success('거절됨')
-    } catch {
-      toast.error('거절 실패')
+    } catch (e) {
+      toast.error(`거절 실패 — ${apiErr(e)}`)
       load()
     }
   }

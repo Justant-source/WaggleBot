@@ -55,6 +55,9 @@ worker/test/test_prompt_engine_output
 worker/test/test_video_rendering_output
 worker/media/
 
+# --- youtube/ 임시 도구 (소스만 추적, 산출물/바이너리 제외) ---
+youtube/
+
 assets
 .venv
 
