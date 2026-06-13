@@ -44,9 +44,9 @@ class MlbparkCrawler(BaseCrawler):
 
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            # MLB파크 게시판: table.bd_list 내 tr — id= 파라미터로 게시글 식별
+            # MLB파크 게시판: table.tbl_type01 내 td.t_left — id= 파라미터로 게시글 식별
             _id_pat = re.compile(r"id=(\d+)")
-            for link in soup.select("table.bd_list td.title a, table tr td.tit a"):
+            for link in soup.select("table.tbl_type01 td.t_left a"):
                 href = link.get("href", "")
                 m = _id_pat.search(href)
                 if not m:
@@ -56,6 +56,9 @@ class MlbparkCrawler(BaseCrawler):
                 if origin_id in seen:
                     continue
 
+                # 댓글 수 스팬([289] 등) 제거 후 제목 추출
+                for span in link.select("span.replycnt"):
+                    span.decompose()
                 title = link.get_text(strip=True)
                 if not title or len(title) < 2:
                     continue
@@ -81,11 +84,11 @@ class MlbparkCrawler(BaseCrawler):
         resp = self._get(url)
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        title = self._text(
-            soup.select_one("h2.view_tit, .article_tit h2, .view_title")
-        )
+        # 제목: div.titles
+        title = self._text(soup.select_one("div.titles"))
 
-        content_el = soup.select_one(".view_textbody, .article_body, .bd_view_contents")
+        # 본문: div.view_context
+        content_el = soup.select_one("div.view_context")
         content = content_el.get_text("\n", strip=True) if content_el else ""
 
         images: list[str] = []
@@ -95,9 +98,11 @@ class MlbparkCrawler(BaseCrawler):
                 if src and src.startswith("http"):
                     images.append(src)
 
-        page_text = soup.get_text()
-        views = self._parse_stat(page_text, r"조회\s*:?\s*([\d,]+)")
-        likes = self._parse_stat(page_text, r"추천\s*:?\s*([\d,]+)")
+        # 조회/추천: ul.view_head 내 텍스트에서 추출
+        view_head = soup.select_one("ul.view_head")
+        head_text = view_head.get_text() if view_head else soup.get_text()
+        views = self._parse_stat(head_text, r"조회\s*:?\s*([\d,]+)")
+        likes = self._parse_stat(head_text, r"추천\s*:?\s*([\d,]+)")
 
         comments = self._parse_comments(soup)
 
@@ -122,11 +127,18 @@ class MlbparkCrawler(BaseCrawler):
     def _parse_comments(self, soup: BeautifulSoup) -> list[dict]:
         results: list[dict] = []
 
-        # MLB파크 댓글: .comment_list 또는 .reply_list 내 항목
-        for item in soup.select(".comment_list li, .reply_wrap li, .cmtlist li"):
-            author_el = item.select_one(".nick, .comment_nick, .user_id")
-            body_el = item.select_one(".comment_view, .reply_txt, .cmttext")
-            likes_el = item.select_one(".ok_cnt, .like_count, .vote_ok")
+        # MLB파크 댓글: div.reply_list > div.other_con|my_con > div.txt_box > div.txt
+        reply_list = soup.select_one("div.reply_list")
+        if not reply_list:
+            return results
+
+        for item in reply_list.select("div.other_con, div.my_con"):
+            txt_div = item.select_one("div.txt_box div.txt")
+            if not txt_div:
+                continue
+
+            author_el = txt_div.select_one("span.name")
+            body_el = txt_div.select_one("span.re_txt")
 
             if not body_el:
                 continue
@@ -138,7 +150,7 @@ class MlbparkCrawler(BaseCrawler):
             results.append({
                 "author": self._text(author_el) if author_el else "익명",
                 "content": body,
-                "likes": self._parse_int(self._text(likes_el)) if likes_el else 0,
+                "likes": 0,
             })
 
         return results

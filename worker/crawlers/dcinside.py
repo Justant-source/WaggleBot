@@ -132,8 +132,29 @@ class DcInsideCrawler(BaseCrawler):
         # 본문
         body_el = soup.select_one("div.writing_view_box")
         content = body_el.get_text("\n", strip=True) if body_el else ""
-        # 출처 표기 제거 (예: "출처: 부동산 갤러리 [원본 보기]")
-        content = re.sub(r"출처\s*:.*?(?:\[원본\s*보기\])?$", "", content, flags=re.MULTILINE).strip()
+        # 출처 표기 + [원본 보기] 링크 텍스트 제거
+        # 예: "출처: 부동산 갤러리 [원본 보기]" 또는 "출처: XXX\n[원본 보기]"
+        content = re.sub(r"출처\s*:.*", "", content, flags=re.MULTILINE).strip()
+        # 단독으로 남은 "[원본 보기]" 라인 제거 (이미지 위주 글에서 발생)
+        content = re.sub(r"^\[원본\s*보기\]\s*$", "", content, flags=re.MULTILINE).strip()
+
+        # 이미지 위주 글 보완: content가 짧고 실제 이미지가 있으면 이미지 수 설명 추가
+        # data-fileno 속성으로 DC 업로드 실제 이미지만 카운트 (로딩 placeholder 제외)
+        if body_el:
+            real_img_count = len(body_el.select("img[data-fileno]"))
+            if real_img_count > 0 and len(content) < 20:
+                # alt 텍스트 수집 (해시값·빈값 제외, 실제 의미있는 캡션만)
+                captions: list[str] = []
+                for img in body_el.select("img[data-fileno]"):
+                    alt = (img.get("alt") or "").strip()
+                    # DC는 alt를 해시(hex 64자+)로 채우므로 길이·문자 기준으로 필터
+                    if alt and len(alt) < 50 and not re.fullmatch(r"[0-9a-f]+", alt, re.IGNORECASE):
+                        captions.append(alt)
+                img_desc = f"[이미지 {real_img_count}장]"
+                if captions:
+                    img_desc += " " + " / ".join(captions[:5])
+                content = img_desc if not content else f"{content}\n{img_desc}"
+                log.info("이미지 위주 글 content 보완: %s", img_desc)
 
         # 이미지 (DCInside lazy load 방식)
         # - 초반 1~2장: src에 직접 실제 URL 존재

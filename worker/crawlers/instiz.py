@@ -41,7 +41,8 @@ class InstizCrawler(BaseCrawler):
 
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            # 인스티즈 인기글 목록: .board_wrap 내 .stext 링크
+            # 인스티즈 인기글 목록: href에 절대 URL /pt/<id> 포함 링크
+            # 제목 안에 댓글 수(.cmt3 span)가 포함되므로 제거 후 추출
             for link in soup.select("a[href*='/pt/']"):
                 href = link.get("href", "")
                 m = re.search(r"/pt/(\d+)", href)
@@ -52,6 +53,9 @@ class InstizCrawler(BaseCrawler):
                 if origin_id in seen:
                     continue
 
+                # 댓글 수 스팬(.cmt, .cmt2, .cmt3) 제거 후 제목 추출
+                for cmt_el in link.select(".cmt, .cmt2, .cmt3"):
+                    cmt_el.decompose()
                 title = link.get_text(strip=True)
                 if not title or len(title) < 3:
                     continue
@@ -77,21 +81,43 @@ class InstizCrawler(BaseCrawler):
         resp = self._get(url)
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        title = self._text(soup.select_one(".memo_subject") or soup.select_one("h2.title"))
+        # 제목: span#nowsubject — .cmt 댓글 수 스팬 제거 후 추출
+        title_el = soup.select_one("#nowsubject")
+        if title_el:
+            for cmt_el in title_el.select(".cmt, .cmt2, .cmt3"):
+                cmt_el.decompose()
+            title = title_el.get_text(strip=True)
+        else:
+            title = ""
 
-        content_el = soup.select_one(".memo_content") or soup.select_one(".content_view")
-        content = content_el.get_text("\n", strip=True) if content_el else ""
+        # 본문: #memo_content_1 — 스크립트/버튼 제거 후 텍스트 추출
+        # 이미지 전용 게시글은 텍스트가 없으므로 이미지 URL 목록으로 폴백
+        content_el = soup.select_one("#memo_content_1") or soup.select_one(".memo_content")
 
         images: list[str] = []
         if content_el:
             for img in content_el.select("img"):
                 src = img.get("src") or img.get("data-src") or ""
+                if src.startswith("//"):
+                    src = "https:" + src
                 if src and src.startswith("http"):
                     images.append(src)
+            # 스크립트·버튼 요소 제거 후 텍스트 추출
+            for el in content_el.select("script, .fan-option-button-group"):
+                el.decompose()
+            content = content_el.get_text("\n", strip=True)
+            # 이미지 전용 게시글: 텍스트가 없으면 이미지 URL 목록으로 대체
+            if len(content) < 30 and images:
+                content = "\n".join(images)
+        else:
+            content = ""
 
-        page_text = soup.get_text()
-        views = self._parse_stat(page_text, r"조회\s*:?\s*([\d,]+)")
-        likes = self._parse_stat(page_text, r"추천\s*:?\s*([\d,]+)")
+        # 조회수: span#hit
+        hit_el = soup.select_one("span#hit")
+        views = self._parse_int(self._text(hit_el)) if hit_el else 0
+
+        # 추천수: 정적 HTML에 노출되지 않음 — 기본값 0
+        likes = 0
 
         comments = self._parse_comments(soup)
 
@@ -116,23 +142,31 @@ class InstizCrawler(BaseCrawler):
     def _parse_comments(self, soup: BeautifulSoup) -> list[dict]:
         results: list[dict] = []
 
-        # 인스티즈 댓글 구조: .comment_wrap 또는 .cmt_wrap
-        for item in soup.select(".comment_wrap .comment_list li, .cmt_list li"):
-            author_el = item.select_one(".id_info, .comment_id, .nick")
-            body_el = item.select_one(".comment_memo, .cmt_memo, .cmt_text")
-            likes_el = item.select_one(".ok_num, .vote_btn_cnt, .like_cnt")
+        # 인스티즈 댓글 구조: #ajax_comment 내 tr.cmt_view
+        # - 작성자: td.comment_memo .href
+        # - 내용:   td.comment_memo .comment_line span[id^='n']
+        # - 공감수: 정적 HTML에 노출 안 됨 → 0
+        for row in soup.select("#ajax_comment tr.cmt_view"):
+            memo_td = row.select_one("td.comment_memo")
+            if not memo_td:
+                continue
+
+            author_el = memo_td.select_one(".href")
+            # id가 'n'으로 시작하는 span이 댓글 본문
+            body_el = memo_td.select_one("span[id^='n']")
 
             if not body_el:
                 continue
 
             body = body_el.get_text(strip=True)
-            if not body:
+            # 로그인 안내 문구는 실제 댓글이 아님
+            if not body or "로그인 후 이용" in body:
                 continue
 
             results.append({
                 "author": self._text(author_el) if author_el else "익명",
                 "content": body,
-                "likes": self._parse_int(self._text(likes_el)) if likes_el else 0,
+                "likes": 0,
             })
 
         return results
