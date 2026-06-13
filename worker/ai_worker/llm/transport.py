@@ -16,6 +16,11 @@ from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
+
+class LLMContentRefusalError(Exception):
+    """LLM이 콘텐츠 정책을 이유로 JSON 대본 생성을 거부했을 때 발생."""
+
+
 _MODEL_ALIASES: dict[str, str] = {
     "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-4-6",
@@ -420,7 +425,6 @@ def call_llm_json(
 
     system/cache_prefix는 call_llm으로 그대로 전달(api 백엔드 프롬프트 캐싱 지원).
     """
-    import re
     raw = call_llm(
         prompt,
         model=model,
@@ -432,17 +436,69 @@ def call_llm_json(
         cache_prefix=cache_prefix,
         temperature=temperature,
     )
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        logger.warning("JSON 파싱 실패, 정규식 폴백: %s...", raw[:100])
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group())
-            except json.JSONDecodeError:
-                pass
-        return {}
+    return extract_json_object(raw)
+
+
+def extract_json_object(raw: str) -> dict:
+    """LLM 원시 응답에서 JSON 객체를 견고하게 추출한다.
+
+    json_mode 지시문에도 불구하고 모델이 ```json 코드펜스·설명 prose를 덧붙이거나
+    응답 끝에 잡텍스트를 남기는 경우가 잦다. 다단계로 복구한다:
+      1) 그대로 json.loads
+      2) 코드펜스 제거 후 json.loads
+      3) 첫 '{'부터 raw_decode — 한 객체만 파싱하고 뒤따르는 펜스/prose는 무시
+      4) 탐욕적 정규식(최후의 수단)
+    모두 실패하면 빈 dict 반환(상위에서 거부/오류 처리).
+    """
+    import re
+
+    candidates: list[str] = []
+    stripped = raw.strip()
+    candidates.append(stripped)
+
+    # 코드펜스 제거: ```json ... ``` 또는 ``` ... ```
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, re.DOTALL)
+    if fence:
+        candidates.append(fence.group(1).strip())
+
+    for cand in candidates:
+        try:
+            obj = json.loads(cand)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    # 모든 '{' 위치에서 raw_decode 시도 — 앞쪽 prose에 중괄호가 섞여도
+    # (예: "아래 {중요} 대본:\n{...}") 실제 JSON 객체를 찾아낸다. 한 객체만
+    # 파싱하므로 트레일링 펜스/prose는 자연히 무시된다. 내용 있는 첫 dict 우선.
+    decoder = json.JSONDecoder()
+    first_empty: dict | None = None
+    pos = stripped.find("{")
+    while pos != -1:
+        try:
+            obj, _ = decoder.raw_decode(stripped, pos)
+            if isinstance(obj, dict):
+                if obj:
+                    return obj
+                if first_empty is None:
+                    first_empty = obj
+        except json.JSONDecodeError:
+            pass
+        pos = stripped.find("{", pos + 1)
+    if first_empty is not None:
+        return first_empty
+
+    logger.warning("JSON 파싱 실패, 정규식 폴백: %s...", raw[:120])
+    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if match:
+        try:
+            obj = json.loads(match.group())
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            pass
+    return {}
 
 
 # 하위 호환 별칭

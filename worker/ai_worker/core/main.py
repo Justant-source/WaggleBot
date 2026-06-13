@@ -35,6 +35,20 @@ def _mark_post_failed(post_id: int, error: str = "") -> None:
         logger.exception("FAILED 마킹 실패: post_id=%d", post_id)
 
 
+def _mark_post_declined(post_id: int, reason: str = "") -> None:
+    """LLM 콘텐츠 거부 시 post를 DECLINED로 마킹한다 (재시도 불필요)."""
+    try:
+        with SessionLocal() as session:
+            post = session.query(Post).filter_by(id=post_id).first()
+            if post is not None:
+                post.status = PostStatus.DECLINED
+                post.last_error = reason[:1000] if reason else None
+                session.commit()
+                logger.warning("콘텐츠 거부로 DECLINED 처리: post_id=%d | %s", post_id, reason)
+    except Exception:
+        logger.exception("DECLINED 마킹 실패: post_id=%d", post_id)
+
+
 def _recover_stuck_posts() -> None:
     """시작 시 PROCESSING 상태로 고착된 포스트를 APPROVED로 복구한다."""
     with SessionLocal() as session:
@@ -126,8 +140,13 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
                     script, audio_path = await processor.llm_tts_stage(post_id)
                     result = (post_id, script, audio_path)
                 except Exception as exc:
-                    logger.exception("LLM+TTS 실패: post_id=%d", post_id)
-                    _mark_post_failed(post_id, error=repr(exc))
+                    from ai_worker.llm.transport import LLMContentRefusalError
+                    if isinstance(exc, LLMContentRefusalError):
+                        logger.warning("LLM 콘텐츠 거부: post_id=%d | %s", post_id, exc)
+                        _mark_post_declined(post_id, reason=str(exc))
+                    else:
+                        logger.exception("LLM+TTS 실패: post_id=%d", post_id)
+                        _mark_post_failed(post_id, error=repr(exc))
                     await asyncio.sleep(5)
 
         # gpu_lock 해제 후 큐 적재 (데드락 방지: 큐 만석 시 render_worker가 lock 필요)
