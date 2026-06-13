@@ -10,11 +10,22 @@ import { Film, Upload, Play, X } from 'lucide-react'
 
 type GalleryItem = {
   post: { id: number; title: string; status: string }
-  content?: { videoPath: string | null; audioPath: string | null; ttsVoice?: string | null; variantLabel?: string | null }
+  content?: {
+    videoPath: string | null
+    audioPath: string | null
+    ttsVoice?: string | null
+    variantLabel?: string | null
+    uploadMeta?: { thumbnail_path?: string } | null
+  }
 }
 
-function getVideoUrl(videoPath: string): string {
-  return `/media/${videoPath.replace('/app/media/', '')}`
+function getMediaUrl(path: string): string {
+  return `/media/${path.replace('/app/media/', '')}`
+}
+
+function getThumbnailUrl(item: GalleryItem): string | null {
+  const tp = item.content?.uploadMeta?.thumbnail_path
+  return tp ? getMediaUrl(tp) : null
 }
 
 export default function GalleryPage() {
@@ -46,28 +57,48 @@ export default function GalleryPage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => (
             <div key={item.post.id} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-              {/* 썸네일 영역 — 클릭 시 풀스크린 모달 오픈 */}
+              {/* 카드 프리뷰 — 썸네일 이미지(16:9) 우선, 없으면 비디오 */}
               <div
-                className="relative flex h-32 items-center justify-center bg-gray-100 cursor-pointer group"
+                className="relative flex h-32 items-center justify-center bg-gray-100 cursor-pointer group overflow-hidden"
                 onClick={() => item.content?.videoPath && setPreviewItem(item)}
               >
-                {item.content?.videoPath ? (
-                  <>
-                    <video
-                      src={getVideoUrl(item.content.videoPath)}
-                      className="h-full w-full object-contain pointer-events-none"
-                      preload="metadata"
-                    />
-                    {/* 재생 버튼 오버레이 */}
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90">
-                        <Play className="h-5 w-5 text-gray-800 ml-0.5" />
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <Film className="h-8 w-8 text-gray-300" />
-                )}
+                {(() => {
+                  const thumbUrl = getThumbnailUrl(item)
+                  if (thumbUrl) {
+                    return (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={thumbUrl}
+                          alt={item.post.title}
+                          className="h-full w-full object-cover pointer-events-none"
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90">
+                            <Play className="h-5 w-5 text-gray-800 ml-0.5" />
+                          </div>
+                        </div>
+                      </>
+                    )
+                  }
+                  if (item.content?.videoPath) {
+                    return (
+                      <>
+                        <video
+                          src={getMediaUrl(item.content.videoPath)}
+                          className="h-full w-full object-contain pointer-events-none"
+                          preload="metadata"
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90">
+                            <Play className="h-5 w-5 text-gray-800 ml-0.5" />
+                          </div>
+                        </div>
+                      </>
+                    )
+                  }
+                  return <Film className="h-8 w-8 text-gray-300" />
+                })()}
               </div>
 
               <div className="p-3">
@@ -135,15 +166,30 @@ export default function GalleryPage() {
             </button>
 
             {/* 9:16 비율 비디오 */}
-            {previewItem.content?.videoPath && (
-              <video
-                src={getVideoUrl(previewItem.content.videoPath)}
-                className="max-h-[85vh] rounded-lg shadow-2xl"
-                style={{ aspectRatio: '9/16' }}
-                controls
-                autoPlay
-              />
-            )}
+            <div className="flex gap-4 items-start">
+              {previewItem.content?.videoPath && (
+                <video
+                  src={getMediaUrl(previewItem.content.videoPath)}
+                  className="max-h-[85vh] rounded-lg shadow-2xl"
+                  style={{ aspectRatio: '9/16' }}
+                  controls
+                  autoPlay
+                />
+              )}
+              {/* YouTube 썸네일 미리보기 */}
+              {getThumbnailUrl(previewItem) && (
+                <div className="flex flex-col gap-2 pt-2">
+                  <p className="text-xs text-white/50 uppercase tracking-wide">YouTube 썸네일</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={getThumbnailUrl(previewItem)!}
+                    alt="YouTube 썸네일"
+                    className="w-56 rounded-md shadow-xl border border-white/10"
+                    style={{ aspectRatio: '16/9', objectFit: 'cover' }}
+                  />
+                </div>
+              )}
+            </div>
 
             {/* 제목 + 상태 */}
             <p className="max-w-xs text-center text-sm font-medium text-white/90 truncate">
