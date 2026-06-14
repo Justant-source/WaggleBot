@@ -14,6 +14,9 @@ ENABLED_CRAWLERS: list[str] = os.getenv("ENABLED_CRAWLERS", "nate_pann").split("
 
 CRAWL_INTERVAL_HOURS: int = int(os.getenv("CRAWL_INTERVAL_HOURS", "1"))
 
+# 사이트당 수집 상한 — 베스트 섹션은 인기순이므로 앞 N개 = 상위 N개
+MAX_POSTS_PER_SITE: int = int(os.getenv("MAX_POSTS_PER_SITE", "20"))
+
 BROWSER_PROFILES: list[dict[str, str]] = [
     {   # Chrome 131 / Windows
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",

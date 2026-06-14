@@ -105,6 +105,10 @@ class InstizCrawler(BaseCrawler):
                     src = "https:" + src
                 if src and src.startswith("http"):
                     images.append(src)
+            # 추천수: .fan-option-button-group 내 b.votenow{no}에 pre-render됨
+            # decompose 이전에 먼저 읽어야 함 (vote.php 직접 호출 미사용 — 투표 행위 위험)
+            _votenow_el = content_el.select_one("b[class^='votenow']")
+            likes: int = self._parse_int(self._text(_votenow_el)) if _votenow_el else 0
             # 스크립트·버튼 요소 제거 후 텍스트 추출
             for el in content_el.select("script, .fan-option-button-group"):
                 el.decompose()
@@ -114,13 +118,11 @@ class InstizCrawler(BaseCrawler):
                 content = "\n".join(images)
         else:
             content = ""
+            likes = 0
 
         # 조회수: span#hit
         hit_el = soup.select_one("span#hit")
         views = self._parse_int(self._text(hit_el)) if hit_el else 0
-
-        # 추천수: 정적 HTML에 노출되지 않음 — 기본값 0
-        likes = 0
 
         comments = self._parse_comments(soup)
 

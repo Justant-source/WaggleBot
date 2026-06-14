@@ -42,10 +42,19 @@ class TheqooCrawler(BaseCrawler):
                 continue
 
             soup = BeautifulSoup(resp.text, "html.parser")
+            section_count = 0
 
-            # 더쿠 Rhymix 구조: /hot/{document_srl} 형태의 링크
+            # 더쿠 Rhymix 구조: tbody 행 단위 순회, 공지(tr.notice) 제외
             _href_pat = re.compile(r"document_srl=(\d+)|/hot/(\d+)")
-            for link in soup.find_all("a", href=_href_pat):
+            for row in soup.select("table tbody tr"):
+                # 공지글 제외 — tr class에 'notice' 포함 행 건너뜀
+                if "notice" in " ".join(row.get("class") or []):
+                    continue
+
+                link = row.select_one("a[href*='/hot/']")
+                if not link:
+                    continue
+
                 href = link.get("href", "")
                 # 앵커 링크(댓글 수) 제외: /hot/123#123_comment
                 if "#" in href:
@@ -62,7 +71,6 @@ class TheqooCrawler(BaseCrawler):
                 # 제목 없는 아이콘·이미지 링크 제외
                 if not title or len(title) < 2:
                     continue
-
                 # 숫자만인 경우(댓글 수·페이지 번호 링크) 제외
                 if title.isdigit():
                     continue
@@ -76,8 +84,9 @@ class TheqooCrawler(BaseCrawler):
                     "title": title,
                     "url": url,
                 })
+                section_count += 1
 
-            log.info("Section '%s': %d new posts", section["name"], len(posts))
+            log.info("Section '%s': %d new posts (공지 제외)", section["name"], section_count)
 
         log.info("Total unique posts from listing: %d", len(posts))
         return posts

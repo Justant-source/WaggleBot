@@ -17,6 +17,7 @@ from config.settings import (
     BLOCK_RETRY_MAX,
     BLOCK_RETRY_MAX_DELAY,
     BROWSER_PROFILES,
+    MAX_POSTS_PER_SITE,
     REQUEST_HEADERS,
     REQUEST_TIMEOUT,
     TELEGRAM_CRAWL_ALERT_ENABLED,
@@ -189,6 +190,11 @@ class BaseCrawler(ABC):
     def run(self, session: Session):
         listings = self.fetch_listing()
         log.info("[%s] Found %d posts in listing", self.site_code, len(listings))
+
+        # 사이트당 수집 상한 — 베스트 섹션은 이미 인기순이므로 앞 N개 = 상위 N개
+        if len(listings) > MAX_POSTS_PER_SITE:
+            log.info("[%s] listing %d건 → 상위 %d건으로 제한", self.site_code, len(listings), MAX_POSTS_PER_SITE)
+            listings = listings[:MAX_POSTS_PER_SITE]
 
         saved = 0
         skipped = 0

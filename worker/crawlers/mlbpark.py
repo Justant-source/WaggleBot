@@ -12,19 +12,18 @@ from crawlers.plugin_manager import CrawlerRegistry
 log = logging.getLogger(__name__)
 
 BASE_URL = "https://mlbpark.donga.com"
-BOARD_URL = f"{BASE_URL}/mlbpark/b.php"
+BEST_URL = f"{BASE_URL}/mp/best.php"
 
 
 @CrawlerRegistry.register(
     "mlbpark",
-    description="MLB파크 불펜 인기글 크롤러",
+    description="MLB파크 TODAY BEST 인기글 크롤러",
     enabled=True,
 )
 class MlbparkCrawler(BaseCrawler):
     site_code = "mlbpark"
     SECTIONS = [
-        {"name": "불펜 (종합)", "url": f"{BOARD_URL}?b=bullpen"},
-        {"name": "자유게시판", "url": f"{BOARD_URL}?b=bullpen2"},
+        {"name": "TODAY BEST", "url": BEST_URL},
     ]
 
     # ------------------------------------------------------------------
