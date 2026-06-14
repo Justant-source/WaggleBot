@@ -91,3 +91,4 @@ with SessionLocal() as db:  # DB 항상 with 블록
 작업 완료 시 반드시 `.result/{작업이름}.md` 생성 (작업이름 2단어 이하). 양식: `.result/sample/sample.md`
 - **필수 항목:** 1. 작업 결과 2. 수정 내용 3. 테스트 결과물 위치 4. 수동 테스트 방법 5. 추천 commit message 6. **DOC-MAP 기준 갱신한 문서 목록** (없으면 "없음")
 - `.result/*` 안에는 절대 root 권한으로 write 금지
+- **산출 파일(영상·오디오·이미지 등)도 `.result/`에 저장.** 컨테이너 내 경로(`/app/media/videos/` 등)에서 생성된 결과물은 작업 완료 시 프로젝트 루트 `.result/`로 이동(mv)할 것

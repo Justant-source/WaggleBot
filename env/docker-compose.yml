@@ -311,6 +311,8 @@ services:
       - ../assets:/app/assets
       - /app/venv
       - /app/__pycache__
+      # WSL2: libnvidia-encode.so.1 등 NVENC 라이브러리 마운트 (HD_RENDER h264_nvenc)
+      - /usr/lib/wsl/lib:/usr/lib/wsl/lib:ro
     depends_on:
       db:
         condition: service_healthy
@@ -323,6 +325,17 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       FISH_SPEECH_URL: "http://fish-speech:8080"
       MEDIA_DIR: "/app/media"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+      # WSL2: NVENC 라이브러리 경로
+      LD_LIBRARY_PATH: /usr/lib/wsl/lib
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     command: python -m dashboard_worker.main
 
 volumes:
