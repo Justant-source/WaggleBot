@@ -82,7 +82,10 @@ class InstizCrawler(BaseCrawler):
         soup = BeautifulSoup(resp.text, "html.parser")
 
         # 제목: span#nowsubject — .cmt 댓글 수 스팬 제거 후 추출
+        # decompose 전에 .cmt 텍스트를 읽어야 댓글 수 보존 가능
         title_el = soup.select_one("#nowsubject")
+        cmt_span = title_el.select_one(".cmt") if title_el else None
+        _page_comments_count: int = self._parse_int(self._text(cmt_span)) if cmt_span else 0
         if title_el:
             for cmt_el in title_el.select(".cmt, .cmt2, .cmt3"):
                 cmt_el.decompose()
@@ -121,6 +124,10 @@ class InstizCrawler(BaseCrawler):
 
         comments = self._parse_comments(soup)
 
+        # 댓글 수: 제목 영역 .cmt span이 정적으로 렌더링됨 (decompose 전에 읽음)
+        # (#ajax_comment 영역은 JS 로딩 → len(comments) 는 항상 0)
+        comments_count = _page_comments_count or len(comments)
+
         time.sleep(0.3)
 
         return {
@@ -130,7 +137,7 @@ class InstizCrawler(BaseCrawler):
             "stats": {
                 "views": views,
                 "likes": likes,
-                "comments_count": len(comments),
+                "comments_count": comments_count,
             },
             "comments": comments,
         }
