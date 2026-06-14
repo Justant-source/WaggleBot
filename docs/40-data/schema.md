@@ -1,9 +1,14 @@
-# WaggleBot — 데이터베이스 스키마
+# WaggleBot — 데이터 스키마 (L4)
 
-> **last-verified:** 2026-06-12 (commit `656dffd`)
-> **scope:** DB 스키마, SQLAlchemy 패턴, ScriptData JSON 구조 — SSOT
+> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `worker/db/models.py`, `worker/db/migrations/`, `backend/src/main/resources/db/migration/`
+> scope: DB 스키마, SQLAlchemy 패턴, ScriptData JSON 구조 — SSOT
+> **authority:** 코드(runtime) > 이 문서. 충돌 시 마이그레이션 코드 우선.
 
 DB: MariaDB 11, 데이터베이스명: `wagglebot`
+
+**마이그레이션 권위**: 스키마 진실 원천 = `worker/db/migrations/001~007.sql`(runner.py) + `backend/.../db/migration/V1~V3`(Flyway). 이 ER은 현행 코드 반영이며 충돌 시 코드 우선.
+
+> **ScriptData 주의:** `ScriptData`는 DB 테이블이 아니라 Python `@dataclass`이다. `Content.summary_text` 컬럼에 JSON 직렬화되어 저장된다 (`from db.models import ScriptData`). 문자열이면 레거시.
 
 ## ER 다이어그램
 

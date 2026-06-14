@@ -26,6 +26,43 @@
 - **자동 업로드**: YouTube Shorts + YouTube Analytics 성과 추적 → LLM 피드백 루프
 - **텔레그램 브리지**: 모바일에서 작업 승인/모니터링 (선택)
 
+### 시스템 컨텍스트 (L1)
+
+```mermaid
+flowchart TD
+    subgraph External["외부 소스"]
+        NATE[네이트판]
+        DCINSIDE[디씨인사이드]
+        FMKOREA[에펨코리아]
+        BOBAEDREAM[보배드림]
+    end
+
+    subgraph WaggleBot["「WaggleBot」<br/>AI 콘텐츠 자동화 파이프라인"]
+        CRAWL[crawler<br/>CrawlerRegistry]
+        SPRING[backend<br/>Spring Boot :8080]
+        DASH[frontend<br/>Next.js :3000]
+        AI[ai_worker<br/>8-Phase Pipeline]
+        LLM_W[llm-worker<br/>Claude CLI :8090]
+        FISH[TTS<br/>:8082]
+        COMFY[ComfyUI LTX-2<br/>:8188]
+    end
+
+    subgraph Cloud["클라우드 서비스"]
+        CLAUDE_API["☁ Anthropic API<br/>(haiku / sonnet)"]
+        YT["☁ YouTube API<br/>업로드 + Analytics"]
+    end
+
+    External -->|크롤링| CRAWL
+    CRAWL -->|저장| SPRING
+    SPRING <-->|UI| DASH
+    SPRING -->|Job enqueue| AI
+    AI -->|LLM 호출| LLM_W
+    LLM_W -->|subprocess| CLAUDE_API
+    AI -->|TTS| FISH
+    AI -->|비디오 생성| COMFY
+    AI -->|업로드| YT
+```
+
 ### 시스템 플로우
 
 ```

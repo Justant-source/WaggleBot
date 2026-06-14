@@ -1,7 +1,68 @@
-# WaggleBot — Docker 서비스 구성
+# WaggleBot — 컨테이너 토폴로지 (L2)
 
-> **last-verified:** 2026-06-12 (commit `656dffd`)
-> **scope:** Docker 서비스 포트/볼륨/환경변수/의존성 — SSOT
+> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `env/docker-compose.yml`
+> scope: Docker 서비스 포트·볼륨·환경변수·의존성·GPU 배분 — SSOT
+
+## 서비스 레이어 구조
+
+```mermaid
+flowchart LR
+    subgraph Layer1["수집 레이어"]
+        C[crawler]
+    end
+    subgraph Layer2["API 레이어"]
+        B[backend<br/>Spring Boot :8080]
+        F[frontend<br/>Next.js :3000]
+    end
+    subgraph Layer3["처리 레이어"]
+        A[ai_worker]
+        D[dashboard_worker]
+    end
+    subgraph Layer4["AI 서비스"]
+        L[llm-worker :8090]
+        FS[fish-speech :8082]
+        CUI[comfyui :8188]
+    end
+    subgraph Layer5["영속성"]
+        DB[(MariaDB :3306)]
+        MEDIA[/media 볼륨/]
+    end
+
+    Layer1 --> Layer5
+    Layer2 <--> Layer5
+    Layer3 --> Layer4
+    Layer3 <--> Layer5
+    Layer4 --> Layer5
+    F <--> B
+```
+
+## GPU VRAM 배분 (RTX 3090 24GB)
+
+```mermaid
+pie title VRAM 사용 배분 (~16.7GB / 24GB)
+    "LTX-2 distilled GGUF Q4 UNet" : 12.7
+    "OpenAudio S1-mini TTS" : 4.0
+    "안전 마진" : 7.3
+```
+
+> Gemma-3-12B 텍스트 인코더(~15GB)는 `--lowvram` 플래그로 CPU에서 실행 (VRAM 미사용).
+
+## 기술 스택
+
+| 영역 | 기술 |
+|------|------|
+| **크롤러** | Python 3.12, aiohttp, BeautifulSoup |
+| **백엔드** | Java 21, Spring Boot 3.3, MariaDB 11, Flyway |
+| **프론트엔드** | Next.js 14 (App Router), TypeScript |
+| **LLM 게이트웨이** | Java 21, Spring Boot 3.3, Claude CLI subprocess |
+| **LLM** | Claude haiku-4-5 / sonnet-4-6 — CLI 백엔드(구독) 또는 API 백엔드(`ANTHROPIC_API_KEY`) |
+| **TTS** | OpenAudio S1-mini (reference_id 클로닝 + 감정 마커, ADR-0005) |
+| **비디오** | ComfyUI + LTX-2 19B distilled GGUF Q4 (8-step) |
+| **렌더링** | FFmpeg (h264_nvenc) |
+| **컨테이너** | Docker Compose, NVIDIA Container Runtime |
+| **DB** | MariaDB 11, SQLAlchemy (Python), JPA/Hibernate (Java) |
+
+---
 
 ## 서비스 의존성 그래프
 

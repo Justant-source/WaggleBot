@@ -1,24 +1,45 @@
 # WaggleBot — CLAUDE.md
 
+@.claude/rules/llm-safety.md
+
 커뮤니티 게시글 → LLM 대본 → TTS → LTX-2 비디오 → FFmpeg 렌더링 → YouTube 자동 업로드 파이프라인.
 
 이 파일은 **불변 규칙 + 라우팅**만 담는다. 상세 사실의 정본(SSOT)은 `docs/`이다.
 작업 유형에 맞는 문서를 **먼저 읽고** 시작할 것. 문서 간 충돌 시 `last-verified`가 최신인 쪽을 따른다.
 
+## 🚨 절대 규칙: SSOT Doc-Sync 게이트 (commit/push 전 필수)
+
+코드가 최상위 권위(runtime > 모든 문서). 코드를 바꾸면 `docs/`·`README.md`를
+**코드 실제 상태에 맞춰 같은 커밋에서** 갱신한다. 문서가 코드를 못 따라가면 SSOT 붕괴 = 버그.
+
+**push 전 순서 (생략 금지):**
+1. `git diff --staged --name-only` — 변경된 코드 영역 식별
+2. `docs/_index.md`의 **트리거 맵**에서 (코드 영역 → 대응 문서) 조회
+3. 대응 문서(.md + 내장 mermaid)와 `README.md`를 코드에 맞춰 갱신 — **같은 커밋**
+4. mermaid 다이어그램은 그 코드와 **같은 PR**에서만 갱신 (drift 금지)
+5. 검증 통과: `python scripts/lint_docs.py`
+6. 갱신 대상이 없으면 커밋 메시지/보고에 `Doc-Sync: 없음` 명시
+
+**HALT 조건** — 다음을 바꾸는데 대응 문서를 못 찾으면 push 중단하고 사용자에게 보고:
+- API 스키마 / 포트·네트워크 / DB 스키마(ER) / 상태 전이 / 절대 규칙·정책 / 환경변수
+
 ## 문서 라우팅 — 작업 유형별 필독
 
 | 작업 유형 | 먼저 읽을 문서 |
 |----------|--------------|
-| Phase 1~8 로직, 씬/대본/TTS/비디오/렌더링/폴백 | [docs/pipeline.md](docs/pipeline.md) |
-| DB 모델 변경, 마이그레이션, 쿼리 작성 | [docs/database.md](docs/database.md) |
-| backend·llm-worker API 추가/수정 | [docs/api.md](docs/api.md) |
-| docker-compose, 포트/볼륨/환경변수 | [docs/services.md](docs/services.md) |
-| settings.py·pipeline.json·.env 설정 | [docs/config.md](docs/config.md) |
-| 전체 구조, 상태 전이, VRAM 배분 | [docs/architecture.md](docs/architecture.md) |
-| 구현 현황·버그 픽스 이력 확인 | [docs/implementation-status.md](docs/implementation-status.md) |
-| 하드 제약을 수정·우회하려는 경우 (**필독**) | [docs/adr/](docs/adr/) |
+| 시스템 전체 그림, 행위자, 외부 경계 | [docs/10-context/system-context.md](docs/10-context/system-context.md) |
+| docker-compose, 포트/볼륨/환경변수/VRAM | [docs/20-containers/topology.md](docs/20-containers/topology.md) |
+| settings.py·pipeline.json·.env 설정 | [docs/20-containers/config.md](docs/20-containers/config.md) |
+| Phase 1~8 로직, 씬/대본/TTS/비디오/렌더링 | [docs/30-components/pipeline.md](docs/30-components/pipeline.md) |
+| 모듈 책임, 크롤러/업로더 구조 | [docs/30-components/overview.md](docs/30-components/overview.md) |
+| 구현 현황·버그 픽스 이력 확인 | [docs/30-components/implementation-status.md](docs/30-components/implementation-status.md) |
+| DB 모델 변경, 마이그레이션, 쿼리 작성 | [docs/40-data/schema.md](docs/40-data/schema.md) |
+| backend·llm-worker API 추가/수정 | [docs/50-api/rest-spec.md](docs/50-api/rest-spec.md) · [flows.md](docs/50-api/flows.md) |
+| Post 상태 전이 | [docs/60-runtime/post-state-machine.md](docs/60-runtime/post-state-machine.md) |
+| 처리 루프, 4단계 폴백, 피드백 루프 | [docs/60-runtime/pipeline-runtime.md](docs/60-runtime/pipeline-runtime.md) |
+| 하드 제약 확인/수정 (**필독**) | [docs/70-policy/constraints.md](docs/70-policy/constraints.md) · [docs/90-adr/](docs/90-adr/) |
 | 크롤러/업로더 플러그인 추가 | `worker/crawlers/ADDING_CRAWLER.md` · `worker/uploaders/ADDING_UPLOADER.md` |
-| 작업 완료 후 갱신할 문서 판단 | [docs/DOC-MAP.md](docs/DOC-MAP.md) |
+| 작업 완료 후 갱신할 문서 판단 | [docs/_index.md](docs/_index.md) 트리거 맵 |
 
 ## 핵심 컨텍스트 (모든 작업 공통)
 
@@ -83,12 +104,11 @@ with SessionLocal() as db:  # DB 항상 with 블록
 
 ## 기타
 
-- `docs/arch/done/` — 완료된 과거 스펙 · `docs/arch/env/AGENT_TEAM.md` — Agent Team 운영 가이드 v3 (현행)
 - 여기 없는 상세(BGM/자막 프리셋, 4단계 폴백, I2V 임계값, VOICE_PRESETS, 모델 파일 등)는 라우팅 표의 해당 docs가 정본 — 추측하지 말고 읽을 것
 
 ## 작업 완료 보고 규칙
 
 작업 완료 시 반드시 `.result/{작업이름}.md` 생성 (작업이름 2단어 이하). 양식: `.result/sample/sample.md`
-- **필수 항목:** 1. 작업 결과 2. 수정 내용 3. 테스트 결과물 위치 4. 수동 테스트 방법 5. 추천 commit message 6. **DOC-MAP 기준 갱신한 문서 목록** (없으면 "없음")
+- **필수 항목:** 1. 작업 결과 2. 수정 내용 3. 테스트 결과물 위치 4. 수동 테스트 방법 5. 추천 commit message 6. **`docs/_index.md` 트리거 맵 기준 갱신한 문서 목록** (없으면 `Doc-Sync: 없음`)
 - `.result/*` 안에는 절대 root 권한으로 write 금지
 - **산출 파일(영상·오디오·이미지 등)도 `.result/`에 저장.** 컨테이너 내 경로(`/app/media/videos/` 등)에서 생성된 결과물은 작업 완료 시 프로젝트 루트 `.result/`로 이동(mv)할 것

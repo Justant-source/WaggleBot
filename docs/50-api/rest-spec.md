@@ -1,9 +1,9 @@
-# WaggleBot — API 레퍼런스
+# WaggleBot — API 명세 (L5)
 
-> **last-verified:** 2026-06-12 (commit `656dffd`)
-> **scope:** llm-worker·backend·Fish Speech·ComfyUI API 명세 — SSOT
+> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java`
+> scope: llm-worker·backend·Fish Speech·ComfyUI API 엔드포인트 명세 — SSOT
 
-## 서비스별 엔드포인트
+## 서비스별 Base URL
 
 | 서비스 | Base URL | 역할 |
 |--------|----------|------|
@@ -79,53 +79,17 @@ LLM 호출. Python `call_llm()` 함수가 이 엔드포인트를 사용.
 
 서비스 헬스 체크.
 
-**Response (200):**
-```json
-{"status": "ok"}
-```
+**Response (200):** `{"status": "ok"}`
 
 ### GET /actuator/health
 
 Spring Actuator 헬스. `ClaudeCliHealthIndicator` 포함 (`claude --version` 30초 캐싱).
 
----
-
-## llm-worker 내부 동작
-
-```mermaid
-sequenceDiagram
-    participant PY as Python ai_worker
-    participant LW as llm-worker (Java :8090)
-    participant POOL as LlmWorkerPool<br/>(100 threads)
-    participant CLI as Claude CLI subprocess
-    participant AN as Anthropic API
-
-    PY->>LW: POST /v1/invoke {prompt, model, jsonMode}
-    LW->>POOL: submit(callable)
-    Note over POOL: ArrayBlockingQueue<br/>queueCapacity=500<br/>queueWaitTimeout=30s
-    POOL->>CLI: ProcessBuilder<br/>claude --print --output-format stream-json<br/>--model <resolved> --no-session-persistence
-    CLI->>AN: HTTPS (구독 인증, ~/.claude)
-    AN-->>CLI: NDJSON stream
-    CLI-->>POOL: stdout NDJSON 파싱<br/>content_block_delta 누적
-    POOL-->>LW: InvokeResult(text, model, jsonValid, durationMs)
-    LW-->>PY: InvokeResponse JSON
-```
-
-**JSON Mode 처리 흐름:**
-```mermaid
-flowchart LR
-    J1[systemPrompt에<br/>JSON 지시문 추가] --> J2[LLM 응답 수신]
-    J2 --> J3{코드펜스<br/>있음?}
-    J3 -->|Yes| J4[정규식으로 추출<br/>```json ... ```]
-    J3 -->|No| J5[중괄호 추출<br/>{ ... }]
-    J4 & J5 --> J6{JSON.parse<br/>성공?}
-    J6 -->|Yes| J7[jsonValid=true]
-    J6 -->|No| J8[jsonValid=false<br/>text 그대로 반환]
-```
+> 내부 처리 흐름(sequenceDiagram + JSON Mode flowchart) → [`flows.md`](flows.md)
 
 ---
 
-## backend API (:8080) — 구현 완료
+## backend API (:8080)
 
 Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 
@@ -150,6 +114,7 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 | `PUT` | `/api/editor/{id}/script` | 대본 수동 저장 (ScriptDataDto) |
 | `POST` | `/api/editor/{id}/generate` | GENERATE_SCRIPT Job 생성 (model/extra_instructions 선택) |
 | `POST` | `/api/editor/{id}/tts-preview` | TTS_PREVIEW Job 생성 |
+| `PUT` | `/api/editor/{id}/voice` | 음성 키 변경 |
 | `POST` | `/api/editor/{id}/confirm` | EDITING → APPROVED (최종 확인) |
 | `GET` | `/api/editor/jobs/{jobId}` | Job 상태 폴링 |
 
@@ -176,6 +141,10 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 | `POST` | `/api/analytics/youtube/fetch` | FETCH_YT_ANALYTICS Job 생성 |
 | `POST` | `/api/analytics/insights` | AI_INSIGHT Job 생성 (LLM 인사이트) |
 | `POST` | `/api/analytics/feedback/apply` | FEEDBACK_APPLY Job 생성 |
+| `GET` | `/api/analytics/performance` | 성과 데이터 조회 |
+| `POST` | `/api/analytics/ab/create` | AB_CREATE Job 생성 |
+| `POST` | `/api/analytics/ab/evaluate` | AB_EVALUATE Job 생성 |
+| `POST` | `/api/analytics/ab/apply-winner` | AB_APPLY_WINNER Job 생성 |
 | `GET` | `/api/analytics/jobs/{jobId}` | Job 상태 폴링 |
 
 ### LLM Logs (`/api/llm-logs`)
@@ -193,10 +162,23 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 | `PUT` | `/api/settings` | pipeline.json 저장 |
 | `GET` | `/api/settings/credentials` | 인증 정보 조회 (시크릿 마스킹) |
 | `PUT` | `/api/settings/credentials` | 인증 정보 저장 |
+| `GET` | `/api/settings/health` | 서비스 헬스 상태 |
 
 ### Media (`/api/media`)
 
 정적 파일 서빙 — `/app/media/` 경로의 오디오/비디오/썸네일 파일을 HTTP로 노출.
+
+### Overview (`/api/overview`)
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `GET` | `/api/overview` | 대시보드 요약 지표 |
+
+### TTS (`/api/tts`)
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `GET` | `/api/tts/voices` | 등록된 음성 키 목록 |
 
 ---
 
@@ -222,7 +204,6 @@ POST /v1/tts
 
 Python `comfy_client.py`가 워크플로우 JSON 제출.
 
-**주요 엔드포인트:**
 ```
 POST /prompt            - 워크플로우 JSON 제출, prompt_id 반환
 GET  /queue             - 큐 상태 조회
