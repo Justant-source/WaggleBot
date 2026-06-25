@@ -1,6 +1,6 @@
 # WaggleBot — API 명세 (L5)
 
-> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java`
+> last-verified: 2026-06-25 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java`, `worker/ai_worker/tts/fish_client.py`
 > scope: llm-worker·backend·Fish Speech·ComfyUI API 엔드포인트 명세 — SSOT
 
 ## 서비스별 Base URL
@@ -9,7 +9,7 @@
 |--------|----------|------|
 | `llm-worker` | `http://llm-worker:8090` | Claude CLI 게이트웨이 (완전 구현) |
 | `backend` | `http://backend:8080` | Spring Boot REST API (완전 구현) |
-| `fish-speech` | `http://fish-speech:8080` | TTS 서비스 (외부 이미지) |
+| `fish-speech` | `http://fish-speech:8080` | OpenAudio S1-mini TTS 서비스 |
 | `comfyui` | `http://comfyui:8188` | 비디오 생성 (외부 이미지) |
 
 ---
@@ -101,7 +101,10 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 | `POST` | `/api/inbox/{id}/approve` | COLLECTED → EDITING + GENERATE_SCRIPT Job 생성 |
 | `POST` | `/api/inbox/{id}/decline` | → DECLINED |
 | `POST` | `/api/inbox/batch` | 배치 승인/거절. 응답: `{processed, failed:[{id,error}], action}` |
+| `POST` | `/api/inbox/analyze-batch` | 선택 게시글에 AI_FITNESS Job 일괄 생성 |
 | `POST` | `/api/inbox/{id}/analyze` | AI_FITNESS Job 생성 (게시글 적합성 분석) |
+| `GET` | `/api/inbox/{id}/comments` | 게시글 댓글 목록 |
+| `GET` | `/api/inbox/sites` | `CrawlerRegistry` 기반 등록 사이트 목록 |
 | `POST` | `/api/inbox/crawl` | MANUAL_CRAWL Job 생성 |
 | `GET` | `/api/inbox/jobs/{jobId}` | Job 상태 폴링 |
 
@@ -115,6 +118,7 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 | `POST` | `/api/editor/{id}/generate` | GENERATE_SCRIPT Job 생성 (model/extra_instructions 선택) |
 | `POST` | `/api/editor/{id}/tts-preview` | TTS_PREVIEW Job 생성 |
 | `PUT` | `/api/editor/{id}/voice` | 음성 키 변경 |
+| `GET` | `/api/editor/prompt-presets` | 대본 생성 프롬프트 프리셋 목록 |
 | `POST` | `/api/editor/{id}/confirm` | EDITING → APPROVED (최종 확인) |
 | `GET` | `/api/editor/jobs/{jobId}` | Job 상태 폴링 |
 
@@ -152,6 +156,7 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 | Method | Path | 설명 |
 |--------|------|------|
 | `GET` | `/api/llm-logs` | LLM 호출 이력 (callType/postId/success 필터, createdAt 내림차순, 페이지네이션) |
+| `GET` | `/api/llm-logs/call-types` | 기록된 callType 목록 |
 | `GET` | `/api/llm-logs/{id}` | 단건 조회 |
 
 ### Settings (`/api/settings`)
@@ -184,19 +189,39 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 
 ## Fish Speech API (:8082 외부, :8080 컨테이너 내부)
 
-Python `fish_client.py`가 직접 호출. 공식 Fish Speech v1.5.1 API.
+Python `worker/ai_worker/tts/fish_client.py`가 직접 호출한다. 컨테이너는 OpenAudio S1-mini를 로드한 Fish Speech API 서버이며, 참조 음성은 우선 `reference_id` 폴더 구조를 사용한다.
 
 **주요 엔드포인트:**
-```
+```http
 POST /v1/tts
-  Body: {text, reference_audio (base64), reference_text, format, temperature, repetition_penalty}
-  Response: audio/wav binary
 ```
 
+**Request Body (reference_id 경로):**
+```json
+{
+  "text": "(joyful) 안녕하세요.",
+  "format": "wav",
+  "chunk_length": 200,
+  "normalize": false,
+  "temperature": 0.8,
+  "top_p": 0.8,
+  "repetition_penalty": 1.1,
+  "reference_id": "yura",
+  "use_memory_cache": "on"
+}
+```
+
+**레거시 base64 폴백:** `reference_id` 폴더가 없고 평면 파일만 있으면 `references: [{audio, text}]`를 보낸다. 둘 다 없으면 `references: []`로 기본 음색 합성을 시도하고 경고 로그를 남긴다.
+
+**Response:** `audio/wav` binary.
+
 **설정값 (config/settings.py):**
-- `FISH_SPEECH_TEMPERATURE = 0.5` (중국어 회귀 방지)
-- `FISH_SPEECH_REPETITION_PENALTY = 1.3`
-- `FISH_SPEECH_TIMEOUT = 120s`
+- `FISH_SPEECH_TIMEOUT = 300s`
+- `FISH_SPEECH_TEMPERATURE = 0.8`
+- `FISH_SPEECH_TOP_P = 0.8`
+- `FISH_SPEECH_REPETITION_PENALTY = 1.1`
+- `FISH_SPEECH_USE_MEMORY_CACHE = "on"`
+- `FISH_SPEECH_NORMALIZE = false`
 
 ---
 

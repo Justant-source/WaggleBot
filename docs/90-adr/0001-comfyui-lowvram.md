@@ -2,7 +2,7 @@
 
 > **status:** accepted
 > **date:** 2026-06-10
-> **related:** docs/services.md (comfyui 섹션), CLAUDE.md (하드 제약)
+> **related:** docs/20-containers/topology.md (comfyui 섹션), CLAUDE.md (하드 제약)
 
 ## 컨텍스트
 

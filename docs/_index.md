@@ -6,18 +6,19 @@
 
 | 계층 | 경로 | last-verified | authority |
 |------|------|---------------|-----------|
+| 00 Agent | [00-agent/development-playbook.md](00-agent/development-playbook.md) | 2026-06-25 | `AGENTS.md`, `CLAUDE.md`, 코드 전역 |
 | 10 Context | [10-context/system-context.md](10-context/system-context.md) | 2026-06-12 | 전역 / 코드 |
-| 20 Container | [20-containers/topology.md](20-containers/topology.md) | 2026-06-12 | `env/docker-compose.yml` |
-| 20 Config | [20-containers/config.md](20-containers/config.md) | 2026-06-13 | `config/settings.py` |
+| 20 Container | [20-containers/topology.md](20-containers/topology.md) | 2026-06-25 | `env/docker-compose.yml` |
+| 20 Config | [20-containers/config.md](20-containers/config.md) | 2026-06-25 | `config/settings.py` |
 | 30 Pipeline | [30-components/pipeline.md](30-components/pipeline.md) | 2026-06-13 | `worker/ai_worker/pipeline/content_processor.py` |
-| 30 Overview | [30-components/overview.md](30-components/overview.md) | 2026-06-14 | `worker/ai_worker/`, `worker/crawlers/` |
-| 30 Status | [30-components/implementation-status.md](30-components/implementation-status.md) | 2026-06-13 | 코드 전역 |
-| 40 Data | [40-data/schema.md](40-data/schema.md) | 2026-06-12 | `worker/db/migrations/`, Flyway |
-| 50 API Spec | [50-api/rest-spec.md](50-api/rest-spec.md) | 2026-06-12 | backend controller, llm-worker |
+| 30 Overview | [30-components/overview.md](30-components/overview.md) | 2026-06-25 | `worker/ai_worker/`, `worker/crawlers/` |
+| 30 Status | [30-components/implementation-status.md](30-components/implementation-status.md) | 2026-06-25 | 코드 전역 |
+| 40 Data | [40-data/schema.md](40-data/schema.md) | 2026-06-25 | `worker/db/migrations/`, Flyway |
+| 50 API Spec | [50-api/rest-spec.md](50-api/rest-spec.md) | 2026-06-25 | backend controller, llm-worker |
 | 50 API Flows | [50-api/flows.md](50-api/flows.md) | 2026-06-12 | `worker/llm/LlmController.java` |
 | 60 State | [60-runtime/post-state-machine.md](60-runtime/post-state-machine.md) | 2026-06-12 | `worker/db/models.py` PostStatus |
 | 60 Runtime | [60-runtime/pipeline-runtime.md](60-runtime/pipeline-runtime.md) | 2026-06-13 | `worker/ai_worker/core/processor.py` |
-| 70 Policy | [70-policy/constraints.md](70-policy/constraints.md) | 2026-06-14 | CLAUDE.md / ADR |
+| 70 Policy | [70-policy/constraints.md](70-policy/constraints.md) | 2026-06-25 | CLAUDE.md / ADR |
 | 90 ADR | [90-adr/](90-adr/) | — | 결정 기록 |
 
 ---
@@ -28,6 +29,9 @@
 
 | 코드 영역 (glob) | 갱신 대상 문서 |
 |-----------------|---------------|
+| `AGENTS.md`, `CLAUDE.md` 라우팅/규칙 변경 | `70-policy/constraints.md`, 이 파일(`_index.md`), `00-agent/development-playbook.md` |
+| `README.md` 구조·설치·링크 변경 | 관련 SSOT 문서, 이 파일(`_index.md`) |
+| `docs/00-agent/**` | 이 파일(`_index.md`), 필요 시 `AGENTS.md`/`CLAUDE.md` |
 | `env/docker-compose.yml` (서비스·포트·볼륨) | `20-containers/topology.md`, README 포트표 |
 | `config/settings.py`, `config/pipeline.json` | `20-containers/config.md` |
 | `config/scene_policy.json`, `config/video_styles.json` | `20-containers/config.md` |
@@ -42,7 +46,6 @@
 | 하드 제약 추가·변경·제거 | `90-adr/` 신규 ADR, `70-policy/constraints.md` |
 | 크롤러 플러그인 추가 | `30-components/implementation-status.md`, `30-components/overview.md` |
 | `env/.env` 환경변수 추가 | `20-containers/config.md`, `20-containers/topology.md` |
-| `CLAUDE.md` 라우팅/규칙 변경 | `70-policy/constraints.md`, 이 파일(`_index.md`) |
 
 ---
 
@@ -64,6 +67,6 @@
 
 1. 위 트리거 맵에서 변경한 코드 영역 → 대응 문서 식별
 2. 대응 문서 + README.md 갱신 후 `last-verified` 날짜 업데이트 — **같은 커밋**
-3. `python scripts/lint_docs.py` 통과 확인
+3. `python3 scripts/lint_docs.py` 통과 확인
 4. 신규 하드 제약 발생 시 → `90-adr/` ADR 작성 + `70-policy/constraints.md` 갱신
 5. 갱신 없으면 커밋 메시지에 `Doc-Sync: 없음` 명시

@@ -2,7 +2,7 @@
 
 > **status:** accepted
 > **date:** 2026-06-10
-> **related:** worker/ai_worker/pipeline/content_processor.py, docs/pipeline.md
+> **related:** worker/ai_worker/pipeline/content_processor.py, docs/30-components/pipeline.md
 
 ## 컨텍스트
 

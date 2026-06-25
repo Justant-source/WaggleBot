@@ -1,6 +1,6 @@
 # WaggleBot — 컨테이너 토폴로지 (L2)
 
-> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `env/docker-compose.yml`
+> last-verified: 2026-06-25 · code-ref: `env/docker-compose.yml`
 > scope: Docker 서비스 포트·볼륨·환경변수·의존성·GPU 배분 — SSOT
 
 ## 서비스 레이어 구조
@@ -112,7 +112,7 @@ graph TD
 
 ### llm-worker (Java Spring Boot)
 - **역할:** Claude CLI subprocess 게이트웨이. Python ai_worker의 모든 LLM 호출을 처리
-- **소스:** `llm-worker/` (완전 구현)
+- **소스:** `worker/llm/` (완전 구현)
 - **포트:** `8090`
 - **중요 볼륨:** `~/.claude:/root/.claude` — Claude CLI 구독 인증
 - **헬스체크:** `wget -qO- http://localhost:8090/healthz` (30s, 5회)

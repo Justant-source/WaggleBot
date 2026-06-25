@@ -2,7 +2,7 @@
 
 > **status:** accepted
 > **date:** 2026-06-12
-> **related:** env/docker-compose.yml, worker/ai_worker/tts/fish_client.py, config/settings.py, config/voices.json, worker/tools/prepare_voice.py, docs/services.md, docs/pipeline.md
+> **related:** env/docker-compose.yml, worker/ai_worker/tts/fish_client.py, config/settings.py, config/voices.json, worker/tools/prepare_voice.py, docs/20-containers/topology.md, docs/30-components/pipeline.md
 
 ## 컨텍스트
 

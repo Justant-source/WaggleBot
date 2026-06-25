@@ -1,9 +1,11 @@
 # WaggleBot — 정책 및 하드 제약
 
-> last-verified: 2026-06-14 · code-ref: `CLAUDE.md`, `worker/ai_worker/`, `docs/90-adr/`
+> last-verified: 2026-06-25 · code-ref: `CLAUDE.md`, `AGENTS.md`, `worker/ai_worker/`, `docs/90-adr/`
 > scope: 하드 제약·코딩 금지·git/배포 금지·ADR 연동 — SSOT (비협상)
 
 ## 하드 제약 (절대 위반 금지)
+
+AI agent의 작업 시작 절차와 검증 매트릭스는 [`../00-agent/development-playbook.md`](../00-agent/development-playbook.md)를 따른다. 아래 표는 런타임 안전을 위한 비협상 제약만 다룬다.
 
 | 제약 | 규칙 | 코드 가드 | ADR |
 |------|------|-----------|-----|

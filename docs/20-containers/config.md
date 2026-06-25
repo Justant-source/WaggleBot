@@ -1,6 +1,6 @@
 # WaggleBot — 설정 레퍼런스
 
-> **last-verified:** 2026-06-13
+> **last-verified:** 2026-06-25
 > **scope:** settings.py 변수, pipeline.json, scene_policy.json, layout.json, .env — SSOT
 
 ## 설정 파일 구조
@@ -68,12 +68,13 @@ gentle→`(soft tone)`, cheerful→`(joyful)`, serious→`(serious)`, sad→`(sa
 whispering→`(whispering)`, neutral→`""`, friendly→`(relaxed)`, surprised→`(surprised)`.
 ⚠ 씬타입 키의 `EMOTION_TAGS`와는 다른 축.
 
-**VOICE_PRESETS (voices.json v2): `{key: {label, ref_dir, file, params}}`**
+**VOICE_PRESETS (voices.json v3): `{key: {label, gender, age_range, ref_dir, file, params}}`**
 - `ref_dir`: `assets/voices/<key>/` 폴더 (NN.wav+NN.lab) = fish-speech `reference_id`
 - `file`: 대시보드 sampleUrl(`/api/media/voices/<file>`)·base64 폴백 경로 (`<key>/01.wav`)
 - `params`: per-voice 오버라이드 `{temperature, top_p, speed}` (없으면 전역 기본값)
+- `gender` / `age_range`: 다화자 TTS 자동 배정(`voice_assigner.py`)에서 사용하는 메타데이터
 - 등록/갱신: `python -m tools.prepare_voice --input <녹음> --key <키> --label <라벨>`
-- 키: default, anna, han, krys, yohan, yura, manbo
+- 키: `config/voices.json`의 `voices[].key`가 정본. 기본 세트는 default, anna, krys, sunny, yohan, anna_kim, blondie, callie, christian, deep_lax, han, hope, ivanna, krishna, lucy, manbo, manu, miguel, min_jun, norah, tara, theo, yohan_koo, yura.
 
 ### 비디오 설정 (LTX-2)
 
@@ -163,16 +164,19 @@ whispering→`(whispering)`, neutral→`""`, friendly→`(relaxed)`, surprised�
 
 ## config/pipeline.json
 
-대시보드 설정 탭에서 편집. `load_pipeline_config()`로 로드 (5초 캐싱).
+대시보드 설정 탭에서 편집. `load_pipeline_config()`로 로드 (5초 캐싱). 아래는 구조 예시이며, 실제 현재값은 `config/pipeline.json`이 정본이다.
 
 ```json
 {
   "tts_engine": "fish-speech",
-  "tts_voice": "yura",
-  "llm_backend": "cli",
+  "tts_voice": "yohan",
+  "llm_backend": "api",
   "llm_model": "haiku",
   "llm_model_overrides": {},
-  "llm_api_base_url": "https://api.anthropic.com",
+  "llm_api_base_url": "https://api.clcocloud.com/claude/v1",
+  "llm_prompt_cache": "true",
+  "llm_cache_ttl": "5m",
+  "comment_voices": "[\"manbo\", \"anna\", \"han\", \"yura\"]",
   "video_resolution": "1080x1920",
   "video_codec": "h264_nvenc",
   "bgm_volume": "0.15",
@@ -181,7 +185,7 @@ whispering→`(whispering)`, neutral→`""`, friendly→`(relaxed)`, surprised�
   "upload_privacy": "unlisted",
   "auto_approve_enabled": "false",
   "auto_approve_threshold": "80",
-  "use_content_processor": "false",
+  "use_content_processor": "true",
   "auto_upload": "false"
 }
 ```

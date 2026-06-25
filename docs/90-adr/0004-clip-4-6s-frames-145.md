@@ -2,7 +2,7 @@
 
 > **status:** accepted
 > **date:** 2026-06-11
-> **related:** worker/ai_worker/scene/settings.yaml, worker/ai_worker/video/manager.py, config/settings.py, docs/pipeline.md
+> **related:** worker/ai_worker/scene/settings.yaml, worker/ai_worker/video/manager.py, config/settings.py, docs/30-components/pipeline.md
 
 ## 컨텍스트
 

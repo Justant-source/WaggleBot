@@ -1,9 +1,9 @@
 # WaggleBot — 구현 현황
 
-> **last-verified:** 2026-06-13 (p5-chat-capture)
+> **last-verified:** 2026-06-25
 > **scope:** 구현 완료·미완료 현황, 버그 픽스 이력
 
-현재 코드베이스의 구현 완료/미완료 상태 정리. (2026-06-11 기준)
+현재 코드베이스의 구현 완료/미완료 상태 정리.
 
 ## 전체 현황 요약
 
@@ -17,7 +17,7 @@
 | `worker/crawlers` | ✅ 완전 구현 | **7개** 사이트 플러그인 + 플러그인 매니저 + Telegram 트레이 알림 |
 | `worker/ai_worker` | ✅ 완전 구현 | 8-Phase 파이프라인 전체 |
 | `worker/db` | ✅ 완전 구현 | SQLAlchemy 모델 + 마이그레이션 |
-| `worker/uploaders` | ✅ 완전 구현 | YouTube 업로더 |
+| `worker/uploaders` | ✅ 완전 구현 | YouTube + TikTok 업로더 |
 | `worker/analytics` | ✅ 완전 구현 | 성과 수집 + LLM 피드백 루프 + A/B 테스트 파이프라인 통합 |
 | `worker/monitoring` | ✅ 완전 구현 | 헬스체크 + 알림 데몬 |
 | `worker/dashboard_worker` | ✅ 완전 구현 | Job 폴링 실행 데몬 |
@@ -144,7 +144,8 @@ worker/
 ├── llm/                                 ✅ llm-worker Spring Boot 소스 (별도 빌드)
 ├── uploaders/
 │   ├── base.py                          ✅ UploaderRegistry
-│   └── youtube.py                       ✅ YouTube Data API v3
+│   ├── youtube.py                       ✅ YouTube Data API v3
+│   └── tiktok.py                        ✅ TikTok Content Posting API
 ├── analytics/
 │   ├── collector.py                     ✅ YouTube Analytics 수집
 │   └── feedback.py                      ✅ LLM 인사이트 → feedback_config.json
@@ -183,7 +184,7 @@ telegram/
 
 ---
 
-## 버그 픽스 이력 (2026-06-11 기준)
+## 버그 픽스 이력
 
 | 배치 | 커밋 | 주요 수정 |
 |------|------|------|
@@ -203,7 +204,7 @@ telegram/
 | 영역 | 변경 |
 |------|------|
 | 모델/서버 | Fish Speech 1.5.1 → OpenAudio S1-mini, server-cuda 이미지 digest 고정, env 기반 체크포인트 오버라이드, curl healthcheck, start_period 180s. `scripts/download_openaudio_s1.sh`(gated HF) 신규 |
-| 참조 음성 | base64 평면파일 → `reference_id` 폴더 구조(`assets/voices/<key>/NN.wav+NN.lab`) + memory cache. voices.json v2(ref_dir/params). assets/voices를 UID 1000 소유로 (validate_env) |
+| 참조 음성 | base64 평면파일 → `reference_id` 폴더 구조(`assets/voices/<key>/NN.wav+NN.lab`) + memory cache. voices.json v3(ref_dir/params/gender/age_range). assets/voices를 UID 1000 소유로 (validate_env) |
 | 클라이언트 | `fish_client.py` 재작성: 참조 해석 체인, 감정 마커 주입, 장문 분할·concat, WAV 헤더 길이검증, loudnorm+aresample 후처리. `language` 필드 제거, top_p/normalize 추가 |
 | 정규화 | `normalizer.py`: 슬랭 로더 merge 버그 수정, 조사 교정 슬랭 경계 한정(마을→마를 회귀 해결), 숫자 확장(소수/콤마/범위/유월·시월/단위/전화), 영문 약어 별도 패스+내장 사전(CCTV/SNS/AI 등, assets/는 gitignore라 코드 내장), ㅋㅋ→(laughing) 게이트 |
 | 감정 배선 | content_processor·layout·_tts·dashboard handlers에 `emotion=scene.tts_emotion` 전달. `TTS_EMOTION_MARKERS` 신규(EMOTION_TAGS와 별개 축) |

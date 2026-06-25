@@ -16,9 +16,9 @@
 
 ### 주요 기능
 
-- **자동 크롤링**: 네이트판·뽐뿌·DC인사이드·FM코리아 인기 게시글 수집 + 시간감쇠 인기도 스코어링
+- **자동 크롤링**: 네이트판·보배드림·DC인사이드·FM코리아·인스티즈·더쿠·MLB파크 인기 게시글 수집 + 시간감쇠 인기도 스코어링
 - **AI 대본**: Claude(haiku/sonnet/opus) 기반 8-Phase 파이프라인 — 의미 단위 청킹 → 씬 배분 → 감정 태그
-- **TTS**: Fish Speech 1.5 (zero-shot 음성 클로닝, 감정 태그 지원)
+- **TTS**: OpenAudio S1-mini 기반 Fish Speech 서버 (reference_id 음성 클로닝, 감정 마커 지원)
 - **Mood 기반 씬 연출**: 9가지 감성 톤(humor/touching/horror 등) 프리셋 → 비주얼·BGM·TTS 감정 자동 배분
 - **비디오 생성**: LTX-2 19B (ComfyUI, T2V/I2V, 720p) — `VIDEO_GEN_ENABLED=true`일 때 활성
 - **영상 렌더링**: FFmpeg + NVENC GPU 가속, ASS 동적 자막, 정적+비디오 하이브리드 합성, 썸네일 자동 생성
@@ -35,6 +35,9 @@ flowchart TD
         DCINSIDE[디씨인사이드]
         FMKOREA[에펨코리아]
         BOBAEDREAM[보배드림]
+        INSTIZ[인스티즈]
+        THEQOO[더쿠]
+        MLB[MLB파크]
     end
 
     subgraph WaggleBot["「WaggleBot」<br/>AI 콘텐츠 자동화 파이프라인"]
@@ -79,7 +82,7 @@ Phase 2   chunk_with_llm       LLM 의미 단위 청킹 (raw script)
 Phase 3   validate_and_fix     max_chars 검증 + 한국어 분할
 Phase 4   SceneDirector        씬 배분 + 감정 태그 (list[SceneDecision])
 Phase 4.5 assign_video_modes   씬별 t2v/i2v 모드 할당
-Phase 5   TTS 생성             Fish Speech (scene.text_lines)
+Phase 5   TTS 생성             OpenAudio S1-mini (scene.text_lines)
 Phase 6   video_prompt 생성    한국어 → 영어 프롬프트
 Phase 7   video_clip 생성      ComfyUI LTX-2 클립
 Phase 8   FFmpeg 렌더링        최종 9:16 영상 + 썸네일
@@ -94,7 +97,7 @@ Phase 8   FFmpeg 렌더링        최종 9:16 영상 + 썸네일
 | 워커 | Python 3.12 (크롤러 · 8-Phase AI 파이프라인 · 업로더 · 분석 · 모니터링) |
 | LLM | **Claude** — `haiku` / `sonnet` / `opus`, call_type별 자동 라우팅 |
 | LLM 백엔드 | **CLI**(llm-worker Spring Boot 게이트웨이 + `claude` CLI, 구독 인증) 또는 **API**(Anthropic API, `ANTHROPIC_API_KEY`) — 대시보드에서 전환 |
-| TTS | Fish Speech 1.5 (zero-shot 클로닝, `fishaudio/fish-speech:v1.5.1`) |
+| TTS | OpenAudio S1-mini 기반 Fish Speech 서버 (`wagglebot/fish-speech-s1:cuda`, reference_id 클로닝) |
 | 비디오 | LTX-2 19B (ComfyUI, T2V/I2V, 720p) — GGUF Q4 UNet + Gemma 3 텍스트 인코더 |
 | DB | MariaDB 11 + SQLAlchemy ORM(Python) + Flyway 마이그레이션(backend) |
 | 영상 | FFmpeg (`h264_nvenc` GPU 가속) |
@@ -160,18 +163,19 @@ claude   # 로그인 진행
 > `video_prompt`/`translate`/`comment_summarize` → **haiku**.
 > `config/pipeline.json`의 `llm_model_overrides`로 call_type별 override 가능합니다.
 
-### 4. Fish Speech 모델 다운로드
+### 4. OpenAudio S1-mini TTS 모델 다운로드
 
 ```bash
-pip install huggingface_hub          # 없는 경우
-bash scripts/download_fish_speech.sh # 모델 다운로드 (~1.4GB)
+pip install huggingface_hub               # 없는 경우
+huggingface-cli login                     # gated 모델 접근 권한 필요
+bash scripts/download_openaudio_s1.sh     # 모델 다운로드
 ```
 
 다운로드 후 구조 확인:
 ```
-checkpoints/fish-speech-1.5/
+checkpoints/openaudio-s1-mini/
 ├── model.pth
-├── firefly-gan-vq-fsq-8x1024-21hz-generator.pth
+├── codec.pth
 └── (기타 config 파일)
 ```
 
@@ -192,21 +196,24 @@ checkpoints/
 ├── diffusion_models/  vae/                   ← GGUF UNet / VAE
 ```
 
-### 6. 참조 오디오 준비
+### 6. 참조 음성 준비
 
-Fish Speech는 **zero-shot 음성 클로닝** 방식입니다. 원하는 목소리의 WAV 파일을 준비하세요.
+OpenAudio S1-mini는 `reference_id` 기반 음성 클로닝을 사용합니다. 원하는 목소리의 WAV 파일을 준비한 뒤 voice key별 폴더 구조로 등록합니다.
 
 ```
 assets/voices/
-└── korean_man_default.wav   ← 10~30초, 16kHz 이상, 깨끗한 음성
+└── yura/
+    ├── 01.wav   ← 10~30초, 16kHz 이상, 깨끗한 음성
+    └── 01.lab   ← 01.wav에서 실제로 말한 내용
 ```
 
-참조 텍스트를 `config/settings.py`의 `VOICE_REFERENCE_TEXTS`에 등록:
-```python
-VOICE_REFERENCE_TEXTS = {
-    "default": "WAV 파일에서 실제로 말한 내용을 입력하세요.",
-}
+자동 전사 기반 등록:
+```bash
+cd worker
+python -m tools.prepare_voice --input ../assets/raw/my_voice.wav --key yura --label "Yura"
 ```
+
+음성 메타데이터는 `config/voices.json`이 정본입니다. 컨테이너의 `assets/voices` 마운트는 UID 1000 쓰기 권한이 필요합니다.
 
 ### 7. 환경 변수 설정 및 실행
 
@@ -262,7 +269,7 @@ DB 스키마는 **Spring Boot backend가 기동 시 Flyway 마이그레이션을
 ```
 수신함 승인 → 편집실(대본 수정)
 → Phase 1~4: Claude 대본/씬 생성(sonnet, llm-worker 또는 API)
-→ Phase 5: Fish Speech TTS(~10초) → VRAM 해제
+→ Phase 5: OpenAudio S1-mini TTS → VRAM 해제
 → Phase 6~7: LTX-2 비디오 클립 생성(ComfyUI, 씬당 1~3분) → VRAM 해제
 → Phase 8: FFmpeg 하이브리드 렌더링(정적+비디오 합성) → 썸네일 생성
 → 갤러리 확인 → 업로드
@@ -270,16 +277,11 @@ DB 스키마는 **Spring Boot backend가 기동 시 Flyway 마이그레이션을
 
 ### TTS 음성 변경
 
-`config/settings.py`의 `VOICE_PRESETS`에 WAV 파일 추가 후 등록:
-```python
-VOICE_PRESETS = {
-    "default":  "korean_man_default.wav",
-    "female":   "korean_female.wav",    # 추가 예시
-}
-VOICE_REFERENCE_TEXTS = {
-    "default": "기존 참조 텍스트",
-    "female":  "female 파일에서 실제 말한 내용",
-}
+`config/voices.json`에 등록된 voice key를 사용합니다. 신규 음성은 `assets/voices/<key>/NN.wav + NN.lab` 구조로 준비한 뒤 등록합니다.
+
+```bash
+cd worker
+python -m tools.prepare_voice --input ../assets/raw/new_voice.wav --key new_voice --label "New Voice"
 ```
 
 ---
@@ -290,7 +292,7 @@ VOICE_REFERENCE_TEXTS = {
 |--------|------|------|
 | `db` | MariaDB 11 | 3306:3306 |
 | `crawler` | 크롤링 루프 (`python main.py`) | — |
-| `fish-speech` | TTS (zero-shot 클로닝) | 8082:8080 |
+| `fish-speech` | OpenAudio S1-mini TTS (reference_id 클로닝) | 8082:8080 |
 | `comfyui` | LTX-2 비디오 생성 | 8188:8188 |
 | `ai_worker` | 8-Phase 파이프라인 (`ai_worker.core.main`) | — |
 | `monitoring` | 헬스체크/알림 데몬 | — |
@@ -328,7 +330,7 @@ WaggleBot/
 ├── worker/                            # Python 워커 모노레포
 │   ├── Dockerfile                     # 통합 GPU Dockerfile (CUDA, Python 3.12)
 │   ├── main.py                        # 크롤러 진입점
-│   ├── crawlers/                      # base(retry+스코어링) · nate_pann · bobaedream · dcinside · fmkorea · plugin_manager
+│   ├── crawlers/                      # base(retry+스코어링) · nate_pann · bobaedream · dcinside · fmkorea · instiz · theqoo · mlbpark · plugin_manager
 │   ├── db/
 │   │   ├── models.py                  # Post/Comment/Content/LLMLog/ScriptData + PostStatus
 │   │   ├── session.py
@@ -343,7 +345,7 @@ WaggleBot/
 │   │   ├── video/                     # manager · comfy_client · prompt_engine · image_filter · video_utils · workflows/
 │   │   └── renderer/                  # composer(진입점) · layout · _frames · _tts · _encode · thumbnail
 │   ├── llm/                           # ★ llm-worker 게이트웨이 (Spring Boot, claude CLI 브릿지)
-│   ├── uploaders/                     # base(UploaderRegistry) · youtube · uploader
+│   ├── uploaders/                     # base(UploaderRegistry) · youtube · tiktok · uploader
 │   ├── analytics/                     # collector(YouTube Analytics) · feedback(LLM 피드백 루프)
 │   ├── dashboard_worker/              # jobs 테이블 폴링 실행 데몬
 │   ├── monitoring/                    # alerting · daemon
@@ -363,8 +365,8 @@ WaggleBot/
 │   ├── voices/                        # Fish Speech 참조 오디오 (WAV)
 │   └── media/                         # 생성물 (tmp/videos 등, ComfyUI 공유 볼륨)
 ├── checkpoints/                       # 모델 파일 (Fish Speech / LTX-2 / Gemma 3 / 업스케일러)
-├── scripts/                           # setup_docker_gpu · download_fish_speech · download_ltx2 · youtube_auth · tiktok_auth
-└── docs/                              # 상세 문서 (architecture / pipeline / database / api / services / config)
+├── scripts/                           # setup_docker_gpu · download_openaudio_s1 · download_ltx2 · youtube_auth · tiktok_auth
+└── docs/                              # 상세 문서 (00-agent / 10-context / 20-containers / 30-components / ...)
 ```
 
 ---
@@ -388,11 +390,14 @@ nvidia-smi
 
 | 문서 | 내용 |
 |------|------|
-| [`docs/architecture.md`](docs/architecture.md) | 시스템 전체 구조, 서비스 흐름도, 기술 스택, Post 상태 전이, VRAM 배분 |
-| [`docs/pipeline.md`](docs/pipeline.md) | 8-Phase AI 파이프라인 상세, LLM 모델 라우팅, 4단계 폴백, 피드백 루프 |
-| [`docs/database.md`](docs/database.md) | DB 스키마 ER, 테이블 컬럼, ScriptData JSON 구조, SQLAlchemy 패턴 |
-| [`docs/api.md`](docs/api.md) | llm-worker REST API 명세, Fish Speech / ComfyUI API |
-| [`docs/services.md`](docs/services.md) | Docker 서비스별 포트/볼륨/환경변수/의존성, 시작 순서 |
-| [`docs/config.md`](docs/config.md) | settings.py 변수, pipeline.json / scene_policy.json / layout.json 키 설명 |
-| [`docs/implementation-status.md`](docs/implementation-status.md) | 구현 완료 vs 미구현 현황 |
-| [`docs/improvements.md`](docs/improvements.md) | 구조 개선 작업 설계 컨텍스트 (2026-06-10) |
+| [`docs/00-agent/development-playbook.md`](docs/00-agent/development-playbook.md) | AI agent 작업 시작 절차, 탐색 경로, 검증 매트릭스 |
+| [`docs/10-context/system-context.md`](docs/10-context/system-context.md) | 시스템 전체 구조, 행위자, 외부 경계 |
+| [`docs/20-containers/topology.md`](docs/20-containers/topology.md) | Docker 서비스별 포트/볼륨/환경변수/의존성, VRAM 배분 |
+| [`docs/20-containers/config.md`](docs/20-containers/config.md) | settings.py 변수, pipeline.json / scene_policy.json / layout.json 키 설명 |
+| [`docs/30-components/pipeline.md`](docs/30-components/pipeline.md) | 8-Phase AI 파이프라인 상세, LLM 모델 라우팅, 비디오 생성 단계 |
+| [`docs/30-components/overview.md`](docs/30-components/overview.md) | 모듈 책임, 크롤러/업로더 구조 |
+| [`docs/30-components/implementation-status.md`](docs/30-components/implementation-status.md) | 구현 완료 현황과 주요 변경 이력 |
+| [`docs/40-data/schema.md`](docs/40-data/schema.md) | DB 스키마 ER, 테이블 컬럼, ScriptData JSON 구조 |
+| [`docs/50-api/rest-spec.md`](docs/50-api/rest-spec.md) | backend, llm-worker, Fish Speech, ComfyUI API 명세 |
+| [`docs/60-runtime/pipeline-runtime.md`](docs/60-runtime/pipeline-runtime.md) | 처리 루프, 폴백, 피드백 루프 |
+| [`docs/70-policy/constraints.md`](docs/70-policy/constraints.md) | 하드 제약과 금지 규칙 |

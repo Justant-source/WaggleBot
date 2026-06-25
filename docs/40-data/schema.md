@@ -1,6 +1,6 @@
 # WaggleBot — 데이터 스키마 (L4)
 
-> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `worker/db/models.py`, `worker/db/migrations/`, `backend/src/main/resources/db/migration/`
+> last-verified: 2026-06-25 · code-ref: `worker/db/models.py`, `worker/db/migrations/`, `backend/src/main/resources/db/migration/`
 > scope: DB 스키마, SQLAlchemy 패턴, ScriptData JSON 구조 — SSOT
 > **authority:** 코드(runtime) > 이 문서. 충돌 시 마이그레이션 코드 우선.
 
@@ -71,6 +71,13 @@ erDiagram
         DATETIME updated_at
     }
 
+    crawl_blocklist {
+        BIGINT id PK
+        VARCHAR(32) site_code
+        VARCHAR(64) origin_id
+        DATETIME created_at
+    }
+
     llm_logs {
         BIGINT id PK
         BIGINT post_id
@@ -108,7 +115,7 @@ erDiagram
 | `content` | TEXT | 게시글 본문 |
 | `images` | JSON | 이미지 URL 배열 |
 | `stats` | JSON | 조회수/좋아요/댓글 수 등 원본 통계 |
-| `status` | ENUM | `COLLECTED→EDITING→APPROVED→PROCESSING→PREVIEW_RENDERED→RENDERED→UPLOADED` |
+| `status` | ENUM | `COLLECTED→EDITING→APPROVED→PROCESSING→PREVIEW_RENDERED→RENDERED→UPLOADED`, 보조 상태 `DECLINED`/`FAILED` |
 | `engagement_score` | DOUBLE | 스코어링: `조회×0.1 + 좋아요×2.0 + 댓글×1.5 + 베스트공감×0.5`, 6시간 반감기 |
 | `retry_count` | INT | 파이프라인 재시도 횟수 (MAX=3) |
 | `last_error` | VARCHAR(1000) | 마지막 파이프라인 실패 원인 (`repr(exc)[:1000]`). 재시도 시 NULL 초기화 |
@@ -175,14 +182,25 @@ erDiagram
 
 | 컬럼 | 타입 | 설명 |
 |------|------|------|
-| `job_type` | ENUM | `PROCESS_POST`, `UPLOAD`, `REGENERATE_SCRIPT`, ... |
+| `job_type` | ENUM | `GENERATE_SCRIPT`, `TTS_PREVIEW`, `AI_FITNESS`, `MANUAL_CRAWL`, `HD_RENDER`, `UPLOAD`, `FETCH_YT_ANALYTICS`, `AI_INSIGHT`, `FEEDBACK_APPLY`, `AB_EVALUATE`, `AB_APPLY_WINNER`, `AB_CREATE` |
 | `post_id` | BIGINT | 대상 게시글 ID |
-| `status` | ENUM | `PENDING → RUNNING → DONE / FAILED` |
+| `status` | ENUM | `PENDING → RUNNING → DONE / ERROR` |
 | `payload` | JSON | 작업 파라미터 |
 | `result` | JSON | 처리 결과 |
 | `error` | TEXT | 실패 시 에러 메시지 |
 
 **처리 흐름:** Java backend가 PENDING 레코드 INSERT → `dashboard_worker`가 폴링 후 Python에서 실행
+
+### crawl_blocklist
+삭제된 게시글의 재수집을 영구 차단하는 블록리스트.
+
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| `site_code` | VARCHAR(32) | 출처 사이트 코드 |
+| `origin_id` | VARCHAR(64) | 원본 사이트 게시글 ID |
+| `created_at` | DATETIME | 차단 등록 시각 |
+
+**제약:** `(site_code, origin_id)` unique.
 
 ### llm_logs
 LLM 호출 이력. 디버깅/비용 분석용.
