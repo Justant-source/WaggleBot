@@ -333,7 +333,7 @@ def _call_llm_json_sync(user_prompt: str, system: str, model: str) -> dict:
         user_prompt,
         model=model,
         call_type="chunk",
-        timeout=180,
+        timeout=300,
         system=system,
         cache_prefix=True,
         temperature=0.7,  # 창의적 구어체 (레거시 generate_script와 동일값)

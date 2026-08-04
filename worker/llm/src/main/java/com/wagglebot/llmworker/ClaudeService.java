@@ -10,10 +10,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 @Service
 public class ClaudeService {
 
     private static final Logger log = LoggerFactory.getLogger(ClaudeService.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Value("${llm.claude-bin:claude}")
     private String claudeBin;
@@ -99,6 +103,22 @@ public class ClaudeService {
             throw new IOException("claude exited " + exitCode + ": " + stderr);
         }
 
+        if (Boolean.TRUE.equals(jsonMode)) {
+            return unwrapCliJsonResult(output);
+        }
+        return output;
+    }
+
+    /** Claude --output-format json returns a CLI envelope; surface the model text in result. */
+    private static String unwrapCliJsonResult(String output) {
+        try {
+            JsonNode root = MAPPER.readTree(output);
+            if (root != null && root.has("result") && root.get("result").isTextual()) {
+                return root.get("result").asText();
+            }
+        } catch (Exception e) {
+            log.debug("CLI JSON unwrap skipped: {}", e.toString());
+        }
         return output;
     }
 }

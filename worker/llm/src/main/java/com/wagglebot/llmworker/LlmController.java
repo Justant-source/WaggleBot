@@ -16,7 +16,7 @@ public class LlmController {
     @PostMapping("/v1/invoke")
     public ResponseEntity<Map<String, Object>> invoke(@RequestBody InvokeRequest req) {
         try {
-            long timeoutMs = req.timeoutMs != null ? req.timeoutMs : 120_000L;
+            long timeoutMs = req.timeoutMs != null ? req.timeoutMs : 300_000L;
             String text = claudeService.invoke(req.prompt, req.model, req.jsonMode, timeoutMs);
             return ResponseEntity.ok(Map.of("text", text));
         } catch (TimeoutException e) {

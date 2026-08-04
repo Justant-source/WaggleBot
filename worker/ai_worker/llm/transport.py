@@ -87,7 +87,7 @@ def _build_session() -> requests.Session:
     retry = Retry(
         total=2,
         backoff_factor=1,
-        status_forcelist=[500, 502, 503, 504],
+        status_forcelist=[500, 502, 503],  # 504=timeout — do not burn retries
         allowed_methods=["POST"],
     )
     adapter = HTTPAdapter(max_retries=retry)
@@ -465,6 +465,18 @@ def extract_json_object(raw: str) -> dict:
         try:
             obj = json.loads(cand)
             if isinstance(obj, dict):
+                # Claude CLI --output-format json wraps model text in a result envelope.
+                if (
+                    isinstance(obj.get("result"), str)
+                    and (
+                        "session_id" in obj
+                        or obj.get("subtype") == "success"
+                        or "duration_ms" in obj
+                    )
+                ):
+                    inner = extract_json_object(obj["result"])
+                    if inner:
+                        return inner
                 return obj
         except json.JSONDecodeError:
             pass

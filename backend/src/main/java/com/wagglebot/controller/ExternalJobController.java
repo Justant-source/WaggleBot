@@ -84,7 +84,11 @@ public class ExternalJobController {
 
     private Map<String, Object> buildArtifacts(Content content) {
         Map<String, Object> artifacts = new LinkedHashMap<>();
-        if (content.getVideoPath() != null) artifacts.put("videoUrl", toMediaUrl(content.getVideoPath()));
+        if (content.getVideoPath() != null) {
+            String videoUrl = toMediaUrl(content.getVideoPath());
+            artifacts.put("videoUrl", videoUrl);
+            artifacts.put("mp4Url", videoUrl); // ASM / Again Spring alias
+        }
         if (content.getAudioPath() != null) artifacts.put("audioUrl", toMediaUrl(content.getAudioPath()));
         return artifacts;
     }
