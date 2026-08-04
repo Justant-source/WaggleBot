@@ -1166,6 +1166,7 @@ class SceneDirector:
         narrator_voice: str | None = None,
         comments: list | None = None,
         chat_messages: list | None = None,
+        outro_text: str | None = None,
     ) -> None:
         self.profile = profile
         self._images: list[str] = list(images)
@@ -1174,6 +1175,9 @@ class SceneDirector:
         self.post_id = post_id
         self.image_cache_dir = image_cache_dir
         self.narrator_voice = narrator_voice   # 사연자 내레이터 voice_key
+        # 외부 연동(예: Again Spring)에서 넘어온 고정 아웃트로 문구. 지정 시 mood
+        # fixed_texts에서의 random.choice()를 건너뛰고 이 문구를 그대로 사용한다.
+        self.outro_text = outro_text if outro_text and outro_text.strip() else None
         self._character_voices: dict[str, str] = {}       # character_label → voice_key
         self._comment_author_voices: dict[str, str] = {}  # author → voice_key
         self._chat_sender_voices: dict[str, str] = {}     # sender → voice_key
@@ -1399,7 +1403,7 @@ class SceneDirector:
         # ── Outro ──────────────────────────────────────────────────────
         outro_asset = _pick_asset("outro_image_dir")
         outro_img = str(outro_asset) if outro_asset else None
-        outro_text = random.choice(fixed_texts)
+        outro_text = self.outro_text if self.outro_text else random.choice(fixed_texts)
         scenes.append(SceneDecision(
             type="outro",
             text_lines=[outro_text],

@@ -33,3 +33,5 @@ app:
   media-dir: ${MEDIA_DIR:/app/media}
   config-dir: ${CONFIG_DIR:/app/config}
   frontend-url: ${FRONTEND_URL:http://localhost:3000}
+  external:
+    api-key: ${EXTERNAL_API_KEY:change-me-external}

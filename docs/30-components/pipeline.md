@@ -1,6 +1,6 @@
 # WaggleBot — AI 파이프라인 (8-Phase) 컴포넌트
 
-> last-verified: 2026-06-13 · code-ref: `worker/ai_worker/pipeline/content_processor.py`
+> last-verified: 2026-08-04 · code-ref: `worker/ai_worker/pipeline/content_processor.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/scene/director.py`
 > scope: 8-Phase AI 파이프라인 Phase별 책임, LLM 라우팅 — SSOT
 
 ## 개요
@@ -91,6 +91,10 @@ flowchart TD
 - 씬별 `type` (intro / image_text / text_only / image_only / video_text / **comments**(신규) / outro) + `mood` 태그 할당
 - `config/scene_policy.json`에서 씬 타입별 정책 로드
 - 출력: `list[SceneDecision]`
+- **outro_text 오버라이드**: `SceneDirector(..., outro_text=...)`가 지정되면 mood `fixed_texts`의
+  `random.choice()`를 건너뛰고 그 문구를 그대로 사용. 외부 ingest(`/api/external/jobs`)가
+  `contents.variant_config.outro_text`에 심어둔 값을 `processor._resolve_post_outro_text(post_id)`가
+  읽어 전달한다 (예: Again Spring 짝글 여부에 따른 "상대방의 사연이 궁금하면..." 문구).
 
 **Mood 9종:**
 | mood | 설명 |
@@ -104,6 +108,12 @@ flowchart TD
 | controversy | 논란/논쟁 |
 | daily | 일상/공감 |
 | shock | 충격/반전 |
+
+> **video_gen 활성화 판정**: Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만 실행되지만,
+> 게시글 단위 오버라이드가 이를 대체할 수 있다. `ai_worker.core.processor.video_gen_enabled_for_post(post_id)`가
+> `contents.variant_config.video_gen`(bool)이 있으면 그 값을 우선 적용하고, 없으면 전역 `VIDEO_GEN_ENABLED`를 따른다.
+> 외부 ingest(`/api/external/jobs`)의 `options.videoGen`이 이 값을 채운다. `render_stage()`/`process_with_retry()`
+> 양쪽 경로 모두 이 함수로 게이팅한다.
 
 ### Phase 4.5 — assign_video_modes
 `VIDEO_GEN_ENABLED=true`일 때만 실행.

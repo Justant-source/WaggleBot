@@ -10,9 +10,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 public interface PostRepository extends JpaRepository<Post, Long>, JpaSpecificationExecutor<Post> {
     List<Post> findByStatusOrderByEngagementScoreDesc(PostStatus status);
+
+    /** 외부 ingest 멱등성 키. 크롤러 uq_site_origin 유니크 제약과 동일 키. */
+    Optional<Post> findBySiteCodeAndOriginId(String siteCode, String originId);
 
     List<Post> findTop20ByStatusOrderByUpdatedAtDesc(PostStatus status);
 

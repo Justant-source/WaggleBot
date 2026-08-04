@@ -285,6 +285,8 @@ services:
       MEDIA_DIR: "/app/media"
       CONFIG_DIR: "/app/config"
       FRONTEND_URL: "http://frontend:3000"
+      # 외부 ingest API(/api/external/**) 인증 키 — Again Spring 등 외부 서비스가 X-Api-Key로 전달
+      EXTERNAL_API_KEY: "${EXTERNAL_API_KEY:-change-me-external}"
 
   frontend:
     build:

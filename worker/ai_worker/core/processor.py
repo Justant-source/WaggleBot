@@ -41,6 +41,46 @@ def _resolve_post_voice(post_id: int) -> str | None:
         return None
 
 
+def _resolve_post_variant_config(post_id: int) -> dict:
+    """게시글별 variant_config 조회 (contents.variant_config). 없으면 빈 dict.
+
+    외부 연동(예: Again Spring 사연 ingest) 잡이 Content 생성 시 심어둔
+    {source, external_id, video_gen, paired, outro_text, auto_hd_render} 등을 읽는다.
+    """
+    try:
+        with SessionLocal() as db:
+            ct = db.query(Content).filter_by(post_id=post_id).first()
+            if ct and isinstance(ct.variant_config, dict):
+                return ct.variant_config
+    except Exception:
+        logger.warning("[variant] post_id=%d variant_config 조회 실패", post_id, exc_info=True)
+    return {}
+
+
+def video_gen_enabled_for_post(post_id: int) -> bool:
+    """게시글별 비디오 생성 활성화 여부.
+
+    contents.variant_config.video_gen(bool)이 존재하면 그 값을 우선 적용하고,
+    없으면 전역 설정 config.settings.VIDEO_GEN_ENABLED를 따른다.
+    """
+    from config.settings import VIDEO_GEN_ENABLED
+
+    cfg = _resolve_post_variant_config(post_id)
+    if "video_gen" in cfg:
+        return bool(cfg["video_gen"])
+    return VIDEO_GEN_ENABLED
+
+
+def _resolve_post_outro_text(post_id: int) -> str | None:
+    """게시글별 아웃트로 문구 오버라이드 (contents.variant_config.outro_text).
+
+    설정돼 있으면 SceneDirector가 mood 기본 fixed_texts 중 random.choice()를
+    건너뛰고 이 문구를 그대로 사용한다.
+    """
+    text = _resolve_post_variant_config(post_id).get("outro_text")
+    return text if isinstance(text, str) and text.strip() else None
+
+
 # ===========================================================================
 # 에러 타입 정의
 # ===========================================================================
@@ -163,6 +203,7 @@ class RobustProcessor:
                     post_id=post.id, comments=_db_cmts,
                     narrator_voice=script.narrator_voice or None,
                     chat_messages=script.chat_messages or None,
+                    outro_text=_resolve_post_outro_text(post.id),
                 )
                 _scenes = _director.direct()
                 logger.info("[Step 3/3] 씬=%d개", len(_scenes))
@@ -513,12 +554,11 @@ class RobustProcessor:
     ) -> list:
         """Phases 4.5-7: 비디오 모드 할당 → 프롬프트 생성 → 클립 생성.
 
-        VIDEO_GEN_ENABLED=false이면 scenes를 그대로 반환한다.
+        게시글별 video_gen_enabled_for_post() 결과가 False면 scenes를 그대로 반환한다
+        (variant_config.video_gen 오버라이드 > 전역 VIDEO_GEN_ENABLED).
         """
-        from config.settings import VIDEO_GEN_ENABLED
-
-        if not VIDEO_GEN_ENABLED:
-            logger.info("[video] VIDEO_GEN_ENABLED=false — 비디오 생성 스킵")
+        if not video_gen_enabled_for_post(post_id):
+            logger.info("[video] video_gen 비활성 (post_id=%d) — 비디오 생성 스킵", post_id)
             return scenes
 
         import gc
@@ -890,6 +930,7 @@ class RobustProcessor:
                 post_id=post_id, comments=_db_cmts2,
                 narrator_voice=script.narrator_voice or None,
                 chat_messages=script.chat_messages or None,
+                outro_text=_resolve_post_outro_text(post_id),
             )
             scenes = director.direct()
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))

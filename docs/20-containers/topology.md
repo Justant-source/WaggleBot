@@ -1,6 +1,6 @@
 # WaggleBot — 컨테이너 토폴로지 (L2)
 
-> last-verified: 2026-06-25 · code-ref: `env/docker-compose.yml`
+> last-verified: 2026-08-04 · code-ref: `env/docker-compose.yml`
 > scope: Docker 서비스 포트·볼륨·환경변수·의존성·GPU 배분 — SSOT
 
 ## 서비스 레이어 구조
@@ -233,7 +233,9 @@ graph TD
   SPRING_DATASOURCE_URL=jdbc:mariadb://db:3306/wagglebot
   MEDIA_DIR=/app/media
   FRONTEND_URL=http://frontend:3000
+  EXTERNAL_API_KEY=change-me-external   # /api/external/** 인증 키 (app.external.api-key)
   ```
+- **외부 ingest API:** `/api/external/jobs` (Again Spring 등) — `ExternalApiKeyFilter`가 `X-Api-Key` 헤더 강제, 그 외 경로는 무영향. 상세 → [`50-api/rest-spec.md`](../50-api/rest-spec.md#external-jobs-apiexternaljobs--외부-연동-ingestrender)
 
 ---
 

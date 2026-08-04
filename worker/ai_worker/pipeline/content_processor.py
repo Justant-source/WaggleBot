@@ -124,7 +124,11 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
     _touch_post(post_id)
 
     # ── Phase 4: 씬 배분 ──────────────────────────────────────────
-    from config.settings import VIDEO_GEN_ENABLED, MEDIA_DIR
+    from config.settings import MEDIA_DIR
+    from ai_worker.core.processor import video_gen_enabled_for_post, _resolve_post_outro_text
+
+    # 게시글별 오버라이드(contents.variant_config.video_gen) > 전역 VIDEO_GEN_ENABLED
+    VIDEO_GEN_ENABLED = video_gen_enabled_for_post(post_id)
 
     # LLM Scene Director용 이미지 캐시 디렉터리 (Phase 4 + 4.5 공유)
     image_cache_dir = MEDIA_DIR / "tmp" / f"vid_image_cache_{post.id}"
@@ -147,6 +151,7 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         image_cache_dir=image_cache_dir if VIDEO_GEN_ENABLED else None,
         comments=_db_comments,
         chat_messages=_chat_messages,
+        outro_text=_resolve_post_outro_text(post_id),
     )
     scenes: list[SceneDecision] = director.direct()
 

@@ -1,6 +1,6 @@
 # WaggleBot — 파이프라인 런타임 동작
 
-> last-verified: 2026-06-13 · code-ref: `worker/ai_worker/core/processor.py`
+> last-verified: 2026-08-04 · code-ref: `worker/ai_worker/core/processor.py`
 > scope: ai_worker 처리 루프, 4단계 폴백, 피드백 루프, Phase5‖6 병렬 시퀀싱 — SSOT
 
 ## 처리 루프
@@ -14,9 +14,18 @@
 5. 실패 → `FAILED`, `retry_count++`, `MAX_RETRY_COUNT=3` 초과 시 영구 FAILED
 6. **하트비트**: 각 Phase 경계에서 `posts.updated_at` 갱신 — 15분 이상 미갱신 시 "응답 없음" 배지
 
+## 게시글별 video_gen 오버라이드
+
+`processor.video_gen_enabled_for_post(post_id)`가 Phase 4.5~7 실행 여부를 결정한다:
+`contents.variant_config.video_gen`(bool)이 존재하면 그 값을 우선 적용하고, 없으면 전역
+`VIDEO_GEN_ENABLED`를 따른다. 외부 연동 ingest(`POST /api/external/jobs`)의 `options.videoGen`이
+이 값을 채운다 — 예: Again Spring 사연은 기본 `video_gen=false`(정적 렌더링만).
+동일하게 `processor._resolve_post_outro_text(post_id)`가 `variant_config.outro_text`를 읽어
+`SceneDirector(..., outro_text=...)`로 전달하면 Phase 4의 아웃트로 문구 `random.choice()`를 건너뛴다.
+
 ## Phase 7 — 4단계 폴백 (video_clip 생성)
 
-`VIDEO_GEN_ENABLED=true`일 때만 실행. ComfyUI LTX-2 실패 시 순차 폴백:
+`video_gen_enabled_for_post(post_id)`가 `true`일 때만 실행. ComfyUI LTX-2 실패 시 순차 폴백:
 
 ```mermaid
 flowchart LR

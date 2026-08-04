@@ -1,6 +1,6 @@
 # WaggleBot — API 명세 (L5)
 
-> last-verified: 2026-06-25 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java`, `worker/ai_worker/tts/fish_client.py`
+> last-verified: 2026-08-04 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java`, `worker/ai_worker/tts/fish_client.py`
 > scope: llm-worker·backend·Fish Speech·ComfyUI API 엔드포인트 명세 — SSOT
 
 ## 서비스별 Base URL
@@ -184,6 +184,72 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 | Method | Path | 설명 |
 |--------|------|------|
 | `GET` | `/api/tts/voices` | 등록된 음성 키 목록 |
+
+### External Jobs (`/api/external/jobs`) — 외부 연동 ingest+render
+
+Again Spring 등 **외부 서비스**가 사연을 WaggleBot 파이프라인(대본→TTS→렌더링)에 밀어넣고
+진행 상태를 폴링하기 위한 엔드포인트. `com.wagglebot.config.ExternalApiKeyFilter`가
+`/api/external/**` 전체에 `X-Api-Key` 인증을 강제한다 (그 외 경로는 영향 없음).
+
+**인증:** 헤더 `X-Api-Key: <값>` — 값은 환경변수 `EXTERNAL_API_KEY`(로컬 기본값 `change-me-external`,
+Spring 프로퍼티 `app.external.api-key`). 누락·불일치 시 `401 {"error": "...", "status": 401}`.
+
+| Method | Path | 설명 |
+|--------|------|------|
+| `POST` | `/api/external/jobs` | 사연 ingest — Post/Comment/Content 생성 후 파이프라인 큐(APPROVED)로 진입 |
+| `GET` | `/api/external/jobs/{jobId}` | 진행 상태 폴링. `jobId` = 생성된 Post.id |
+
+**POST 요청 바디:**
+```json
+{
+  "source": "again_spring",
+  "externalId": "post_xxx",
+  "title": "...",
+  "body": "...",
+  "comments": [{"author": "a", "body": "b", "likeCount": 1}],
+  "paired": false,
+  "options": {"videoGen": false, "autoHdRender": true}
+}
+```
+
+- `source` → `posts.site_code`, `externalId` → `posts.origin_id`. 유니크 키 `uq_site_origin(site_code, origin_id)` 그대로 사용.
+- **멱등성**: 동일 `(source, externalId)` Post가 이미 있고 상태가 `FAILED`가 아니면 재적재 없이 기존 `{jobId, status}`를 그대로 반환. `FAILED`면 title/body를 갱신하고 `APPROVED`로 되돌려 재처리시킨다(retryCount++, lastError=null).
+- 댓글은 크롤러(`worker/crawlers/base.py`)와 동일한 `sha256(author:content)[:32]` 해시로 `uq_post_comment` 중복을 방지한다.
+- `contents.variant_config`에 다음 JSON을 저장 — `ai_worker.core.processor.video_gen_enabled_for_post()`와 `SceneDirector.outro_text`가 읽는다:
+  ```json
+  {
+    "source": "again_spring",
+    "external_id": "post_xxx",
+    "video_gen": false,
+    "paired": false,
+    "outro_text": "여러분의 의견을 댓글로 남겨주세요",
+    "auto_hd_render": true
+  }
+  ```
+  - `video_gen`: `options.videoGen`(기본 `false`) — 게시글 단위로 전역 `VIDEO_GEN_ENABLED`를 오버라이드
+  - `outro_text`: `paired=true`면 `"상대방의 사연이 궁금하면 댓글을 확인해주세요"`, 아니면 `"여러분의 의견을 댓글로 남겨주세요"` — `SceneDirector`가 mood 기본 문구의 `random.choice()`를 건너뛰고 이 값을 그대로 사용
+  - `auto_hd_render`: `options.autoHdRender`(기본 `true`) — GET 폴링에서 `PREVIEW_RENDERED` 도달 시 자동 `HD_RENDER` 잡 큐잉 여부
+
+**POST 응답 (200):**
+```json
+{ "ok": true, "jobId": 123, "status": "APPROVED", "externalId": "post_xxx" }
+```
+
+**GET 응답 (200):**
+```json
+{
+  "ok": true,
+  "jobId": 123,
+  "status": "PREVIEW_RENDERED",
+  "externalId": "post_xxx",
+  "progress": { "currentPhase": 7, "phaseName": "비디오 클립", "scenesDone": 3, "totalScenes": 5 },
+  "artifacts": { "videoUrl": "/api/media/tmp/videos/....mp4", "audioUrl": "/api/media/audio/....wav" },
+  "hdRenderJobId": 456
+}
+```
+- `progress`: `contents.pipeline_state.progress`를 `ProgressController`와 동일한 규칙으로 snake_case→camelCase 변환. 없으면 `null`.
+- `artifacts`: `status`가 `PREVIEW_RENDERED`/`RENDERED`일 때만 포함, `MediaController`(`/api/media/**`) 기준 상대 경로.
+- `hdRenderJobId`: `status=PREVIEW_RENDERED` + `variant_config.auto_hd_render=true`일 때만 등장. `GalleryController.hdRender()`와 동일하게 활성 `HD_RENDER` 잡이 있으면 그 ID를, 없으면 새로 큐잉한 잡 ID를 반환(중복 큐잉 방지).
 
 ---
 
