@@ -115,6 +115,13 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
 
     # ── Phase 3: 물리적 검증 (max_chars 보정) ─────────────────────
     script: dict = validate_and_fix(llm_output)
+    # again_spring: 본문 LLM 결과에 섞인 type=comment는 제거 (DB 댓글 씬만 사용)
+    # → 사연 낭독 중 목소리 전환 방지
+    if getattr(post, "site_code", None) == "again_spring":
+        script["body"] = [
+            b for b in (script.get("body") or [])
+            if not (isinstance(b, dict) and b.get("type") == "comment")
+        ]
     logger.info(
         "[content_processor] Phase 3 완료: hook(%d자) + body(%d줄) + closer(%d자)",
         len(script.get("hook", "")),

@@ -1281,6 +1281,7 @@ class SceneDirector:
             mood=mood,
             tts_emotion=tts_emotion,
             bgm_path=bgm_path,
+            voice_override=self.narrator_voice,
         ))
 
         # ── Body ───────────────────────────────────────────────────────
@@ -1293,14 +1294,11 @@ class SceneDirector:
                 block_type = item.get("type", "body")
                 author = item.get("author")
                 is_comment = block_type == "comment"
-                if is_comment and self.comment_voices:
-                    voice = random.choice(self.comment_voices)
-                elif item.get("speaker") == "character":
-                    voice = self._assign_character_voice(
-                        item.get("character_label", ""),
-                        item.get("character_gender", ""),
-                        item.get("character_age", ""),
-                    )
+                # 사연 본문은 내레이터 단일 목소리. 캐릭터/랜덤 전환 금지.
+                # LLM이 body에 type=comment를 섞어도 사연 낭독과 분리되지 않게
+                # 댓글 전용 씬(comments)만 별도 목소리를 쓴다.
+                if is_comment:
+                    voice = self._assign_comment_voice(author or "")
                 else:
                     voice = self.narrator_voice  # None이면 TTS default 사용
                 body_items.append((text, voice, block_type, author, lines_raw if len(lines_raw) > 1 else None))
@@ -1410,6 +1408,7 @@ class SceneDirector:
             image_url=outro_img,
             mood=mood,
             tts_emotion=tts_emotion,
+            voice_override=self.narrator_voice,
         ))
 
         logger.debug(

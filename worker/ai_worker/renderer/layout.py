@@ -215,7 +215,8 @@ def _scenes_to_plan_and_sentences(
         if scene.type == "intro":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
             sent_idx = len(sentences)
-            sentences.append({"text": text, "section": "hook", "audio": audio, "voice_override": None,
+            sentences.append({"text": text, "section": "hook", "audio": audio,
+                              "voice_override": getattr(scene, "voice_override", None),
                               "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "intro", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
@@ -286,7 +287,8 @@ def _scenes_to_plan_and_sentences(
             sent_idx_val = None
             if text:
                 sent_idx_val = len(sentences)
-                sentences.append({"text": text, "section": "closer", "audio": audio, "voice_override": None,
+                sentences.append({"text": text, "section": "closer", "audio": audio,
+                                  "voice_override": getattr(scene, "voice_override", None),
                                   "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "outro", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
 
@@ -936,11 +938,22 @@ def render_layout_video_from_scenes(
     _stats: dict = post.stats if isinstance(post.stats, dict) else {}
     _author_raw: str = getattr(post, "author", None) or ""
     meta: dict = {
-        "author": _author_raw or None,          # None이면 config author_fallback("와글") 사용
+        "author": _author_raw or None,          # None이면 config author_fallback 사용
         "time": _relative_time(getattr(post, "created_at", None)),
         "views": _fmt_count(_stats.get("views")),
         "comments": _stats.get("comments_count") or 0,
     }
+
+    # Again Spring 외부 잡: 헤더/폴백 브랜드를 "다시봄"으로
+    if getattr(post, "site_code", None) == "again_spring":
+        import copy
+        layout = copy.deepcopy(layout)
+        layout.setdefault("global", {}).setdefault("header", {})["channel_name"] = "다시봄"
+        layout.setdefault("global", {}).setdefault("title_block", {}).setdefault("meta", {})[
+            "author_fallback"
+        ] = "다시봄"
+        if not meta.get("author"):
+            meta["author"] = "다시봄"
 
     return _render_pipeline(
         post.id, post.title or "", sentences, plan, images,

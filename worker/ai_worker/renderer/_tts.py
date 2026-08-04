@@ -93,7 +93,13 @@ async def _generate_tts_chunks(
             text = sent["text"]
             pre_audio = sent.get("audio")
             scene_type = entry.get("type", "image_text")
-            chunk_voice = sent.get("voice_override") or voice
+            _section = sent.get("section")
+            _bt = sent.get("block_type") or "body"
+            # 사연 낭독은 narrator(voice)로 강제 — override가 다른 키여도 무시
+            if _section in ("hook", "body", "closer") and _bt not in ("comment", "chat"):
+                chunk_voice = voice
+            else:
+                chunk_voice = sent.get("voice_override") or voice
             chunk_emotion = sent.get("tts_emotion", "")
             dur = await _tts_chunk_async(
                 text, frame_idx, output_dir, scene_type, pre_audio, chunk_voice, chunk_emotion,

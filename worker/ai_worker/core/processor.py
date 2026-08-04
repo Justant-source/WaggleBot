@@ -841,9 +841,16 @@ class RobustProcessor:
                     m for m in (_raw.get("chat_messages") or [])
                     if isinstance(m, dict) and m.get("text")
                 ]
+                _body = list(_raw.get("body", []))
+                # again_spring: 사연 본문에 섞인 LLM type=comment 제거 (DB 댓글 씬만 사용)
+                if post.site_code == "again_spring":
+                    _body = [
+                        b for b in _body
+                        if not (isinstance(b, dict) and b.get("type") == "comment")
+                    ]
                 script = ScriptData(
                     hook=_raw.get("hook", ""),
-                    body=_raw.get("body", []),
+                    body=_body,
                     closer=_raw.get("closer", ""),
                     title_suggestion=_raw.get("title_suggestion", ""),
                     tags=_raw.get("tags", []),
@@ -881,6 +888,9 @@ class RobustProcessor:
                 session.add(content)
             content.summary_text = script.to_json()
             content.audio_path = str(audio_path)
+            # 사연 낭독 보이스를 contents.tts_voice에도 고정 (렌더 fallback=yohan 방지)
+            if script.narrator_voice:
+                content.tts_voice = script.narrator_voice
             session.commit()
 
         return script, audio_path
@@ -935,6 +945,18 @@ class RobustProcessor:
             scenes = director.direct()
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 
+            # 사연 낭독(intro/body/outro)은 narrator_voice로 일괄 고정.
+            # 댓글 씬(comments/chat)만 작성자별 보이스 유지.
+            _nv = script.narrator_voice or None
+            if _nv:
+                for _sc in scenes:
+                    if _sc.type in ("intro", "outro"):
+                        _sc.voice_override = _nv
+                    elif _sc.type in ("text_only", "image_text", "video_text", "image_only"):
+                        if getattr(_sc, "block_type", "body") != "comment":
+                            _sc.voice_override = _nv
+                logger.info("[Pipeline Render] story TTS locked to narrator_voice=%s", _nv)
+
             # Phase 4.5-7: LTX-Video 클립 생성
             scenes = self._generate_video_clips_sync(
                 scenes, script, post.title or "", post_id
@@ -942,7 +964,7 @@ class RobustProcessor:
 
             stamp_progress(post_id, 8, "FFmpeg 렌더링")
             _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
-            _post_voice = _resolve_post_voice(post_id)
+            _post_voice = _resolve_post_voice(post_id) or _nv
             video_path = render_layout_video_from_scenes(
                 post, scenes, save_tts_cache=_tts_cache, voice_key=_post_voice
             )
