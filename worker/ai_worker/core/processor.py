@@ -23,7 +23,7 @@ from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts.fish_client import synthesize as tts_synthesize
 from db.models import ScriptData
-from config.settings import MEDIA_DIR, TTS_OUTPUT_FORMAT, load_pipeline_config, MAX_RETRY_COUNT
+from config.settings import MEDIA_DIR, TTS_OUTPUT_FORMAT, load_pipeline_config, MAX_RETRY_COUNT, VOICE_DEFAULT
 from db.models import Content, Post, PostStatus
 from db.session import SessionLocal
 
@@ -813,58 +813,80 @@ class RobustProcessor:
                     "[Pipeline LLM+TTS] content_processor 모드: 전략=%s 이미지=%d",
                     _profile.strategy, _profile.image_count,
                 )
-                # 활성 경로에도 제목·베스트 댓글·피드백 지시 전달 (레거시 경로와 동일)
-                _best = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
-                _comment_texts = [f"{c.author}: {c.content[:100]}" for c in _best]
-                _extra = build_extra_instructions(post_id, session)
-                _raw = await chunk_with_llm(
-                    post.content or "",
-                    _profile,
-                    post_id=post_id,
-                    extended=True,
-                    title=post.title,
-                    best_comments=_comment_texts,
-                    extra_instructions=_extra or "",
+                # 와글봇 pipeline 기본 TTS만 사용 (성별/연령 pick_voice 금지 → 보이스 혼용 방지)
+                _narrator_voice = (
+                    load_pipeline_config().get("tts_voice")
+                    or VOICE_DEFAULT
+                    or "default"
                 )
-                from ai_worker.script.voice_assigner import pick_voice as _pick_voice
-                _narrator_voice = _pick_voice(
-                    _raw.get("narrator_gender", ""),
-                    _raw.get("narrator_age", ""),
-                )
-                logger.info(
-                    "[Pipeline LLM+TTS] narrator_voice=%s (gender=%s, age=%s)",
-                    _narrator_voice,
-                    _raw.get("narrator_gender", "—"),
-                    _raw.get("narrator_age", "—"),
-                )
-                _chat_msgs = [
-                    m for m in (_raw.get("chat_messages") or [])
-                    if isinstance(m, dict) and m.get("text")
-                ]
-                _body = list(_raw.get("body", []))
-                # again_spring: 사연 본문에 섞인 LLM type=comment 제거 (DB 댓글 씬만 사용)
-                if post.site_code == "again_spring":
-                    _body = [
-                        b for b in _body
-                        if not (isinstance(b, dict) and b.get("type") == "comment")
+                script = None
+                _existing = session.query(Content).filter_by(post_id=post_id).first()
+                if _existing and _existing.summary_text:
+                    try:
+                        _reuse = ScriptData.from_json(_existing.summary_text)
+                        if _reuse.hook and len(_reuse.hook) >= 5 and _reuse.body:
+                            _reuse.narrator_voice = _narrator_voice
+                            if post.site_code == "again_spring":
+                                _reuse.body = [
+                                    b for b in _reuse.body
+                                    if not (isinstance(b, dict) and b.get("type") == "comment")
+                                ]
+                            script = _reuse
+                            logger.info(
+                                "[Pipeline LLM+TTS] 기존 대본 재사용 (LLM 스킵) voice=%s post_id=%d",
+                                _narrator_voice, post_id,
+                            )
+                    except Exception:
+                        logger.debug("기존 summary 재사용 실패 — LLM 재생성", exc_info=True)
+                        script = None
+                if script is None:
+                    # 활성 경로에도 제목·베스트 댓글·피드백 지시 전달 (레거시 경로와 동일)
+                    _best = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
+                    _comment_texts = [f"{c.author}: {c.content[:100]}" for c in _best]
+                    _extra = build_extra_instructions(post_id, session)
+                    _raw = await chunk_with_llm(
+                        post.content or "",
+                        _profile,
+                        post_id=post_id,
+                        extended=True,
+                        title=post.title,
+                        best_comments=_comment_texts,
+                        extra_instructions=_extra or "",
+                    )
+                    logger.info(
+                        "[Pipeline LLM+TTS] narrator_voice=%s (pipeline tts_voice, ignore gender/age)",
+                        _narrator_voice,
+                    )
+                    _chat_msgs = [
+                        m for m in (_raw.get("chat_messages") or [])
+                        if isinstance(m, dict) and m.get("text")
                     ]
-                script = ScriptData(
-                    hook=_raw.get("hook", ""),
-                    body=_body,
-                    closer=_raw.get("closer", ""),
-                    title_suggestion=_raw.get("title_suggestion", ""),
-                    tags=_raw.get("tags", []),
-                    mood=_raw.get("mood", "daily"),
-                    narrator_voice=_narrator_voice,
-                    chat_messages=_chat_msgs,
-                )
+                    _body = list(_raw.get("body", []))
+                    # again_spring: 사연 본문에 섞인 LLM type=comment 제거 (DB 댓글 씬만 사용)
+                    if post.site_code == "again_spring":
+                        _body = [
+                            b for b in _body
+                            if not (isinstance(b, dict) and b.get("type") == "comment")
+                        ]
+                    script = ScriptData(
+                        hook=_raw.get("hook", ""),
+                        body=_body,
+                        closer=_raw.get("closer", ""),
+                        title_suggestion=_raw.get("title_suggestion", ""),
+                        tags=_raw.get("tags", []),
+                        mood=_raw.get("mood", "daily"),
+                        narrator_voice=_narrator_voice,
+                        chat_messages=_chat_msgs,
+                    )
             else:
                 # 레거시 generate_script 경로
                 script = self._safe_generate_summary(post, session)
 
             logger.info("[Pipeline LLM+TTS] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
 
-            _post_voice = _resolve_post_voice(post_id)
+            _post_voice = script.narrator_voice or _resolve_post_voice(post_id) or (
+                load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
+            )
             stamp_progress(post_id, 5, "TTS 합성")
             with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
                 audio_path = await self._safe_generate_tts(
@@ -945,17 +967,23 @@ class RobustProcessor:
             scenes = director.direct()
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 
-            # 사연 낭독(intro/body/outro)은 narrator_voice로 일괄 고정.
-            # 댓글 씬(comments/chat)만 작성자별 보이스 유지.
+            # 전 구간(intro/body/comments/outro/chat)을 pipeline 기본 보이스 하나로 고정.
             _nv = script.narrator_voice or None
+            if not _nv:
+                _nv = load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
             if _nv:
                 for _sc in scenes:
-                    if _sc.type in ("intro", "outro"):
-                        _sc.voice_override = _nv
-                    elif _sc.type in ("text_only", "image_text", "video_text", "image_only"):
-                        if getattr(_sc, "block_type", "body") != "comment":
-                            _sc.voice_override = _nv
-                logger.info("[Pipeline Render] story TTS locked to narrator_voice=%s", _nv)
+                    _sc.voice_override = _nv
+                    # comments/chat 아이템별 voice도 동일 키로 덮어씀
+                    if getattr(_sc, "comment_items", None):
+                        for _it in _sc.comment_items:
+                            if isinstance(_it, dict):
+                                _it["voice"] = _nv
+                    if getattr(_sc, "chat_messages", None):
+                        for _m in _sc.chat_messages:
+                            if isinstance(_m, dict):
+                                _m["voice"] = _nv
+                logger.info("[Pipeline Render] ALL TTS locked to pipeline voice=%s", _nv)
 
             # Phase 4.5-7: LTX-Video 클립 생성
             scenes = self._generate_video_clips_sync(

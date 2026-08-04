@@ -101,16 +101,13 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         logger.info("[content_processor] chat_messages=%d개 감지", len(_chat_messages))
 
     # ── narrator voice 결정 (사연자 연령/성별 기반) ────────────────
-    from ai_worker.script.voice_assigner import pick_voice as _pick_voice
-    narrator_voice: str = _pick_voice(
-        llm_output.get("narrator_gender", ""),
-        llm_output.get("narrator_age", ""),
+    from config.settings import load_pipeline_config, VOICE_DEFAULT
+    narrator_voice: str = (
+        load_pipeline_config().get("tts_voice") or VOICE_DEFAULT or "default"
     )
     logger.info(
-        "[content_processor] narrator_voice=%s (gender=%s, age=%s)",
+        "[content_processor] narrator_voice=%s (pipeline tts_voice)",
         narrator_voice,
-        llm_output.get("narrator_gender", "—"),
-        llm_output.get("narrator_age", "—"),
     )
 
     # ── Phase 3: 물리적 검증 (max_chars 보정) ─────────────────────
