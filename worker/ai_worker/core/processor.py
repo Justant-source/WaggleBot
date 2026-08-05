@@ -23,11 +23,29 @@ from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts.fish_client import synthesize as tts_synthesize
 from db.models import ScriptData
-from config.settings import MEDIA_DIR, TTS_OUTPUT_FORMAT, load_pipeline_config, MAX_RETRY_COUNT, VOICE_DEFAULT
+from config.settings import (
+    MAX_RETRY_COUNT,
+    MEDIA_DIR,
+    TTS_OUTPUT_FORMAT,
+    TTS_SPEED,
+    VOICE_DEFAULT,
+    load_pipeline_config,
+)
 from db.models import Content, Post, PostStatus
 from db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
+
+_TTS_POST_PROCESS_CACHE_VERSION = "pp_v6"
+
+
+def _tts_cache_key(voice_id: str, text: str) -> str:
+    """Return the cache identity for audio-affecting TTS post-processing.
+
+    Keep a named post-process version as an explicit invalidation boundary, and
+    include the active speed to protect future configuration changes as well.
+    """
+    return f"{voice_id}:{text}:{TTS_SPEED:.3f}:{_TTS_POST_PROCESS_CACHE_VERSION}"
 
 
 
@@ -437,7 +455,7 @@ class RobustProcessor:
             # TTS 캐시 확인 (동일 텍스트+목소리 → 재합성 스킵)
             tts_cache_dir = MEDIA_DIR / "tmp" / "tts_cache"
             tts_cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_hash = hashlib.md5(f"{voice_id}:{text}:pp_v3".encode()).hexdigest()  # pp_v3: no silenceremove
+            cache_hash = hashlib.md5(_tts_cache_key(voice_id, text).encode()).hexdigest()
             cached_audio = tts_cache_dir / f"{cache_hash}.{TTS_OUTPUT_FORMAT}"
             if cached_audio.exists():
                 shutil.copy2(cached_audio, audio_path)
