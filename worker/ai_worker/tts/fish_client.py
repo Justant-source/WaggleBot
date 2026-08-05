@@ -7,13 +7,16 @@
 """
 import asyncio
 import base64
+import concurrent.futures
 import hashlib
 import json
 import logging
 import re
 import subprocess
+import tempfile
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -22,6 +25,15 @@ import httpx
 # render_stage(스레드 풀)와 llm_tts_stage(메인 이벤트 루프)가 동시에 요청을 보내면
 # baize.ClientDisconnect 오류가 발생하므로, threading.Lock으로 전역 직렬화한다.
 _FISH_SPEECH_LOCK = threading.Lock()
+# Waiting on a ``threading.Lock`` in the default executor can starve ASR jobs:
+# every concurrently queued synthesis occupies a worker while waiting for the
+# Fish request that itself awaits CPU ASR.  Keep the cross-event-loop lock (the
+# renderer can create a loop in another thread), but isolate its one blocking
+# waiter from the shared executor.
+_FISH_SPEECH_LOCK_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="fish-speech-lock",
+)
 
 from config.settings import (
     FISH_SPEECH_CHUNK_LENGTH,
@@ -49,6 +61,15 @@ from config.settings import (
     VOICE_REFERENCE_TEXTS,
 )
 from ai_worker.tts.normalizer import normalize_for_tts
+from ai_worker.tts.alignment import transcribe_tts_quality
+from ai_worker.tts.quality import (
+    TranscriptQuality,
+    assess_audio_with_asr,
+    candidate_seed,
+    quality_retry_decision,
+    should_run_asr_quality_check,
+    validate_segment_boundaries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +90,40 @@ _HTTP_TIMEOUT = httpx.Timeout(
     read=FISH_SPEECH_TIMEOUT,
     pool=5.0,
 )
+
+
+@asynccontextmanager
+async def _fish_speech_request_lock():
+    """Serialize Fish requests without consuming shared ASR executor workers.
+
+    The lock is thread based because ``synthesize`` is also called from the
+    renderer's private event-loop thread.  If a caller is cancelled while its
+    acquire is queued, the worker still obtains the lock eventually; release it
+    in a completion callback so that cancellation cannot permanently wedge TTS.
+    """
+    loop = asyncio.get_running_loop()
+    acquired = False
+    acquire_future = loop.run_in_executor(
+        _FISH_SPEECH_LOCK_EXECUTOR,
+        _FISH_SPEECH_LOCK.acquire,
+    )
+    try:
+        await asyncio.shield(acquire_future)
+        acquired = True
+        yield
+    except BaseException:
+        if not acquired:
+            def _release_after_cancelled_acquire(
+                completed: asyncio.Future[object],
+            ) -> None:
+                if not completed.cancelled() and completed.exception() is None:
+                    _FISH_SPEECH_LOCK.release()
+
+            acquire_future.add_done_callback(_release_after_cancelled_acquire)
+        raise
+    finally:
+        if acquired:
+            _FISH_SPEECH_LOCK.release()
 
 
 # ────────────────────────────────────────────────────────────────
@@ -231,49 +286,79 @@ def _band_distance(spc: float, char_count: int) -> float:
     return 0.0
 
 
-def _split_hard(s: str, max_chars: int) -> list[str]:
-    """단일 문장이 max_chars를 초과할 때 쉼표→공백→강제 슬라이스 순으로 분할."""
-    out: list[str] = []
-    cur = ""
-    for part in re.split(r'(?<=,)\s*', s):
-        if len(cur) + len(part) <= max_chars:
-            cur += part
-            continue
-        if cur:
-            out.append(cur.strip())
-            cur = ""
-        if len(part) > max_chars:
-            for i in range(0, len(part), max_chars):
-                out.append(part[i:i + max_chars].strip())
+def _split_at_word_boundaries(text: str, max_chars: int) -> list[str]:
+    """Split an overlong unit only between whitespace-delimited words.
+
+    ``max_chars`` is a request-size target, not permission to cut a Korean
+    eojeol.  A single exceptionally long word therefore stays intact and may
+    exceed the target rather than becoming two malformed TTS inputs.
+    """
+    words = list(re.finditer(r"\S+", text))
+    if not words:
+        return []
+    chunks: list[str] = []
+    current_start: int | None = None
+    current_end = 0
+    for word in words:
+        if current_start is None:
+            current_start, current_end = word.start(), word.end()
+        elif word.end() - current_start <= max_chars:
+            current_end = word.end()
         else:
-            cur = part
-    if cur.strip():
-        out.append(cur.strip())
-    return [o for o in out if o]
+            chunks.append(text[current_start:current_end].strip())
+            current_start, current_end = word.start(), word.end()
+    if current_start is not None:
+        chunks.append(text[current_start:current_end].strip())
+    return chunks
+
+
+def _split_sentence_units(block: str) -> list[str]:
+    """Keep sentence punctuation with its preceding unit for natural prosody."""
+    return [
+        unit.strip()
+        # A boundary without whitespace can be part of one lexical token
+        # (for example ``버전1.2.3``).  Splitting there would also rejoin the
+        # pieces with spaces below, changing the TTS input.
+        for unit in re.split(r'(?<=[.!?…])(?:[ \t]+|$)', block.strip())
+        if unit.strip()
+    ]
 
 
 def _split_text(text: str, max_chars: int) -> list[str]:
-    """긴 텍스트를 문장 경계로 분할한다 (각 조각 ≤ max_chars 지향)."""
+    """Split TTS input without ever cutting inside a Korean word.
+
+    Boundary priority is sentence punctuation, then the blank-line semantic
+    blocks emitted by ``ScriptData.to_narration_text()``, then ordinary
+    whitespace.  A request may exceed ``max_chars`` only for one unbreakable
+    word; this is preferable to synthesizing a broken Hangul eojeol.
+    """
     if len(text) <= max_chars:
         return [text]
     chunks: list[str] = []
-    cur = ""
-    for sent in re.split(r'(?<=[.!?…])\s+', text):
-        if not sent:
-            continue
-        if len(sent) > max_chars:
-            if cur:
-                chunks.append(cur)
-                cur = ""
-            chunks.extend(_split_hard(sent, max_chars))
-            continue
-        if cur and len(cur) + len(sent) + 1 > max_chars:
-            chunks.append(cur)
-            cur = sent
-        else:
-            cur = f"{cur} {sent}".strip() if cur else sent
-    if cur:
-        chunks.append(cur)
+    current = ""
+    semantic_blocks = [
+        block.strip() for block in re.split(r'\n\s*\n+', text) if block.strip()
+    ]
+    for block_index, block in enumerate(semantic_blocks):
+        sentence_units = _split_sentence_units(block)
+        for unit_index, sentence in enumerate(sentence_units):
+            units = (
+                _split_at_word_boundaries(sentence, max_chars)
+                if len(sentence) > max_chars
+                else [sentence]
+            )
+            for split_index, unit in enumerate(units):
+                semantic_start = block_index > 0 and unit_index == 0 and split_index == 0
+                separator = "\n\n" if semantic_start else " "
+                if not current:
+                    current = unit
+                elif len(current) + len(separator) + len(unit) <= max_chars:
+                    current = f"{current}{separator}{unit}"
+                else:
+                    chunks.append(current)
+                    current = unit
+    if current:
+        chunks.append(current)
     return chunks or [text]
 
 
@@ -354,30 +439,31 @@ def _concat_wavs(seg_files: list[Path], output_path: Path) -> None:
 # ────────────────────────────────────────────────────────────────
 async def _request_one(client: httpx.AsyncClient, payload: dict) -> bytes:
     """단일 /v1/tts 요청 (5xx/ReadTimeout 재시도 포함). 응답 bytes 반환."""
-    for attempt in range(_MAX_TTS_RETRIES + 1):
-        try:
-            resp = await client.post(f"{FISH_SPEECH_URL}/v1/tts", json=payload)
-            resp.raise_for_status()
-            return resp.content
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code >= 500 and attempt < _MAX_TTS_RETRIES:
-                wait = 30 * (attempt + 1)
-                logger.warning(
-                    "Fish Speech %d (attempt %d/%d) — %d초 후 재시도",
-                    e.response.status_code, attempt + 1, _MAX_TTS_RETRIES + 1, wait,
-                )
-                await asyncio.sleep(wait)
-            else:
-                raise
-        except httpx.ReadTimeout:
-            if attempt < _MAX_TTS_RETRIES:
-                logger.warning(
-                    "Fish Speech ReadTimeout (attempt %d/%d) — 즉시 재시도",
-                    attempt + 1, _MAX_TTS_RETRIES + 1,
-                )
-            else:
-                logger.error("Fish Speech ReadTimeout — 최대 재시도(%d) 초과", _MAX_TTS_RETRIES + 1)
-                raise
+    async with _fish_speech_request_lock():
+        for attempt in range(_MAX_TTS_RETRIES + 1):
+            try:
+                resp = await client.post(f"{FISH_SPEECH_URL}/v1/tts", json=payload)
+                resp.raise_for_status()
+                return resp.content
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code >= 500 and attempt < _MAX_TTS_RETRIES:
+                    wait = 30 * (attempt + 1)
+                    logger.warning(
+                        "Fish Speech %d (attempt %d/%d) — %d초 후 재시도",
+                        e.response.status_code, attempt + 1, _MAX_TTS_RETRIES + 1, wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    raise
+            except httpx.ReadTimeout:
+                if attempt < _MAX_TTS_RETRIES:
+                    logger.warning(
+                        "Fish Speech ReadTimeout (attempt %d/%d) — 즉시 재시도",
+                        attempt + 1, _MAX_TTS_RETRIES + 1,
+                    )
+                else:
+                    logger.error("Fish Speech ReadTimeout — 최대 재시도(%d) 초과", _MAX_TTS_RETRIES + 1)
+                    raise
     raise RuntimeError("unreachable")
 
 
@@ -386,6 +472,9 @@ async def _synthesize_segment(
     send_text: str,
     char_count: int,
     base_payload: dict,
+    *,
+    voice_key: str,
+    expected_text: str,
 ) -> tuple[bytes, float]:
     """품질 검증 + 재생성 포함 단일 세그먼트 합성. (오디오 bytes, 초/자) 반환.
 
@@ -394,22 +483,103 @@ async def _synthesize_segment(
     best_audio: bytes | None = None
     best_dist = float("inf")
     best_spc = 0.0
+    best_asr_audio: bytes | None = None
+    best_asr_spc = 0.0
+    best_asr_score = float("-inf")
     for q in range(_MAX_QUALITY_RETRIES + 1):
-        content = await _request_one(client, {**base_payload, "text": send_text})
+        seed = candidate_seed(voice_key, send_text, q)
+        content = await _request_one(client, {**base_payload, "text": send_text, "seed": seed})
         dur = _wav_duration(content)
         spc = dur / max(char_count, 1)
         dist = _band_distance(spc, char_count)
-        if dist == 0.0:
-            return content, spc  # 정상 범위 → 즉시 채택
-        if dist < best_dist:
-            best_dist, best_audio, best_spc = dist, content, spc
-        logger.warning(
-            "TTS 품질 의심: %.1f초/%.0f자 = %.2f초/자 (범위 %.2f~%.2f) — 재생성 %d/%d",
-            dur, char_count, spc, TTS_MIN_SECS_PER_CHAR, TTS_MAX_SECS_PER_CHAR,
-            q + 1, _MAX_QUALITY_RETRIES,
+        if dist != 0.0:
+            if dist < best_dist:
+                best_dist, best_audio, best_spc = dist, content, spc
+            logger.warning(
+                "TTS 길이 품질 의심: %.1f초/%.0f자 = %.2f초/자 (범위 %.2f~%.2f) — 재생성 %d/%d",
+                dur, char_count, spc, TTS_MIN_SECS_PER_CHAR, TTS_MAX_SECS_PER_CHAR,
+                q + 1, _MAX_QUALITY_RETRIES,
+            )
+            continue
+
+        loop = asyncio.get_running_loop()
+        quality = await loop.run_in_executor(
+            None,
+            _assess_segment_quality,
+            content,
+            expected_text,
+            dur,
         )
-    logger.warning("TTS 품질 검증 최종 실패 — 최적 결과 사용 (%.2f초/자)", best_spc)
+        # All duration-valid candidates can still be rejected by ASR.  Preserve
+        # the most text-faithful one for an exhausted retry budget instead of
+        # accidentally returning the final attempt with a zero timing estimate.
+        # Coverage is a secondary tiebreaker because it is intentionally absent
+        # for short/unspaced transcripts.
+        quality_score = quality.similarity + (quality.word_coverage or 0.0) * 1e-3
+        if quality_score > best_asr_score:
+            best_asr_audio, best_asr_spc, best_asr_score = content, spc, quality_score
+        decision = quality_retry_decision(
+            quality,
+            voice_key=voice_key,
+            text=send_text,
+            attempt=q,
+            max_retries=_MAX_QUALITY_RETRIES,
+        )
+        if not decision.retry:
+            if quality.requires_retry:
+                # The final rejected candidate is not automatically the best
+                # one.  Leave the loop so the highest-quality failed ASR
+                # candidate recorded above is selected below.
+                break
+            if quality.status == "inconclusive":
+                logger.info("TTS ASR 품질 검사 불확정 — 후보 수용: %s", quality.reason)
+            elif quality.status == "skipped":
+                logger.debug("TTS ASR 품질 검사 생략: %s", quality.reason)
+            return content, spc
+        logger.warning(
+            "TTS ASR 품질 의심: reason=%s similarity=%.3f missing=%s — 재생성 %d/%d",
+            quality.reason,
+            quality.similarity,
+            ", ".join(quality.missing_fragments) or "—",
+            q + 1,
+            _MAX_QUALITY_RETRIES,
+        )
+    if best_asr_audio is not None:
+        logger.warning("TTS ASR 품질 검증 최종 실패 — 최적 후보 사용 (%.2f초/자)", best_asr_spc)
+        return best_asr_audio, best_asr_spc
+    logger.warning("TTS 길이 품질 검증 최종 실패 — 최적 결과 사용 (%.2f초/자)", best_spc)
     return (best_audio if best_audio is not None else content), best_spc
+
+
+def _assess_segment_quality(
+    content: bytes,
+    expected_text: str,
+    duration_seconds: float,
+) -> TranscriptQuality:
+    """임시 WAV의 CPU ASR 검사를 worker thread에서 수행하고 반드시 정리한다."""
+    if not should_run_asr_quality_check(expected_text, duration_seconds=duration_seconds):
+        # 경로가 없어도 assess helper가 ASR skip 결과를 만든다. 이 분기는 아주 짧은
+        # 카피에 tempfile I/O와 CPU Whisper 모델 로드를 모두 피한다.
+        return assess_audio_with_asr(
+            expected_text,
+            None,
+            lambda _path: transcribe_tts_quality(_path, expected_text),
+            duration_seconds=duration_seconds,
+        )
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            temp_file.write(content)
+            temp_path = Path(temp_file.name)
+        return assess_audio_with_asr(
+            expected_text,
+            temp_path,
+            lambda path: transcribe_tts_quality(path, expected_text),
+            duration_seconds=duration_seconds,
+        )
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -460,6 +630,20 @@ async def synthesize(
     base_payload = _base_payload(ref_fragment, params)
 
     segments = _split_text(normalized, TTS_MAX_CHARS_PER_REQUEST)
+    boundary_report = validate_segment_boundaries(segments, source_text=normalized)
+    if not boundary_report.valid:
+        contexts = [
+            f"{issue.left_context}|{issue.right_context}"
+            for issue in boundary_report.unsafe_boundaries
+        ]
+        raise ValueError(
+            "TTS 세그먼트가 한국어 어절 중간에서 분할됨: " + ", ".join(contexts)
+        )
+    if boundary_report.indeterminate_boundaries:
+        raise ValueError(
+            "TTS 세그먼트 경계를 원문에 대응할 수 없음: "
+            f"{boundary_report.indeterminate_boundaries}개"
+        )
 
     # 짧은 텍스트 패딩 (게이트, 단일 세그먼트일 때만)
     pad_prefix = ""
@@ -472,30 +656,30 @@ async def synthesize(
             f"/tmp/tts_{hashlib.md5(normalized.encode()).hexdigest()[:16]}.{TTS_OUTPUT_FORMAT}"
         )
 
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _FISH_SPEECH_LOCK.acquire)
     seg_files: list[Path] = []
     pad_trim_secs = 0.0
-    try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-            for i, seg in enumerate(segments):
-                send_text = f"{marker} {seg}".strip() if marker else seg
-                if pad_prefix:
-                    send_text = pad_prefix + send_text
-                content, spc = await _synthesize_segment(
-                    client, send_text, len(seg), base_payload,
-                )
-                if pad_prefix:
-                    pad_trim_secs = len(pad_prefix) * spc
-                if len(segments) == 1:
-                    output_path.write_bytes(content)
-                    seg_files = [output_path]
-                else:
-                    seg_path = output_path.with_name(f"{output_path.stem}_seg{i:02d}.wav")
-                    seg_path.write_bytes(content)
-                    seg_files.append(seg_path)
-    finally:
-        _FISH_SPEECH_LOCK.release()
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        for i, seg in enumerate(segments):
+            send_text = f"{marker} {seg}".strip() if marker else seg
+            if pad_prefix:
+                send_text = pad_prefix + send_text
+            content, spc = await _synthesize_segment(
+                client,
+                send_text,
+                len(seg),
+                base_payload,
+                voice_key=voice_key,
+                expected_text=seg,
+            )
+            if pad_prefix:
+                pad_trim_secs = len(pad_prefix) * spc
+            if len(segments) == 1:
+                output_path.write_bytes(content)
+                seg_files = [output_path]
+            else:
+                seg_path = output_path.with_name(f"{output_path.stem}_seg{i:02d}.wav")
+                seg_path.write_bytes(content)
+                seg_files.append(seg_path)
 
     if len(seg_files) > 1:
         _concat_wavs(seg_files, output_path)
@@ -533,9 +717,7 @@ async def _warmup_model() -> None:
     default_params = _voice_params(VOICE_DEFAULT)
     default_base = _base_payload(_resolve_references(VOICE_DEFAULT), default_params)
 
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _FISH_SPEECH_LOCK.acquire)
-    try:
+    async with _fish_speech_request_lock():
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             # 센티널 유효: 저비용 프로브 1회
             if sentinel_valid:
@@ -582,8 +764,6 @@ async def _warmup_model() -> None:
                 _save_warmup_sentinel()
             except Exception as exc:
                 logger.warning("Fish Speech 웜업 실패 (무시): %s", exc)
-    finally:
-        _FISH_SPEECH_LOCK.release()
 
 
 async def wait_for_fish_speech(retries: int = 10, delay: float = 5.0) -> bool:

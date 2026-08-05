@@ -1,6 +1,6 @@
 # WaggleBot — API 명세 (L5)
 
-> last-verified: 2026-08-04 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java`, `worker/ai_worker/tts/fish_client.py`
+> last-verified: 2026-08-05 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java`, `worker/ai_worker/tts/fish_client.py`
 > scope: llm-worker·backend·Fish Speech·ComfyUI API 엔드포인트 명세 — SSOT
 
 ## 서비스별 Base URL
@@ -222,12 +222,12 @@ Spring 프로퍼티 `app.external.api-key`). 누락·불일치 시 `401 {"error"
     "external_id": "post_xxx",
     "video_gen": false,
     "paired": false,
-    "outro_text": "여러분의 의견을 댓글로 남겨주세요",
+    "outro_text": "여러분은 어떻게 생각하세요? 댓글로 알려주세요.",
     "auto_hd_render": true
   }
   ```
   - `video_gen`: `options.videoGen`(기본 `false`) — 게시글 단위로 전역 `VIDEO_GEN_ENABLED`를 오버라이드
-  - `outro_text`: `paired=true`면 `"상대방의 사연이 궁금하면 댓글을 확인해주세요"`, 아니면 `"여러분의 의견을 댓글로 남겨주세요"` — `SceneDirector`가 mood 기본 문구의 `random.choice()`를 건너뛰고 이 값을 그대로 사용
+  - `outro_text`: `paired=true`면 `"상대방의 사연도 궁금하시죠? 댓글에서 확인해 보세요."`, 아니면 `"여러분은 어떻게 생각하세요? 댓글로 알려주세요."` — `SceneDirector`가 mood 기본 문구의 `random.choice()`를 건너뛰고 이 값을 그대로 사용
   - `auto_hd_render`: `options.autoHdRender`(기본 `true`) — GET 폴링에서 `PREVIEW_RENDERED` 도달 시 자동 `HD_RENDER` 잡 큐잉 여부
 
 **POST 응답 (200):**

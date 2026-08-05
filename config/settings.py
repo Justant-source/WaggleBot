@@ -384,7 +384,7 @@ TTS_OUTPUT_FORMAT = "wav"
 TTS_SAMPLE_RATE   = 44100
 
 # TTS 후처리·검증·분할
-TTS_SPEED: float = 1.2                        # atempo 배속 (피치 보존). per-voice params로 오버라이드 가능
+TTS_SPEED: float = 1.1                        # 자연스러움 우선 atempo. per-voice params로 오버라이드 가능
 TTS_LOUDNORM_ENABLED: bool = True             # EBU R128 음량 정규화
 TTS_LOUDNORM_PARAMS: str = "I=-16:TP=-1.5:LRA=11"
 TTS_MAX_CHARS_PER_REQUEST: int = 150          # 초과 시 문장 경계로 분할 후 합성·병합
@@ -399,6 +399,41 @@ WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "large-v3")
 WHISPER_DEVICE: str = os.getenv("WHISPER_DEVICE", "cpu")        # cpu: VRAM 무경합(TTS/VIDEO와 분리)
 WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 WHISPER_DOWNLOAD_ROOT: Path = ASSETS_DIR / "models" / "faster-whisper"  # 호스트 마운트 → 리빌드에도 캐시 유지
+
+# Hugging Face / Xet는 ``download_root``만으로는 ~/.cache 또는 /.cache에
+# 별도 메타데이터·chunk를 저장할 수 있다. ai_worker는 uid 1000으로 실행되므로
+# 컨테이너 root 경로에 쓰지 않도록 모든 cache root를 음성 모델 볼륨 하위로 고정한다.
+HF_HOME: Path = WHISPER_DOWNLOAD_ROOT / "huggingface"
+HF_HUB_CACHE: Path = HF_HOME / "hub"
+HF_XET_CACHE: Path = HF_HOME / "xet"
+XDG_CACHE_HOME: Path = WHISPER_DOWNLOAD_ROOT / "xdg-cache"
+HF_HUB_DISABLE_XET: bool = True
+
+
+def configure_huggingface_cache() -> None:
+    """Set writable Hugging Face cache roots before importing faster-whisper."""
+    for cache_dir in (HF_HOME, HF_HUB_CACHE, HF_XET_CACHE, XDG_CACHE_HOME):
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["HF_HOME"] = str(HF_HOME)
+    os.environ["HF_HUB_CACHE"] = str(HF_HUB_CACHE)
+    os.environ["HF_XET_CACHE"] = str(HF_XET_CACHE)
+    os.environ["XDG_CACHE_HOME"] = str(XDG_CACHE_HOME)
+    # Xet creates an independent cache and caused root-owned /.cache writes
+    # in the worker container. Standard HTTP Hub download is sufficient here.
+    os.environ["HF_HUB_DISABLE_XET"] = "1" if HF_HUB_DISABLE_XET else "0"
+
+
+configure_huggingface_cache()
+
+# TTS 줄 단위 forced alignment — 통합 낭독은 자르지 않고 화면 타임라인만 실제 발화에 맞춘다.
+TTS_ALIGNMENT_MODEL: str = os.getenv("TTS_ALIGNMENT_MODEL", "small")
+TTS_ALIGNMENT_DEVICE: str = os.getenv("TTS_ALIGNMENT_DEVICE", "cpu")
+TTS_ALIGNMENT_COMPUTE_TYPE: str = os.getenv("TTS_ALIGNMENT_COMPUTE_TYPE", "int8")
+TTS_ALIGNMENT_MIN_CONFIDENCE: float = 0.55
+TTS_TEXT_LEAD_SEC: float = 0.15
+TTS_OUTRO_PRE_PAUSE_SEC: float = 0.25
+TTS_OUTRO_TEXT_LEAD_SEC: float = 0.15
+TTS_OUTRO_TAIL_SEC: float = 0.50
 
 # ---------------------------------------------------------------------------
 # 하드웨어 설정 (RTX 3090 24GB)

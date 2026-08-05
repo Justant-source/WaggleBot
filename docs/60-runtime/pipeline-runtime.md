@@ -1,6 +1,6 @@
 # WaggleBot — 파이프라인 런타임 동작
 
-> last-verified: 2026-08-04 · code-ref: `worker/ai_worker/core/processor.py`
+> last-verified: 2026-08-05 · code-ref: `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/`
 > scope: ai_worker 처리 루프, 4단계 폴백, 피드백 루프, Phase5‖6 병렬 시퀀싱 — SSOT
 
 ## 처리 루프
@@ -22,6 +22,45 @@
 이 값을 채운다 — 예: Again Spring 사연은 기본 `video_gen=false`(정적 렌더링만).
 동일하게 `processor._resolve_post_outro_text(post_id)`가 `variant_config.outro_text`를 읽어
 `SceneDirector(..., outro_text=...)`로 전달하면 Phase 4의 아웃트로 문구 `random.choice()`를 건너뛴다.
+Again Spring ingest의 고정 문구는 일반 사연 `여러분은 어떻게 생각하세요? 댓글로 알려주세요.`,
+짝 사연 `상대방의 사연도 궁금하시죠? 댓글에서 확인해 보세요.`이다.
+
+## 렌더 발화 싱크
+
+Phase 8은 통합 narrator WAV를 글자 수로 나누지 않는다. `tts/alignment.py`가 faster-whisper의
+단어 타임스탬프와 원문 줄을 대조해 실제 발화 시작을 구하고, 신뢰도 0.55 이상일 때만 그
+경계를 사용한다. 정렬 실패는 안전하게 장면별 TTS로 폴백한다.
+
+faster-whisper import 전 `config.settings.configure_huggingface_cache()`가 HF/Xet/XDG cache를
+모두 `WHISPER_DOWNLOAD_ROOT` 하위로 설정하고 Xet을 비활성화한다. 이 설정은 uid 1000
+ai_worker가 root의 `/.cache/huggingface/xet`에 쓰려다 실패하는 것을 막는다.
+
+- 첫 줄은 영상 시작부터 표시한다. 첫 narrator PCM의 native lead를 `-45 dBFS`/3-frame 기준으로
+  측정하고 150ms에 부족한 시간만 prepend한다. 원본 lead가 더 길면 trim하지 않는다.
+- 이후 줄은 음성 타임라인을 바꾸지 않고 화면만 150ms 먼저 전환한다. text_only는 최대 3줄을
+  순차 누적하고 다음 묶음에서 초기화한다.
+- 마지막 댓글 발화 뒤 기존 화면을 250ms 유지한 뒤 클로징 텍스트를 표시한다. outro WAV의 선행
+  silence는 PCM `-45 dBFS` threshold와 3-frame debounce로 측정하고 부족분만 prepend하여, 텍스트 뒤
+  실제 첫 음절이 약 150ms에 오게 한다. WAV 음성/내부 휴지는 trim하지 않으며 발화 뒤 500ms 여백을 둔다.
+- 최종 FFmpeg mux는 합성 오디오 총 길이로 `-t`/`-shortest`를 적용한다. 정적 PNG concat은 terminal
+  PNG를 중복하지 않고 `tpad=stop_mode=clone:stop=-1`로 마지막 프레임을 유지하며 CFR 30fps로 출력한다.
+- `processor._safe_generate_tts()` 디스크 캐시는 `voice:text:speed:pp_v4`를 사용한다. 따라서
+  기본 속도 1.1배 전환 후 기존 `pp_v3`(1.2배) 결과를 재사용하지 않는다.
+
+**#449 실측 검증 (2026-08-05):** 31.122336초 narrator WAV의 연속 26줄을
+small/int8 CPU alignment으로 정렬했을 때 confidence `1.0`을 얻었다. 첫 150ms lead를 포함한
+split+merge 결과는 31.272336초였고, lead를 제외한 소스 대비 peak/RMS 차이는 모두 `-inf dB`
+(sample-identical)였다. 즉 정렬 분할·재결합은 음성 파형을 변형하지 않는다.
+
+**정적 mux 실측 검증 (2026-08-05):** 원격 2-frame actual renderer smoke에서 video stream은
+`4.666667s`/140 frames @30fps, audio stream은 `4.688844s`, container format duration은
+`4.689s`였다. stream 차이는 `22.177ms`로 30fps 한 frame(`33.333ms`) 미만이며, extra tail이나
+early video end가 없음을 확인했다.
+
+**운영 #454 실측 검증 (2026-08-05):** native narrator lead `0.118s`에 부족한 `0.032s`만
+prepend했다. 최종 MP4의 첫 text→speech silence는 `0.149592s`, outro text→speech는
+`0.150159s`였다. video `55.766667s`/1673 frames @30fps, audio `55.770000s`, 차이
+`3.333ms`이며 integrated loudness `-16.7 LUFS`, true peak `-1.5 dBFS`를 확인했다.
 
 ## Phase 7 — 4단계 폴백 (video_clip 생성)
 

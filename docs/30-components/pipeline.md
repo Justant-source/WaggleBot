@@ -1,6 +1,6 @@
 # WaggleBot — AI 파이프라인 (8-Phase) 컴포넌트
 
-> last-verified: 2026-08-04 · code-ref: `worker/ai_worker/pipeline/content_processor.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/scene/director.py`
+> last-verified: 2026-08-05 · code-ref: `worker/ai_worker/pipeline/content_processor.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/scene/director.py`, `worker/ai_worker/renderer/`
 > scope: 8-Phase AI 파이프라인 Phase별 책임, LLM 라우팅 — SSOT
 
 ## 개요
@@ -134,7 +134,9 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 - **감정 마커:** `scene.tts_emotion`(scene_policy.json mood) → `TTS_EMOTION_MARKERS` → 정규화 텍스트 앞에 주입 (`(sad)` 등). content_processor·renderer 양 경로 모두 전달
 - **정규화:** `normalize_for_tts()` — 슬랭/약어/숫자(소수·범위·전화·단위·유월/시월)·조사 교정(슬랭 경계 한정)
 - **장문 분할:** 정규화 후 >150자면 문장 경계 분할 → 세그먼트별 합성 → concat → 후처리 1회
-- **후처리:** 무음단축 → loudnorm → atempo(기본 1.2배) → **44100Hz mono 강제**(렌더러 concat 호환)
+- **후처리:** 무음단축 없이 loudnorm → atempo(기본 1.1배) → **44100Hz mono 강제**(렌더러 concat 호환). 호흡·짧은 휴지를 잘라내지 않아 TTS 아티팩트를 줄인다.
+- **디스크 캐시:** `processor._safe_generate_tts()`의 키는 `voice:text:speed:pp_v4`. 1.2배 시절의 `pp_v3` 캐시는 절대 재사용하지 않으며, 이후 speed 변경도 독립 캐시가 된다.
+- **정렬 모델 cache:** alignment가 faster-whisper를 import하기 전에 `HF_HOME`·Hub·Xet·XDG cache를 모두 `WHISPER_DOWNLOAD_ROOT` 하위 writable 경로로 고정하고 Xet을 비활성화한다. 컨테이너 uid 1000의 `/.cache` 권한 오류를 피한다.
 - **길이 검증:** WAV 헤더 파싱으로 초/자 계산, 0.05~0.35 범위 밖이면 재생성(비한국어/잘림 감지)
 - 결과: `scene.text_lines = [{"text": "...", "audio": "/path/to/audio.wav"}]`
 - 워밍업 센티널 (`MEDIA_DIR/tmp/fish_warmup_state.json`): 6시간 이내 재시작 시 풀 워밍업 스킵
@@ -170,6 +172,9 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 - 썸네일 동시 생성
 - BGM 볼륨: `bgm_volume=0.15`
 - **아웃트로:** 구독유도 → 댓글 참여 유도 질문 + 마스코트 목업으로 교체 (layout.json `scenes.outro`)
+- **발화 싱크:** hook/body 통합 narrator WAV는 faster-whisper 단어 타임스탬프와 원문 줄을 정렬한다. 문자 수 비율·fade 추정은 쓰지 않는다. 첫 WAV는 PCM `-45 dBFS`/3-frame 기준 native lead를 측정해 150ms에 부족한 시간만 prepend하고, 이후 새 줄은 실제 해당 발화보다 150ms 먼저 표시된다. 화면은 최대 3줄까지 누적한 뒤 다음 묶음에서 초기화된다.
+- **클로징 타임라인:** 마지막 댓글 발화 종료 후 기존 화면을 250ms 유지 → 클로징 텍스트 표시 → 실제 첫 음절까지 150ms. cached/generated outro WAV의 선행 무음을 PCM `-45 dBFS` threshold(3-frame debounce)로 측정해 부족한 시간만 prepend하며 음성은 trim하지 않는다. 발화 후 500ms 여백을 두고, 최종 mux는 오디오 총 길이로 cap해 concat의 마지막 정지 프레임이 늘어나지 않게 한다.
+- **정적 frame 길이:** ffconcat의 마지막 duration은 신뢰하지 않는다. terminal PNG를 중복하지 않고 static filter의 `tpad=stop_mode=clone:stop=-1`로 마지막 프레임을 유지한 뒤 최종 `-t`/`-shortest`로 cap한다. static/hybrid segment 출력은 CFR 30fps로 인코딩해 오디오와의 stream duration 차이를 최대 1 frame으로 제한한다.
 
 ## LLM 모델 라우팅
 

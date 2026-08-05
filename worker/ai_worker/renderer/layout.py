@@ -27,7 +27,11 @@ from typing import Optional
 
 from PIL import ImageFont
 
-from config.settings import ASSETS_DIR, MEDIA_DIR
+from config.settings import (
+    ASSETS_DIR,
+    MEDIA_DIR,
+    TTS_TEXT_LEAD_SEC,
+)
 
 # ── 내부 모듈 re-import (기존 import 경로 호환) ──
 from ai_worker.renderer._frames import (
@@ -47,15 +51,14 @@ from ai_worker.renderer._tts import (
 from ai_worker.renderer._encode import (
     _render_video_segment, _render_static_segment,
     _resolve_codec, _get_encoder_args, _escape_ffmpeg_text,
-    _build_layout_sfx_filter, _concat_mp4_copy,
+    _build_layout_sfx_filter,
 )
 
 logger = logging.getLogger(__name__)
 
-# 음성 그대로, 텍스트 화면만 이만큼 늦게 전환
-TEXT_VISUAL_LAG_SEC: float = 0.1
-
 _LAYOUT_CONFIG: dict | None = None
+_STATIC_CONCAT_CFR_ARGS: list[str] = ["-vsync", "cfr", "-r", "30"]
+_STATIC_FINAL_FRAME_HOLD_FILTER: str = "tpad=stop_mode=clone:stop=-1"
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +139,80 @@ def _run_async(coro) -> object:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, coro).result()
     return asyncio.run(coro)
+
+
+def _text_lead_for_transition(following: dict, duration: float) -> float:
+    """Return the visual lead for the following spoken frame.
+
+    Audio timings remain untouched.  The preceding visual frame simply yields
+    its last 150 ms to the next spoken line, so a viewer reads the line before
+    its first syllable.  A silent decorative frame must not trigger a swap.
+    """
+    if following.get("sent_idx") is None or duration <= 0.001:
+        return 0.0
+    # Closing has an explicit contract in _apply_outro_timing(): prior visual
+    # holds through the full 250 ms pause, then the closing text appears and
+    # the WAV carries its own 150 ms lead. Borrowing here would make the text
+    # appear during the preceding pause instead.
+    if following.get("type") == "outro":
+        return 0.0
+    return min(TTS_TEXT_LEAD_SEC, max(duration - 0.001, 0.0))
+
+
+def _build_visual_timeline(
+    frame_paths: list[Path],
+    plan: list[dict],
+    durations: list[float],
+) -> list[tuple[Path, float]]:
+    """Build frame durations separately from the audio timeline.
+
+    The returned timeline intentionally has no duplicate final frame. The
+    static filter's ``tpad`` holds the final still until the audio-capped mux
+    ends, avoiding the ffconcat terminal-entry edge case.
+    """
+    visual: list[tuple[Path, float]] = []
+    for index, (frame_path, duration) in enumerate(zip(frame_paths, durations)):
+        lead = 0.0
+        if index + 1 < len(plan):
+            lead = _text_lead_for_transition(plan[index + 1], duration)
+        current_duration = duration - lead
+        if current_duration > 0:
+            visual.append((frame_path, current_duration))
+        if lead > 0:
+            visual.append((frame_paths[index + 1], lead))
+    return visual
+
+
+def _append_text_only_line(
+    history: list[dict],
+    lines: list[str],
+    block_type: str,
+    max_slots: int,
+) -> list[dict]:
+    """Append one spoken line, resetting only after the third visible line."""
+    if len(history) >= max_slots:
+        history = []
+    return [*history, {"lines": lines, "block_type": block_type}]
+
+
+def _cap_output_to_audio(cmd: list[str], audio_duration: float) -> list[str]:
+    """Add the final mux cap without changing the caller-owned command list."""
+    return [*cmd[:-1], "-t", f"{audio_duration:.6f}", "-shortest", cmd[-1]]
+
+
+def _build_static_concat_manifest(visual_timeline: list[tuple[Path, float]]) -> str:
+    """Create an ffconcat manifest for a static timeline.
+
+    FFconcat excludes a final-file duration. The static video filter therefore
+    uses ``tpad=stop_mode=clone:stop=-1`` to hold that final still until the
+    exact final mux cap; adding a terminal duplicate instead can be excluded
+    by ``-t`` and make the video stream end at the previous frame.
+    """
+    lines: list[str] = []
+    for frame_path, duration in visual_timeline:
+        lines.append(f"file '{frame_path.resolve()}'\n")
+        lines.append(f"duration {duration:.6f}\n")
+    return "".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -240,10 +317,11 @@ def _scenes_to_plan_and_sentences(
             plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
 
         elif scene.type == "video_text":
-            # video_text: 비디오 클립 위에 자막 표시 (Phase 4 LLM Director)
-            # 각 text_line을 별도 plan entry로 생성 (TTS 타이밍 분리)
+            # Pre-split editor lines are individual narration/display entries:
+            # they must not appear as several new lines in a single frame.
             psl = getattr(scene, "pre_split_lines", None)
-            for line in scene.text_lines:
+            source_lines = psl or scene.text_lines
+            for line in source_lines:
                 text, audio = _unpack_line(line)
                 sent_idx = len(sentences)
                 sent_dict = {
@@ -253,15 +331,16 @@ def _scenes_to_plan_and_sentences(
                     "author": getattr(scene, "author", None),
                     "tts_emotion": getattr(scene, "tts_emotion", ""),
                 }
-                if psl:
-                    sent_dict["lines"] = psl
                 sentences.append(sent_dict)
                 # text_only와 동일한 렌더링이지만, scene_idx로 비디오 클립 연결
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
 
         elif scene.type == "text_only":
             psl = getattr(scene, "pre_split_lines", None)
-            for line in scene.text_lines:
+            # A source block can contain up to three editor lines. Create one
+            # timeline entry per line so the renderer reveals them in order.
+            source_lines = psl or scene.text_lines
+            for line in source_lines:
                 text, audio = _unpack_line(line)
                 sent_idx = len(sentences)
                 sent_dict = {
@@ -271,8 +350,6 @@ def _scenes_to_plan_and_sentences(
                     "author": getattr(scene, "author", None),
                     "tts_emotion": getattr(scene, "tts_emotion", ""),
                 }
-                if psl:
-                    sent_dict["lines"] = psl
                 sentences.append(sent_dict)
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
 
@@ -549,13 +626,14 @@ def _render_pipeline(
                     if len(new_lines) > max_slots:
                         logger.warning("[layout] 프레임 %d: %d줄 초과 — 단독 표시",
                                        frame_idx, len(new_lines))
-                    text_only_history = []
 
                 sent_data = sentences[sent_idx] if sent_idx is not None else {}
-                text_only_history.append({
-                    "lines": new_lines,
-                    "block_type": sent_data.get("block_type", "body"),
-                })
+                text_only_history = _append_text_only_line(
+                    text_only_history,
+                    new_lines,
+                    sent_data.get("block_type", "body"),
+                    max_slots,
+                )
                 _render_text_only_frame(
                     base_frame, text_only_history, layout, font_dir, frame_path, content_top,
                 )
@@ -610,8 +688,19 @@ def _render_pipeline(
             # ── Step 8.5: 하이브리드 세그먼트 생성 ─────────────────
             logger.info("[layout] 하이브리드 렌더링: 비디오 씬 포함")
             segment_paths: list[Path] = []
-            for frame_idx, (entry, dur) in enumerate(zip(plan, durations)):
-                segment_path = tmp_dir / f"seg_{frame_idx:03d}.mp4"
+            visual_segments: list[tuple[int, float]] = []
+            for frame_idx, dur in enumerate(durations):
+                lead = 0.0
+                if frame_idx + 1 < len(plan):
+                    lead = _text_lead_for_transition(plan[frame_idx + 1], dur)
+                if dur - lead > 0:
+                    visual_segments.append((frame_idx, dur - lead))
+                if lead > 0:
+                    visual_segments.append((frame_idx + 1, lead))
+
+            for segment_idx, (frame_idx, dur) in enumerate(visual_segments):
+                entry = plan[frame_idx]
+                segment_path = tmp_dir / f"seg_{segment_idx:03d}.mp4"
                 scene = _get_scene_for_entry(entry, sentences, scenes_list)
 
                 if (
@@ -638,19 +727,7 @@ def _render_pipeline(
                         )
                         _render_static_segment(frame_paths[frame_idx], dur, segment_path)
                 else:
-                    lag = 0.0
-                    if frame_idx > 0 and dur > 0.05:
-                        lag = min(TEXT_VISUAL_LAG_SEC, dur - 0.05)
-                    if lag > 0:
-                        hold = tmp_dir / f"seg_{frame_idx:03d}_hold.mp4"
-                        body = tmp_dir / f"seg_{frame_idx:03d}_body.mp4"
-                        _render_static_segment(frame_paths[frame_idx - 1], lag, hold)
-                        _render_static_segment(frame_paths[frame_idx], dur - lag, body)
-                        _concat_mp4_copy(hold, body, segment_path)
-                        hold.unlink(missing_ok=True)
-                        body.unlink(missing_ok=True)
-                    else:
-                        _render_static_segment(frame_paths[frame_idx], dur, segment_path)
+                    _render_static_segment(frame_paths[frame_idx], dur, segment_path)
 
                 segment_paths.append(segment_path)
 
@@ -700,7 +777,7 @@ def _render_pipeline(
 
             if effective_bgm is not None:
                 bgm_audio_filter = (
-                    f"[1:a]apad[tts_pad];"
+                    f"[1:a]anull[tts_pad];"
                     f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
                     f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout]"
                 )
@@ -730,25 +807,13 @@ def _render_pipeline(
         else:
             # ── Step 9 (기존): 정적 PNG concat ─────────────────────
             concat_file = tmp_dir / "concat_list.txt"
-            concat_lines: list[str] = []
-            # TTS는 그대로, 새 텍스트만 lag만큼 늦게 표시(직전 프레임 유지)
-            for i, (fp, dur) in enumerate(zip(frame_paths, durations)):
-                lag = 0.0
-                if i > 0 and dur > 0.05:
-                    lag = min(TEXT_VISUAL_LAG_SEC, dur - 0.05)
-                if lag > 0:
-                    prev = frame_paths[i - 1]
-                    concat_lines.append(f"file '{prev.resolve()}'\n")
-                    concat_lines.append(f"duration {lag:.4f}\n")
-                    concat_lines.append(f"file '{fp.resolve()}'\n")
-                    concat_lines.append(f"duration {dur - lag:.4f}\n")
-                else:
-                    concat_lines.append(f"file '{fp.resolve()}'\n")
-                    concat_lines.append(f"duration {dur:.4f}\n")
-            if frame_paths:
-                concat_lines.append(f"file '{frame_paths[-1].resolve()}'\n")
-            concat_file.write_text("".join(concat_lines), encoding="utf-8")
-            logger.info("[layout] text visual lag=%.2fs (audio unchanged)", TEXT_VISUAL_LAG_SEC)
+            # Audio durations and frame durations are independent: each next
+            # spoken line borrows its first 150 ms from the preceding visual.
+            visual_timeline = _build_visual_timeline(frame_paths, plan, durations)
+            concat_file.write_text(
+                _build_static_concat_manifest(visual_timeline), encoding="utf-8",
+            )
+            logger.info("[layout] text visual lead=%.2fs (audio unchanged)", TTS_TEXT_LEAD_SEC)
 
             # ── Step 10: 타임스탬프 + SFX ──────────────────────────
             timings = []
@@ -767,7 +832,8 @@ def _render_pipeline(
             enc_args = _get_encoder_args(codec)
             video_filter = (
                 "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
-                "pad=1080:1920:(ow-iw)/2:(oh-ih)/2[vout]"
+                "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
+                f"{_STATIC_FINAL_FRAME_HOLD_FILTER}[vout]"
             )
 
             effective_bgm = None
@@ -783,7 +849,7 @@ def _render_pipeline(
                     tts_input_idx=1, sfx_offset=sfx_offset,
                 )
                 bgm_audio_filter = (
-                    f"[1:a]apad[tts_pad];"
+                    f"[1:a]anull[tts_pad];"
                     f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
                     f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout_premix]"
                 )
@@ -807,7 +873,7 @@ def _render_pipeline(
                         "-filter_complex", filter_complex,
                         "-map", "[vout]", "-map", "[aout]",
                         *enc_args,
-                        "-c:a", "aac", "-b:a", "192k", "-r", "30",
+                        "-c:a", "aac", "-b:a", "192k", *_STATIC_CONCAT_CFR_ARGS,
                         str(output_path),
                     ]
                 else:
@@ -823,7 +889,7 @@ def _render_pipeline(
                         "-filter_complex", filter_complex,
                         "-map", "[vout]", "-map", "[aout]",
                         *enc_args,
-                        "-c:a", "aac", "-b:a", "192k", "-r", "30",
+                        "-c:a", "aac", "-b:a", "192k", *_STATIC_CONCAT_CFR_ARGS,
                         str(output_path),
                     ]
             else:
@@ -836,11 +902,14 @@ def _render_pipeline(
                     "-filter_complex", filter_complex,
                     "-map", "[vout]", "-map", "[aout]",
                     *enc_args,
-                    "-c:a", "aac", "-b:a", "192k", "-r", "30",
+                    "-c:a", "aac", "-b:a", "192k", *_STATIC_CONCAT_CFR_ARGS,
                     str(output_path),
                 ]
 
         logger.info("[layout] FFmpeg 인코딩 시작: %s", output_path.name)
+        # Static timelines use tpad to hold their final frame. Cap every final
+        # mux to the audio timeline so segment rounding cannot leave a tail.
+        cmd = _cap_output_to_audio(cmd, total_dur)
         ffmpeg_result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if ffmpeg_result.returncode != 0:
             logger.error("[layout] FFmpeg 실패 (returncode=%d):\n%s",

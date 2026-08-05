@@ -33,8 +33,8 @@ import java.util.Optional;
 @Slf4j
 public class ExternalIngestService {
 
-    private static final String OUTRO_PAIRED = "상대방의 사연이 궁금하면 댓글을 확인해주세요";
-    private static final String OUTRO_SOLO = "여러분의 의견을 댓글로 남겨주세요";
+    private static final String OUTRO_PAIRED = "상대방의 사연도 궁금하시죠? 댓글에서 확인해 보세요.";
+    private static final String OUTRO_SOLO = "여러분은 어떻게 생각하세요? 댓글로 알려주세요.";
 
     private final PostRepository postRepo;
     private final CommentRepository commentRepo;

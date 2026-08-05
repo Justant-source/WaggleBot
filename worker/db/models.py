@@ -12,6 +12,17 @@ from sqlalchemy.orm import declarative_base, relationship
 Base = declarative_base()
 
 
+# These endings leave a Korean clause syntactically open.  They are intentionally
+# conservative: a period remains the fallback for endings that can be either a
+# complete sentence or a continuation without broader sentence context.
+_TTS_CONTINUATION_SUFFIXES = (
+    "때문에", "하면서", "이면서", "면서", "지만", "인데", "는데", "은데", "던데",
+    "건지", "는지", "인지", "려고", "도록", "기에", "길래", "거나",
+    "듯이", "처럼", "위해", "하고", "라고", "자고", "다고", "냐고",
+)
+_TTS_EXISTING_PUNCTUATION = ".,;:!?…"
+
+
 class PostStatus(enum.Enum):
     COLLECTED = "COLLECTED"
     EDITING = "EDITING"               # 수신함 승인 후 편집실 대기
@@ -272,21 +283,32 @@ class ScriptData:
         """본문 낭독용 텍스트 (hook + body). closer/댓글 제외.
 
         render_stage가 이 텍스트로 만든 wav를 장면별 재합성 없이 재사용한다.
-        closer·댓글은 렌더에서 별도 TTS.
+        closer·댓글은 렌더에서 별도 TTS. 화면용 ``lines``는 수정하지 않고,
+        TTS용 의미 블록만 빈 줄과 문맥상 맞는 구두점으로 구분해 Fish의 긴
+        요청 분할이 문장/블록 경계를 우선하도록 한다. 연결 어미로 끝나는
+        블록은 마침표 대신 쉼표를 써서 다음 블록으로 이어 읽게 한다.
         """
-        texts = [self.hook] if self.hook else []
+        def narration_block(value: str) -> str:
+            value = value.strip()
+            if not value or value[-1] in _TTS_EXISTING_PUNCTUATION:
+                return value
+            punctuation = "," if value.endswith(_TTS_CONTINUATION_SUFFIXES) else "."
+            value += punctuation
+            return value
+
+        blocks = [narration_block(self.hook)] if self.hook else []
         for item in self.body:
             if isinstance(item, dict):
                 if item.get("type") == "comment":
                     continue
                 line_text = " ".join(item.get("lines", [])).strip()
                 if line_text:
-                    texts.append(line_text)
+                    blocks.append(narration_block(line_text))
             else:
                 s = str(item).strip()
                 if s:
-                    texts.append(s)
-        return " ".join(texts)
+                    blocks.append(narration_block(s))
+        return "\n\n".join(block for block in blocks if block)
 
     def to_plain_text(self) -> str:
         texts = [self.hook]

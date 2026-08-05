@@ -1,6 +1,6 @@
 # WaggleBot — 설정 레퍼런스
 
-> **last-verified:** 2026-06-25
+> **last-verified:** 2026-08-05
 > **scope:** settings.py 변수, pipeline.json, scene_policy.json, layout.json, .env — SSOT
 
 ## 설정 파일 구조
@@ -51,7 +51,7 @@ env/
 | `FISH_SPEECH_USE_MEMORY_CACHE` | `"on"` | reference_id 인코딩 캐시 |
 | `FISH_SPEECH_CHUNK_LENGTH` | `200` | 서버 청크 길이 |
 | `TTS_OUTPUT_FORMAT` / `TTS_SAMPLE_RATE` | `wav` / `44100` | 출력 포맷·샘플레이트 |
-| `TTS_SPEED` | `1.2` | 후처리 배속 (피치 보존). voices.json params로 per-voice 오버라이드 |
+| `TTS_SPEED` | `1.1` | 자연스러움 우선 후처리 배속 (피치 보존). voices.json params로 per-voice 오버라이드. 디스크 TTS 캐시 키는 speed+`pp_v4`를 포함해 구 1.2배 WAV를 재사용하지 않음 |
 | `TTS_LOUDNORM_ENABLED` / `_PARAMS` | `True` / `I=-16:TP=-1.5:LRA=11` | EBU R128 음량 정규화 (후 aresample 44100 — concat 호환) |
 | `TTS_MAX_CHARS_PER_REQUEST` | `150` | 초과 시 문장 경계 분할·병합 |
 | `TTS_MAX/MIN_SECS_PER_CHAR` | `0.35` / `0.05` | 길이 검증 상·하한 (비한국어/잘림 감지) |
@@ -59,8 +59,14 @@ env/
 | `TTS_LAUGH_MARKER_ENABLED` | `False` | ㅋㅋ→(laughing) (실험적) |
 | `TTS_SHORT_TEXT_PADDING` | `False` | 짧은 텍스트 패딩 (S1+참조에선 불필요) |
 | `WHISPER_MODEL` / `_DEVICE` / `_COMPUTE_TYPE` | `large-v3` / `cpu` / `int8` | prepare_voice 전사 (CPU, VRAM 무경합) |
+| `HF_HOME` / `HF_HUB_CACHE` / `HF_XET_CACHE` / `XDG_CACHE_HOME` | `assets/models/faster-whisper/huggingface/**` | settings import 시 writable `WHISPER_DOWNLOAD_ROOT` 하위로 강제. uid 1000 worker의 `/.cache` 권한 실패 방지 |
+| `HF_HUB_DISABLE_XET` | `1` | Xet 별도 cache를 비활성화해 Hub HTTP download만 사용 |
+| `TTS_ALIGNMENT_MODEL` / `_DEVICE` / `_COMPUTE_TYPE` | `small` / `cpu` / `int8` | 통합 내레이터 WAV의 줄별 실제 발화 시각을 구하는 faster-whisper 정렬 |
+| `TTS_ALIGNMENT_MIN_CONFIDENCE` | `0.55` | 원문↔전사 문자 정렬 신뢰도 하한. 미달/실패 시 장면별 TTS 폴백 |
+| `TTS_TEXT_LEAD_SEC` | `0.15` | 각 일반 텍스트 줄이 해당 음성보다 먼저 보이는 시간. 첫 WAV는 PCM 선행 무음을 측정해 부족분만 prepend |
+| `TTS_OUTRO_PRE_PAUSE_SEC` / `_TEXT_LEAD_SEC` / `_TAIL_SEC` | `0.25` / `0.15` / `0.50` | 마지막 댓글 뒤 휴지, 클로징 텍스트 선행, 클로징 발화 뒤 여백 |
 
-> `KOREAN_CHARS_PER_SEC=4.0`은 speed 1.2 가정값 — per-voice `speed` 오버라이드는
+> `KOREAN_CHARS_PER_SEC=4.0`은 speed 1.1 가정값 — per-voice `speed` 오버라이드는
 > `estimate_tts_duration`/클립 길이 추정을 왜곡하므로 신중히 사용.
 
 **TTS_EMOTION_MARKERS (tts_emotion → S1 마커):**

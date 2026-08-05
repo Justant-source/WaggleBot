@@ -3,11 +3,15 @@
 import logging
 import re
 import subprocess
+import wave
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_INTRO_PAUSE_SEC: float = 0.5  # 제목 읽기 후 본문 시작 전 숨고르기 (초)
+_INTRO_PAUSE_SEC: float = 0.0  # 정렬된 통합 낭독에서는 별도 휴지를 삽입하지 않는다.
+_LEADING_SILENCE_DBFS: float = -45.0
+_SILENCE_SAMPLE_THRESHOLD: int = round(32768 * 10 ** (_LEADING_SILENCE_DBFS / 20))
+_SPEECH_DEBOUNCE_FRAMES: int = 3
 
 
 def _is_narrator_sentence(sent: dict) -> bool:
@@ -23,37 +27,40 @@ def _is_narrator_sentence(sent: dict) -> bool:
     return sec in ("hook", "body")
 
 
-def _split_wav_by_char_weights(
+def _split_narration_at_aligned_starts(
     src: Path,
-    texts: list[str],
+    starts: list[float],
     out_paths: list[Path],
+    *,
+    initial_lead_sec: float,
 ) -> list[float]:
-    """하나의 낭독 wav를 글자 수 비율로 분할한다. 반환: 각 조각 duration(초)."""
-    if len(texts) != len(out_paths):
-        raise ValueError("texts/out_paths length mismatch")
-    if not texts:
+    """실제 발화 경계에서만 통합 낭독 wav를 분할한다.
+
+    문자 수 비율 추정이나 fade는 쓰지 않는다. 연속된 내레이터 프레임은 원본의
+    샘플 순서를 그대로 되이어 놓으므로, 재생 시 통합 wav의 억양과 호흡이 유지된다.
+    첫 조각에만 텍스트 선행 표시를 위한 무음 리드를 더한다.
+    """
+    if len(starts) != len(out_paths):
+        raise ValueError("starts/out_paths length mismatch")
+    if not starts:
         return []
     total_dur = _get_audio_duration(src)
-    weights = [max(len((t or "").strip()), 1) for t in texts]
-    wsum = float(sum(weights))
+    if starts[0] < 0 or any(b <= a for a, b in zip(starts, starts[1:])):
+        raise ValueError(f"invalid aligned narration starts: {starts}")
+    if starts[-1] >= total_dur:
+        raise ValueError(f"last narration start {starts[-1]:.3f} >= audio {total_dur:.3f}")
+
     durations: list[float] = []
-    cursor = 0.0
-    for i, (w, out_p) in enumerate(zip(weights, out_paths)):
-        if i == len(weights) - 1:
-            seg = max(total_dur - cursor, 0.05)
-        else:
-            seg = max(total_dur * (w / wsum), 0.05)
-        # slight overlap avoidance: clamp
-        if cursor + seg > total_dur + 0.01:
-            seg = max(total_dur - cursor, 0.05)
-        # atrim in filter graph (NOT -ss after -i + afade — that combo zeros audio).
-        # tiny afade hides hard-cut clicks at scene joins.
-        fade = min(0.012, max(seg * 0.08, 0.004))
-        fade_out_st = max(seg - fade, 0.0)
-        af = (
-            f"atrim=start={cursor:.4f}:duration={seg:.4f},asetpts=PTS-STARTPTS,"
-            f"afade=t=in:st=0:d={fade:.4f},afade=t=out:st={fade_out_st:.4f}:d={fade:.4f}"
-        )
+    for i, out_p in enumerate(out_paths):
+        start = 0.0 if i == 0 else starts[i]
+        end = starts[i + 1] if i + 1 < len(starts) else total_dur
+        seg = max(end - start, 0.001)
+        # Never fade/crossfade the narrator. Boundaries are ASR-aligned to the
+        # next line's first word, not estimated from character counts.
+        af = f"atrim=start={start:.6f}:end={end:.6f},asetpts=PTS-STARTPTS"
+        if i == 0 and initial_lead_sec > 0:
+            delay_ms = round(initial_lead_sec * 1000)
+            af += f",adelay={delay_ms}|{delay_ms}"
         result = subprocess.run(
             [
                 "ffmpeg", "-y", "-i", str(src),
@@ -65,23 +72,175 @@ def _split_wav_by_char_weights(
         )
         if result.returncode != 0 or not out_p.exists() or out_p.stat().st_size < 64:
             logger.warning(
-                "[tts] narration split failed i=%d — silence fallback (%s)",
+                "[tts] aligned narration split failed i=%d — silence fallback (%s)",
                 i, (result.stderr[-200:] if result.stderr else b"").decode(errors="replace"),
             )
             subprocess.run(
                 [
                     "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono",
-                    "-t", f"{seg:.4f}", "-c:a", "pcm_s16le", str(out_p),
+                    "-t", f"{seg + (initial_lead_sec if i == 0 else 0):.4f}",
+                    "-c:a", "pcm_s16le", str(out_p),
                 ],
                 capture_output=True, check=True, timeout=10,
             )
         actual = _get_audio_duration(out_p) if out_p.exists() else seg
         durations.append(actual)
-        cursor += seg
     logger.info(
-        "[tts] narration split: src=%.1fs → %d parts (weights=%s)",
-        total_dur, len(durations), weights,
+        "[tts] narration aligned split: src=%.3fs → %d parts (starts=%s)",
+        total_dur, len(durations), [round(start, 3) for start in starts],
     )
+    return durations
+
+
+def _append_silence(wav_path: Path, seconds: float) -> float:
+    """Append an intentional pause without touching the existing waveform."""
+    if seconds <= 0:
+        return _get_audio_duration(wav_path)
+    padded = wav_path.with_suffix(".pause.wav")
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(wav_path),
+                "-af", f"apad=pad_dur={seconds:.3f}",
+                "-c:a", "pcm_s16le", str(padded),
+            ],
+            capture_output=True, timeout=30,
+        )
+        if result.returncode != 0 or not padded.exists():
+            raise RuntimeError("ffmpeg pause append failed")
+        padded.replace(wav_path)
+        return _get_audio_duration(wav_path)
+    finally:
+        padded.unlink(missing_ok=True)
+
+
+def _prepend_silence(wav_path: Path, seconds: float) -> float:
+    """Delay a newly-generated first utterance without altering its waveform."""
+    if seconds <= 0:
+        return _get_audio_duration(wav_path)
+    delayed = wav_path.with_suffix(".lead.wav")
+    delay_ms = round(seconds * 1000)
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(wav_path),
+                "-af", f"adelay={delay_ms}|{delay_ms}",
+                "-c:a", "pcm_s16le", str(delayed),
+            ],
+            capture_output=True, timeout=30,
+        )
+        if result.returncode != 0 or not delayed.exists():
+            raise RuntimeError("ffmpeg lead delay failed")
+        delayed.replace(wav_path)
+        return _get_audio_duration(wav_path)
+    finally:
+        delayed.unlink(missing_ok=True)
+
+
+def _measure_leading_silence(wav_path: Path) -> float:
+    """Return leading digital silence of a mono/stereo PCM s16 WAV in seconds.
+
+    TTS output and its disk cache are normalized to PCM s16le.  A -45 dBFS
+    threshold treats measured pre-speech noise as lead silence; three
+    consecutive over-threshold frames reject isolated clicks. Use a tiny
+    stdlib-only scan instead of broad ``silenceremove``: the existing waveform
+    is never trimmed, and a decode failure merely causes a conservative full
+    lead pad later.
+    """
+    try:
+        with wave.open(str(wav_path), "rb") as wav_file:
+            if wav_file.getsampwidth() != 2 or wav_file.getcomptype() != "NONE":
+                raise ValueError("expected PCM s16 WAV")
+            channels = wav_file.getnchannels()
+            sample_rate = wav_file.getframerate()
+            if channels < 1 or sample_rate < 1:
+                raise ValueError("invalid WAV format")
+
+            frames_read = 0
+            candidate_start = 0
+            consecutive_loud_frames = 0
+            while True:
+                raw = wav_file.readframes(4096)
+                if not raw:
+                    return frames_read / sample_rate
+                sample_count = len(raw) // 2
+                samples = memoryview(raw).cast("h")
+                frame_count = sample_count // channels
+                for frame_idx in range(frame_count):
+                    start = frame_idx * channels
+                    if any(abs(samples[start + channel]) >= _SILENCE_SAMPLE_THRESHOLD for channel in range(channels)):
+                        if consecutive_loud_frames == 0:
+                            candidate_start = frames_read
+                        consecutive_loud_frames += 1
+                        if consecutive_loud_frames >= _SPEECH_DEBOUNCE_FRAMES:
+                            return candidate_start / sample_rate
+                    else:
+                        consecutive_loud_frames = 0
+                    frames_read += 1
+    except Exception:
+        logger.warning("[tts] leading silence 측정 실패: %s", wav_path.name, exc_info=True)
+        return 0.0
+
+
+def _ensure_initial_text_lead(wav_path: Path, target_lead_sec: float) -> float:
+    """Pad only the missing PCM lead before the first visible utterance.
+
+    Fish WAVs can already contain natural pre-speech room tone.  Measuring the
+    rendered PCM chunk (rather than assuming an empty container) keeps the
+    text-to-first-syllable interval at the requested target without trimming
+    that natural lead.
+    """
+    existing_lead = _measure_leading_silence(wav_path)
+    lead_padding = max(target_lead_sec - existing_lead, 0.0)
+    duration = (
+        _prepend_silence(wav_path, lead_padding)
+        if lead_padding > 0
+        else _get_audio_duration(wav_path)
+    )
+    logger.info(
+        "[layout] initial text lead existing=%.3fs padding=%.3fs target=%.3fs (%s)",
+        existing_lead, lead_padding, target_lead_sec, wav_path.name,
+    )
+    return duration
+
+
+def _apply_outro_timing(plan: list[dict], durations: list[float], output_dir: Path) -> list[float]:
+    """Apply the fixed pause/lead-tail contract around the closing utterance."""
+    outro_idx = next(
+        (i for i, entry in enumerate(plan) if entry.get("type") == "outro"),
+        None,
+    )
+    if outro_idx is None or outro_idx == 0:
+        return durations
+
+    from config.settings import (
+        TTS_OUTRO_PRE_PAUSE_SEC,
+        TTS_OUTRO_TAIL_SEC,
+        TTS_OUTRO_TEXT_LEAD_SEC,
+    )
+
+    previous_path = output_dir / f"chunk_{outro_idx - 1:03d}.wav"
+    if previous_path.exists() and durations[outro_idx - 1] > 0:
+        durations[outro_idx - 1] = _append_silence(previous_path, TTS_OUTRO_PRE_PAUSE_SEC)
+        logger.info(
+            "[layout] outro 전 %.2fs 휴지 삽입 (frame=%d)",
+            TTS_OUTRO_PRE_PAUSE_SEC, outro_idx - 1,
+        )
+    outro_path = output_dir / f"chunk_{outro_idx:03d}.wav"
+    if outro_path.exists() and durations[outro_idx] > 0:
+        existing_lead = _measure_leading_silence(outro_path)
+        lead_padding = max(TTS_OUTRO_TEXT_LEAD_SEC - existing_lead, 0.0)
+        if lead_padding > 0:
+            durations[outro_idx] = _prepend_silence(outro_path, lead_padding)
+        logger.info(
+            "[layout] outro lead existing=%.3fs padding=%.3fs target=%.3fs",
+            existing_lead, lead_padding, TTS_OUTRO_TEXT_LEAD_SEC,
+        )
+        durations[outro_idx] = _append_silence(outro_path, TTS_OUTRO_TAIL_SEC)
+        logger.info(
+            "[layout] outro 후 %.2fs tail 삽입 (frame=%d)",
+            TTS_OUTRO_TAIL_SEC, outro_idx,
+        )
     return durations
 
 
@@ -339,8 +498,8 @@ async def _generate_tts_chunks(
 ) -> list[float]:
     """plan 순서로 TTS를 생성하고 각 프레임의 지속 시간 목록을 반환한다.
 
-    narration_audio가 있으면 hook/body 구간은 통합 낭독 wav를 글자 수 비율로
-    분할해 쓰고(장면별 Fish Speech 재호출 없음), closer·댓글·채팅만 개별 합성한다.
+    narration_audio가 있으면 hook/body 구간은 통합 낭독 wav를 실제 발화 시각으로
+    정렬해 재사용하고, closer·댓글·채팅만 개별 합성한다.
     """
     durations: list[float] = [0.0] * len(plan)
     narrator_frames: list[int] = []
@@ -363,18 +522,33 @@ async def _generate_tts_chunks(
         if narrator_frames:
             out_paths = [output_dir / f"chunk_{i:03d}.wav" for i in narrator_frames]
             try:
-                part_durs = _split_wav_by_char_weights(
-                    Path(narration_audio), narrator_texts, out_paths,
+                from ai_worker.tts.alignment import align_narration_lines
+                from config.settings import TTS_TEXT_LEAD_SEC
+
+                aligned = align_narration_lines(Path(narration_audio), narrator_texts)
+                if aligned is None:
+                    raise RuntimeError("narration alignment unavailable")
+                starts, confidence = aligned
+                part_durs = _split_narration_at_aligned_starts(
+                    Path(narration_audio), starts, out_paths,
+                    initial_lead_sec=0.0,
+                )
+                # Alignment timestamps can begin at 0 even when Fish TTS has
+                # native PCM lead.  Measure the actual first rendered chunk;
+                # using ``starts[0]`` here used to prepend 150 ms on top of
+                # that native lead (#453 measured 267.596 ms total).
+                part_durs[0] = _ensure_initial_text_lead(
+                    out_paths[0], TTS_TEXT_LEAD_SEC,
                 )
                 for fi, dur in zip(narrator_frames, part_durs):
                     durations[fi] = dur
                 logger.info(
-                    "[layout] narration wav 재사용: %d frames from %s",
-                    len(narrator_frames), Path(narration_audio).name,
+                    "[layout] narration wav 정렬 재사용: %d frames confidence=%.3f from %s",
+                    len(narrator_frames), confidence, Path(narration_audio).name,
                 )
             except Exception:
                 logger.warning(
-                    "[layout] narration split 실패 — 장면별 TTS 폴백",
+                    "[layout] narration alignment 실패 — 장면별 TTS 폴백",
                     exc_info=True,
                 )
                 use_narration = False
@@ -389,7 +563,7 @@ async def _generate_tts_chunks(
             # already filled from narration wav
             scene_type = entry.get("type", "image_text")
             dur = durations[frame_idx]
-            if scene_type == "intro" and dur > 0:
+            if scene_type == "intro" and dur > 0 and _INTRO_PAUSE_SEC > 0:
                 chunk_path = output_dir / f"chunk_{frame_idx:03d}.wav"
                 tmp_pad = chunk_path.with_suffix(".padded.wav")
                 pad_result = subprocess.run(
@@ -425,7 +599,7 @@ async def _generate_tts_chunks(
                     _loudnorm_inplace(chunk_path)
                 dur = _get_audio_duration(chunk_path)
 
-            if scene_type == "intro" and dur > 0:
+            if scene_type == "intro" and dur > 0 and _INTRO_PAUSE_SEC > 0:
                 chunk_path = output_dir / f"chunk_{frame_idx:03d}.wav"
                 tmp_pad = chunk_path.with_suffix(".padded.wav")
                 pad_result = subprocess.run(
@@ -453,7 +627,24 @@ async def _generate_tts_chunks(
             dur = dwell
         durations[frame_idx] = dur
         logger.debug("[layout] TTS 프레임 %d: %.2fs", frame_idx, dur)
-    return durations
+
+    # The first visible line is already on-screen at t=0.  When alignment
+    # falls back to per-line synthesis, apply the same measured 150 ms lead
+    # contract; do not stack it on native Fish pre-speech silence.
+    first_audio_idx = next((i for i, dur in enumerate(durations) if dur > 0), None)
+    if first_audio_idx is not None and first_audio_idx not in narrator_set:
+        from config.settings import TTS_TEXT_LEAD_SEC
+
+        first_path = output_dir / f"chunk_{first_audio_idx:03d}.wav"
+        if first_path.exists():
+            durations[first_audio_idx] = _ensure_initial_text_lead(
+                first_path, TTS_TEXT_LEAD_SEC,
+            )
+
+    # The closer is deliberately separated from the final comment/chat by a
+    # short pause. This changes only the timeline; existing waveforms remain
+    # intact and the closer speech itself is not slowed or faded.
+    return _apply_outro_timing(plan, durations, output_dir)
 
 
 
@@ -505,4 +696,3 @@ def _merge_chunks(
     finally:
         concat_file.unlink(missing_ok=True)
         raw_merged.unlink(missing_ok=True)
-

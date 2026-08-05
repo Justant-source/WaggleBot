@@ -342,7 +342,14 @@ def normalize_for_tts(text: str, *, laugh_marker: bool | None = None) -> str:
     # 1-2. soynlp: 반복 자모 정규화 — 삭제 전 반복 횟수 통일 (ㅋㅋㅋㅋ → ㅋ)
     if _SOYNLP_AVAILABLE:
         try:
-            text = _soynlp_repeat_normalize(text, num_repeats=1)
+            # ``repeat_normalize`` treats every whitespace run alike and would
+            # turn ScriptData's ``\n\n`` semantic boundaries into one space.
+            # Normalize each physical line instead, preserving the blank-line
+            # structure that the request splitter uses for Fish prosody.
+            text = "\n".join(
+                _soynlp_repeat_normalize(line, num_repeats=1)
+                for line in text.split("\n")
+            )
         except Exception:
             logger.warning("soynlp repeat_normalize 실패, 건너뜀")
 
@@ -368,7 +375,13 @@ def normalize_for_tts(text: str, *, laugh_marker: bool | None = None) -> str:
     text = text.replace("~", " ").replace("～", " ")    # 잔여 물결표 → 공백
     text = re.sub(r"['\"""''「」『』【】`]", " ", text)   # 따옴표/인용부호 → 공백
     text = re.sub(r'\.{3,}', '…', text)                 # 말줄임표 통일
-    text = re.sub(r'\s+', ' ', text)                    # 연속 공백 정리
+    # ScriptData narration uses blank lines as semantic-block boundaries.
+    # Keep them for the request splitter/Fish prosody; only collapse horizontal
+    # whitespace and normalize accidental runs of blank lines.
+    text = re.sub(r'\r\n?', '\n', text)
+    text = re.sub(r'[^\S\r\n]+', ' ', text)
+    text = re.sub(r' *\n *', '\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
 
     # 5. 문장 완성 — 마침표 없는 끝에 마침표 추가 (프로소디 안정화)
     #    마커로 끝나는 경우((laughing) 등)는 마침표 불필요
