@@ -268,6 +268,26 @@ class ScriptData:
     narrator_voice: str = ""
     chat_messages: list[dict] = field(default_factory=list)
 
+    def to_narration_text(self) -> str:
+        """본문 낭독용 텍스트 (hook + body). closer/댓글 제외.
+
+        render_stage가 이 텍스트로 만든 wav를 장면별 재합성 없이 재사용한다.
+        closer·댓글은 렌더에서 별도 TTS.
+        """
+        texts = [self.hook] if self.hook else []
+        for item in self.body:
+            if isinstance(item, dict):
+                if item.get("type") == "comment":
+                    continue
+                line_text = " ".join(item.get("lines", [])).strip()
+                if line_text:
+                    texts.append(line_text)
+            else:
+                s = str(item).strip()
+                if s:
+                    texts.append(s)
+        return " ".join(texts)
+
     def to_plain_text(self) -> str:
         texts = [self.hook]
         for item in self.body:

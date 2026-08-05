@@ -572,7 +572,7 @@ def _render_intro_frame(
         _draw_centered_text(draw, lines, font, cap_y, cap_lh, cap_color, cw)
         cap_bottom = cap_y + len(lines) * cap_lh
 
-    # 미디어 (자연비율 contain, 중앙 배치)
+    # 미디어 (자연비율 contain, 중앙 배치). 이미지 없으면 크림 빈화면만 (회색 박스 금지).
     media_y = cap_bottom + media_gap
     if img_pil is not None:
         max_h = max(100, ch - media_y - 60)
@@ -580,11 +580,6 @@ def _render_intro_frame(
         nw, nh = fitted.size
         mx = (cw - nw) // 2
         img = _paste_rounded(img, fitted, mx, media_y, media_radius)
-    else:
-        ph_h = min(820, ch - media_y - 60)
-        draw2 = ImageDraw.Draw(img)
-        _draw_media_placeholder(draw2, cw // 2 - media_max_w // 2, media_y,
-                                media_max_w, ph_h, media_radius)
 
     img.save(str(out_path), "PNG")
     return out_path

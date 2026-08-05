@@ -17,6 +17,7 @@ def compose_video(
     output_path: Optional[Path] = None,
     tts_audio_cache: Optional[Path] = None,
     save_tts_cache: Optional[Path] = None,
+    narration_audio: Optional[Path] = None,
 ) -> Path:
     """씬 목록 기반 최종 영상 렌더링.
 
@@ -28,6 +29,7 @@ def compose_video(
         output_path: 출력 경로 (None → 자동 생성)
         tts_audio_cache: TTS 캐시 로드 경로
         save_tts_cache: TTS 캐시 저장 경로
+        narration_audio: LLM+TTS 통합 낭독 wav (hook+body). 있으면 장면별 재합성 생략.
     Returns:
         렌더링된 mp4 파일 경로
     """
@@ -37,6 +39,7 @@ def compose_video(
         output_path=output_path,
         tts_audio_cache=tts_audio_cache,
         save_tts_cache=save_tts_cache,
+        narration_audio=narration_audio,
     )
 
 
@@ -61,11 +64,17 @@ def render_final_video(
     script = ScriptData.from_json(content.summary_text) if content.summary_text else ScriptData(
         hook="", body=[], closer="", title_suggestion="", tags=[], mood="daily"
     )
+    _narr = None
+    if getattr(content, "audio_path", None):
+        candidate = Path(content.audio_path)
+        if candidate.exists() and candidate.stat().st_size > 1024:
+            _narr = candidate
     return render_layout_video(
         post,
         script,
         output_path=Path(output_path) if output_path else None,
         voice_key=voice_key,
+        narration_audio=_narr,
     )
 
 

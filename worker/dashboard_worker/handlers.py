@@ -212,7 +212,18 @@ def _handle_hd_render(job: Job) -> dict:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     from ai_worker.renderer.composer import render_final_video
-    render_final_video(post, content, output_path=output_path, voice_key=content.tts_voice)
+    # Prefer variant_config.tts_voice (Again Spring admin selection) over column,
+    # which may have been overwritten by pipeline defaults.
+    _voice = None
+    _cfg = content.variant_config if isinstance(getattr(content, "variant_config", None), dict) else {}
+    for _k in ("tts_voice", "ttsVoice"):
+        _raw = _cfg.get(_k) if isinstance(_cfg, dict) else None
+        if isinstance(_raw, str) and _raw.strip():
+            _voice = _raw.strip()
+            break
+    if not _voice:
+        _voice = content.tts_voice
+    render_final_video(post, content, output_path=output_path, voice_key=_voice)
 
     with SessionLocal() as db:
         db.query(Content).filter_by(post_id=post_id).update({"video_path": output_path})

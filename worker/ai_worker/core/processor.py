@@ -30,12 +30,57 @@ from db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
 
+
+def _resolve_post_comment_voices(post_id: int) -> list[str] | None:
+    """variant_config.comment_voices — 어드민이 고른 댓글 TTS 풀 (최대 5).
+
+    None → SceneDirector가 pipeline.json comment_voices 사용.
+    [] → 풀 없음(내레이터 폴백). 비어 있지 않으면 그 목록만 사용.
+    """
+    cfg = _resolve_post_variant_config(post_id)
+    raw = cfg.get("comment_voices") or cfg.get("commentVoices") or cfg.get("comment_tts_voices")
+    if raw is None:
+        return None
+    voices: list[str] = []
+    if isinstance(raw, list):
+        voices = [str(v).strip() for v in raw if str(v).strip()]
+    elif isinstance(raw, str):
+        s = raw.strip()
+        if s.startswith("["):
+            try:
+                import json as _json
+                parsed = _json.loads(s)
+                if isinstance(parsed, list):
+                    voices = [str(v).strip() for v in parsed if str(v).strip()]
+            except Exception:
+                voices = []
+        else:
+            voices = [p.strip() for p in s.replace(";", ",").split(",") if p.strip()]
+    # cap 5
+    return voices[:5]
+
 def _resolve_post_voice(post_id: int) -> str | None:
-    """게시글별 TTS 보이스 조회 (없으면 None → 전역 설정 사용)."""
+    """게시글별 TTS 보이스 조회 (없으면 None → 전역 설정 사용).
+
+    우선순위:
+      1) contents.variant_config.tts_voice — 외부 ingest(Again Spring 어드민 선택) SSOT
+      2) contents.tts_voice 컬럼
+    variant를 컬럼보다 앞에 두는 이유: 파이프라인 기본값(yohan 등)으로 컬럼이
+    덮어써진 뒤에도 어드민이 고른 음성을 복구할 수 있어야 한다.
+    """
     try:
         with SessionLocal() as db:
             ct = db.query(Content).filter_by(post_id=post_id).first()
-            return ct.tts_voice if ct else None
+            if ct is None:
+                return None
+            cfg = ct.variant_config if isinstance(ct.variant_config, dict) else {}
+            for key in ("tts_voice", "ttsVoice"):
+                raw = cfg.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    return raw.strip()
+            if ct.tts_voice and str(ct.tts_voice).strip():
+                return str(ct.tts_voice).strip()
+            return None
     except Exception:
         logger.warning("[voice] post_id=%d 보이스 조회 실패", post_id, exc_info=True)
         return None
@@ -165,9 +210,14 @@ class RobustProcessor:
 
                 # ===== Step 2: TTS 생성 =====
                 logger.info("[Step 2/3] TTS 음성 생성 중...")
+                _narration = (
+                    script.to_narration_text()
+                    if hasattr(script, "to_narration_text")
+                    else script.to_plain_text()
+                )
                 with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
                     audio_path = await self._safe_generate_tts(
-                        script.to_plain_text(), post.id, post.site_code, post.origin_id
+                        _narration, post.id, post.site_code, post.origin_id
                     )
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
@@ -204,6 +254,8 @@ class RobustProcessor:
                     narrator_voice=script.narrator_voice or None,
                     chat_messages=script.chat_messages or None,
                     outro_text=_resolve_post_outro_text(post.id),
+                    site_code=getattr(post, "site_code", None),
+                    variant_config=_resolve_post_variant_config(post.id),
                 )
                 _scenes = _director.direct()
                 logger.info("[Step 3/3] 씬=%d개", len(_scenes))
@@ -213,8 +265,12 @@ class RobustProcessor:
                     _scenes, script, post.title or "", post.id
                 )
 
-                # Phase 5: 렌더링
-                video_path = render_layout_video_from_scenes(post, _scenes)
+                # Phase 5: 렌더링 — 통합 낭독 wav 재사용 (장면별 Fish Speech 생략)
+                video_path = render_layout_video_from_scenes(
+                    post,
+                    _scenes,
+                    narration_audio=audio_path if audio_path and Path(audio_path).exists() else None,
+                )
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
 
                 # ===== Content 저장 (stale 객체 방지: 세션 갱신 후 re-fetch) =====
@@ -381,7 +437,7 @@ class RobustProcessor:
             # TTS 캐시 확인 (동일 텍스트+목소리 → 재합성 스킵)
             tts_cache_dir = MEDIA_DIR / "tmp" / "tts_cache"
             tts_cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_hash = hashlib.md5(f"{voice_id}:{text}".encode()).hexdigest()
+            cache_hash = hashlib.md5(f"{voice_id}:{text}:pp_v3".encode()).hexdigest()  # pp_v3: no silenceremove
             cached_audio = tts_cache_dir / f"{cache_hash}.{TTS_OUTPUT_FORMAT}"
             if cached_audio.exists():
                 shutil.copy2(cached_audio, audio_path)
@@ -814,8 +870,10 @@ class RobustProcessor:
                     _profile.strategy, _profile.image_count,
                 )
                 # 와글봇 pipeline 기본 TTS만 사용 (성별/연령 pick_voice 금지 → 보이스 혼용 방지)
+                # 우선순위: contents.tts_voice(외부 ingest) > pipeline.json tts_voice > VOICE_DEFAULT
                 _narrator_voice = (
-                    load_pipeline_config().get("tts_voice")
+                    _resolve_post_voice(post_id)
+                    or load_pipeline_config().get("tts_voice")
                     or VOICE_DEFAULT
                     or "default"
                 )
@@ -882,15 +940,20 @@ class RobustProcessor:
                 # 레거시 generate_script 경로
                 script = self._safe_generate_summary(post, session)
 
-            logger.info("[Pipeline LLM+TTS] ✓ 대본 완료 (%d자)", len(script.to_plain_text()))
+            _narration = script.to_narration_text() if hasattr(script, "to_narration_text") else script.to_plain_text()
+            logger.info(
+                "[Pipeline LLM+TTS] ✓ 대본 완료 (narration=%d자 plain=%d자)",
+                len(_narration), len(script.to_plain_text()),
+            )
 
             _post_voice = script.narrator_voice or _resolve_post_voice(post_id) or (
                 load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
             )
             stamp_progress(post_id, 5, "TTS 합성")
             with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
+                # hook+body만 통합 합성 — render가 장면별 재합성 없이 이 wav를 분할 사용
                 audio_path = await self._safe_generate_tts(
-                    script.to_plain_text(), post_id, post.site_code, post.origin_id,
+                    _narration, post_id, post.site_code, post.origin_id,
                     voice_override=_post_voice,
                 )
             stamp_progress(post_id, 5, "TTS 합성", done=True)
@@ -910,9 +973,12 @@ class RobustProcessor:
                 session.add(content)
             content.summary_text = script.to_json()
             content.audio_path = str(audio_path)
-            # 사연 낭독 보이스를 contents.tts_voice에도 고정 (렌더 fallback=yohan 방지)
-            if script.narrator_voice:
-                content.tts_voice = script.narrator_voice
+            # 사연 낭독 보이스를 contents.tts_voice에도 고정 (렌더 fallback=yohan 방지).
+            # variant_config 음성(어드민/외부 ingest)이 있으면 그것을 최종 권위로 유지.
+            _locked = _resolve_post_voice(post_id) or script.narrator_voice
+            if _locked:
+                content.tts_voice = _locked
+                script.narrator_voice = _locked
             session.commit()
 
         return script, audio_path
@@ -957,33 +1023,34 @@ class RobustProcessor:
                 key=lambda c: getattr(c, "likes", 0) or 0,
                 reverse=True,
             )
+            # 댓글 TTS 풀: variant_config(어드민 선택) → 없으면 pipeline.json
+            _comment_voices = _resolve_post_comment_voices(post_id)
             director = SceneDirector(
                 profile, images, script_dict, mood=script.mood,
                 post_id=post_id, comments=_db_cmts2,
                 narrator_voice=script.narrator_voice or None,
                 chat_messages=script.chat_messages or None,
                 outro_text=_resolve_post_outro_text(post_id),
+                comment_voices=_comment_voices,
+                site_code=getattr(post, "site_code", None),
+                variant_config=_resolve_post_variant_config(post_id),
             )
             scenes = director.direct()
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 
-            # 전 구간(intro/body/comments/outro/chat)을 pipeline 기본 보이스 하나로 고정.
-            _nv = script.narrator_voice or None
+            # 본문·intro·outro만 어드민 본문 보이스로 고정. 댓글/채팅은 풀에서 배정된 목소리 유지.
+            _nv = _resolve_post_voice(post_id) or script.narrator_voice or None
             if not _nv:
                 _nv = load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
             if _nv:
                 for _sc in scenes:
+                    if getattr(_sc, "type", None) in ("comments", "chat"):
+                        continue
                     _sc.voice_override = _nv
-                    # comments/chat 아이템별 voice도 동일 키로 덮어씀
-                    if getattr(_sc, "comment_items", None):
-                        for _it in _sc.comment_items:
-                            if isinstance(_it, dict):
-                                _it["voice"] = _nv
-                    if getattr(_sc, "chat_messages", None):
-                        for _m in _sc.chat_messages:
-                            if isinstance(_m, dict):
-                                _m["voice"] = _nv
-                logger.info("[Pipeline Render] ALL TTS locked to pipeline voice=%s", _nv)
+                logger.info(
+                    "[Pipeline Render] narrator TTS locked=%s comment_pool=%s",
+                    _nv, _comment_voices,
+                )
 
             # Phase 4.5-7: LTX-Video 클립 생성
             scenes = self._generate_video_clips_sync(
@@ -994,7 +1061,10 @@ class RobustProcessor:
             _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
             _post_voice = _resolve_post_voice(post_id) or _nv
             video_path = render_layout_video_from_scenes(
-                post, scenes, save_tts_cache=_tts_cache, voice_key=_post_voice
+                post, scenes,
+                save_tts_cache=_tts_cache,
+                voice_key=_post_voice,
+                narration_audio=audio_path if audio_path and Path(audio_path).exists() else None,
             )
 
             # 렌더링 후 트랜잭션 갱신 ─ 장시간 렌더링(15분+) 중 대시보드가

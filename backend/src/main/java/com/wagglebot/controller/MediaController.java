@@ -8,6 +8,8 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 
 @RestController
@@ -23,7 +25,9 @@ public class MediaController {
 
     @GetMapping("/**")
     public ResponseEntity<Resource> serveMedia(jakarta.servlet.http.HttpServletRequest request) throws IOException {
-        String path = request.getRequestURI().replaceFirst("/api/media/", "");
+        String uri = request.getRequestURI();
+        String path = uri.replaceFirst("^/api/media/", "");
+        path = URLDecoder.decode(path, StandardCharsets.UTF_8);
         Path file = mediaDir.resolve(path).normalize();
         if (!file.startsWith(mediaDir) || !Files.exists(file)) {
             return ResponseEntity.notFound().build();

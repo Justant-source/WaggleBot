@@ -51,13 +51,30 @@ public class ExternalIngestService {
         String originId = req.externalId();
 
         Optional<Post> existing = postRepo.findBySiteCodeAndOriginId(siteCode, originId);
+        String requestedVoice = (req.options() != null && req.options().ttsVoice() != null)
+            ? req.options().ttsVoice().trim() : "";
         if (existing.isPresent() && existing.get().getStatus() != PostStatus.FAILED) {
             Post post = existing.get();
+            String storedVoice = contentRepo.findByPostId(post.getId())
+                .map(Content::getTtsVoice)
+                .orElse(null);
+            boolean voiceChanged = requestedVoice != null && !requestedVoice.isBlank()
+                && (storedVoice == null || !requestedVoice.equals(storedVoice.trim()));
+            if (!voiceChanged) {
+                log.info(
+                    "[external] 중복 ingest — 기존 잡 반환: site={} originId={} postId={} status={}",
+                    siteCode, originId, post.getId(), post.getStatus()
+                );
+                return new IngestResult(post.getId(), post.getStatus().name());
+            }
+            // TTS voice changed — force re-pipeline with updated content.
+            post.setStatus(PostStatus.FAILED);
+            post.setUpdatedAt(LocalDateTime.now());
+            postRepo.save(post);
             log.info(
-                "[external] 중복 ingest — 기존 잡 반환: site={} originId={} postId={} status={}",
-                siteCode, originId, post.getId(), post.getStatus()
+                "[external] TTS voice changed ({} -> {}) — force re-ingest postId={}",
+                storedVoice, requestedVoice, post.getId()
             );
-            return new IngestResult(post.getId(), post.getStatus().name());
         }
 
         boolean paired = Boolean.TRUE.equals(req.paired());
@@ -97,7 +114,10 @@ public class ExternalIngestService {
         }
 
         upsertComments(post.getId(), req.comments());
-        upsertContent(post.getId(), now, req, videoGen, paired, outroText, autoHdRender);
+        String ttsVoice = (options != null && options.ttsVoice() != null) ? options.ttsVoice().trim() : null;
+        String metaphorId = (options != null && options.metaphorId() != null) ? options.metaphorId().trim() : null;
+        String commentVoices = (options != null && options.commentVoices() != null) ? options.commentVoices().trim() : null;
+        upsertContent(post.getId(), now, req, videoGen, paired, outroText, autoHdRender, ttsVoice, metaphorId, commentVoices);
 
         log.info(
             "[external] ingest 완료: site={} originId={} postId={} paired={} videoGen={} autoHdRender={}",
@@ -134,7 +154,10 @@ public class ExternalIngestService {
 
     private void upsertContent(
         Long postId, LocalDateTime now, ExternalJobRequest req,
-        boolean videoGen, boolean paired, String outroText, boolean autoHdRender
+        boolean videoGen, boolean paired, String outroText, boolean autoHdRender,
+        String ttsVoice,
+        String metaphorId,
+        String commentVoices
     ) {
         Content content = contentRepo.findByPostId(postId).orElseGet(() -> {
             Content c = new Content();
@@ -150,6 +173,17 @@ public class ExternalIngestService {
         variantConfig.put("paired", paired);
         variantConfig.put("outro_text", outroText);
         variantConfig.put("auto_hd_render", autoHdRender);
+        if (ttsVoice != null && !ttsVoice.isBlank()) {
+            variantConfig.put("tts_voice", ttsVoice);
+            content.setTtsVoice(ttsVoice);
+        }
+        if (metaphorId != null && !metaphorId.isBlank()) {
+            variantConfig.put("metaphor_id", metaphorId);
+        }
+        if (commentVoices != null && !commentVoices.isBlank()) {
+            // JSON array string preferred; comma-separated also accepted by Python resolver
+            variantConfig.put("comment_voices", commentVoices);
+        }
         content.setVariantConfig(variantConfig);
 
         contentRepo.save(content);

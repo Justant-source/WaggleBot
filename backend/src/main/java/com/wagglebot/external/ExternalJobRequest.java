@@ -18,5 +18,5 @@ public record ExternalJobRequest(
 ) {
     public record CommentInput(String author, String body, Integer likeCount) {}
 
-    public record OptionsInput(Boolean videoGen, Boolean autoHdRender) {}
+    public record OptionsInput(Boolean videoGen, Boolean autoHdRender, String ttsVoice, String metaphorId, String commentVoices) {}
 }

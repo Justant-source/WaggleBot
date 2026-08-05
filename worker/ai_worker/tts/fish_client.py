@@ -281,7 +281,7 @@ def _split_text(text: str, max_chars: int) -> list[str]:
 # 오디오 후처리 + 세그먼트 병합
 # ────────────────────────────────────────────────────────────────
 def _post_process_audio(path: Path, speed: float = TTS_SPEED, trim_prefix_secs: float = 0.0) -> None:
-    """FFmpeg 후처리: (선택)패딩 트림 → 무음 단축 → loudnorm → 배속.
+    """FFmpeg 후처리: (선택)패딩 트림 → loudnorm → 배속.
 
     출력은 항상 44100Hz mono pcm_s16le 로 강제한다. loudnorm 단일 패스는 내부적으로
     192kHz를 출력하므로, 렌더러의 44.1kHz concat(_merge_chunks의 -c copy, anullsrc=r=44100)과
@@ -293,7 +293,8 @@ def _post_process_audio(path: Path, speed: float = TTS_SPEED, trim_prefix_secs: 
     filters: list[str] = []
     if trim_prefix_secs > 0:
         filters.append(f"atrim=start={trim_prefix_secs:.3f},asetpts=PTS-STARTPTS")
-    filters.append("silenceremove=stop_periods=-1:stop_duration=0.2:stop_threshold=-50dB")
+    # silenceremove 제거: 호흡/짧은 휴지를 "무음"으로 보고 본문을 잘라
+    # 가공 노이즈·잘림의 주원인이었음. loudnorm+atempo만 유지.
     if TTS_LOUDNORM_ENABLED:
         filters.append(f"loudnorm={TTS_LOUDNORM_PARAMS}")
     if abs(speed - 1.0) > 1e-3:
@@ -312,7 +313,7 @@ def _post_process_audio(path: Path, speed: float = TTS_SPEED, trim_prefix_secs: 
         )
         if result.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
             tmp.replace(path)
-            logger.debug("오디오 후처리 완료 (무음단축+loudnorm+%.2f배속): %s", speed, path.name)
+            logger.debug("오디오 후처리 완료 (loudnorm+%.2f배속): %s", speed, path.name)
         else:
             logger.warning(
                 "오디오 후처리 실패 (rc=%d): %s",

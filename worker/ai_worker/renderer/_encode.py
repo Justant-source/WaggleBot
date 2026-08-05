@@ -214,6 +214,28 @@ def _render_video_segment(
     return output_path
 
 
+
+def _concat_mp4_copy(a: Path, b: Path, output_path: Path) -> None:
+    """두 mp4를 stream-copy concat (동일 코덱 전제)."""
+    lst = output_path.with_suffix(".concat.txt")
+    lst.write_text(
+        f"file '{a.resolve()}'\nfile '{b.resolve()}'\n",
+        encoding="utf-8",
+    )
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", str(lst), "-c", "copy", str(output_path),
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr[-500:] if result.stderr else "concat failed")
+    finally:
+        lst.unlink(missing_ok=True)
+
+
 def _render_static_segment(
     frame_png: Path,
     duration: float,

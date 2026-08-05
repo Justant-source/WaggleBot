@@ -47,10 +47,13 @@ from ai_worker.renderer._tts import (
 from ai_worker.renderer._encode import (
     _render_video_segment, _render_static_segment,
     _resolve_codec, _get_encoder_args, _escape_ffmpeg_text,
-    _build_layout_sfx_filter,
+    _build_layout_sfx_filter, _concat_mp4_copy,
 )
 
 logger = logging.getLogger(__name__)
+
+# 음성 그대로, 텍스트 화면만 이만큼 늦게 전환
+TEXT_VISUAL_LAG_SEC: float = 0.1
 
 _LAYOUT_CONFIG: dict | None = None
 
@@ -399,6 +402,7 @@ def _render_pipeline(
     bgm_path: Path | None = None,
     scenes_list: list | None = None,
     meta: dict | None = None,
+    narration_audio: Path | None = None,
 ) -> Path:
     """sentences / plan / images 를 받아 mp4를 생성한다."""
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
@@ -423,6 +427,9 @@ def _render_pipeline(
         # ── Steps 5~6: TTS 생성 또는 캐시 로드 ───────────────────
         merged_tts = tmp_dir / "merged_tts.wav"
         _cache_valid = False
+        # 통합 낭독 wav를 쓰면 장면별 TTS 캐시는 무효 (이전 per-scene 캐시와 충돌)
+        if narration_audio is not None:
+            tts_audio_cache = None
         if tts_audio_cache and (tts_audio_cache / "durations.json").exists():
             try:
                 durations: list[float] = json.loads(
@@ -445,14 +452,20 @@ def _render_pipeline(
             _run_async(_warmup_model())
             t0 = time.time()
             durations = _run_async(
-                _generate_tts_chunks(plan, sentences, tmp_dir, voice, rate)
+                _generate_tts_chunks(
+                    plan, sentences, tmp_dir, voice, rate,
+                    narration_audio=narration_audio,
+                )
             )
             total_dur = sum(durations)
             logger.info("[layout] TTS 완료: %d프레임, 총 %.1fs (%.2fs)",
                         len(durations), total_dur, time.time() - t0)
 
             chunk_paths = [tmp_dir / f"chunk_{i:03d}.wav" for i in range(len(plan))]
-            _merge_chunks(chunk_paths, merged_tts)
+            _merge_chunks(
+                chunk_paths, merged_tts,
+                skip_global_loudnorm=(narration_audio is not None),
+            )
 
             if save_tts_cache:
                 save_tts_cache.mkdir(parents=True, exist_ok=True)
@@ -625,7 +638,19 @@ def _render_pipeline(
                         )
                         _render_static_segment(frame_paths[frame_idx], dur, segment_path)
                 else:
-                    _render_static_segment(frame_paths[frame_idx], dur, segment_path)
+                    lag = 0.0
+                    if frame_idx > 0 and dur > 0.05:
+                        lag = min(TEXT_VISUAL_LAG_SEC, dur - 0.05)
+                    if lag > 0:
+                        hold = tmp_dir / f"seg_{frame_idx:03d}_hold.mp4"
+                        body = tmp_dir / f"seg_{frame_idx:03d}_body.mp4"
+                        _render_static_segment(frame_paths[frame_idx - 1], lag, hold)
+                        _render_static_segment(frame_paths[frame_idx], dur - lag, body)
+                        _concat_mp4_copy(hold, body, segment_path)
+                        hold.unlink(missing_ok=True)
+                        body.unlink(missing_ok=True)
+                    else:
+                        _render_static_segment(frame_paths[frame_idx], dur, segment_path)
 
                 segment_paths.append(segment_path)
 
@@ -706,12 +731,24 @@ def _render_pipeline(
             # ── Step 9 (기존): 정적 PNG concat ─────────────────────
             concat_file = tmp_dir / "concat_list.txt"
             concat_lines: list[str] = []
-            for fp, dur in zip(frame_paths, durations):
-                concat_lines.append(f"file '{fp.resolve()}'\n")
-                concat_lines.append(f"duration {dur:.4f}\n")
+            # TTS는 그대로, 새 텍스트만 lag만큼 늦게 표시(직전 프레임 유지)
+            for i, (fp, dur) in enumerate(zip(frame_paths, durations)):
+                lag = 0.0
+                if i > 0 and dur > 0.05:
+                    lag = min(TEXT_VISUAL_LAG_SEC, dur - 0.05)
+                if lag > 0:
+                    prev = frame_paths[i - 1]
+                    concat_lines.append(f"file '{prev.resolve()}'\n")
+                    concat_lines.append(f"duration {lag:.4f}\n")
+                    concat_lines.append(f"file '{fp.resolve()}'\n")
+                    concat_lines.append(f"duration {dur - lag:.4f}\n")
+                else:
+                    concat_lines.append(f"file '{fp.resolve()}'\n")
+                    concat_lines.append(f"duration {dur:.4f}\n")
             if frame_paths:
                 concat_lines.append(f"file '{frame_paths[-1].resolve()}'\n")
             concat_file.write_text("".join(concat_lines), encoding="utf-8")
+            logger.info("[layout] text visual lag=%.2fs (audio unchanged)", TEXT_VISUAL_LAG_SEC)
 
             # ── Step 10: 타임스탬프 + SFX ──────────────────────────
             timings = []
@@ -828,6 +865,7 @@ def render_layout_video(
     script,
     output_path: Path | None = None,
     voice_key: str | None = None,
+    narration_audio: Path | None = None,
 ) -> Path:
     """레이아웃 기반 쇼츠 영상 렌더링."""
     from config import settings as s
@@ -885,6 +923,7 @@ def render_layout_video(
     return _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
+        narration_audio=Path(narration_audio) if narration_audio else None,
     )
 
 
@@ -895,6 +934,7 @@ def render_layout_video_from_scenes(
     save_tts_cache: Path | None = None,
     tts_audio_cache: Path | None = None,
     voice_key: str | None = None,
+    narration_audio: Path | None = None,
 ) -> Path:
     """SceneDirector 출력(SceneDecision 목록)으로 직접 렌더링."""
     from config import settings as s
@@ -963,4 +1003,5 @@ def render_layout_video_from_scenes(
         bgm_path=bgm_path,
         scenes_list=scenes,
         meta=meta,
+        narration_audio=Path(narration_audio) if narration_audio else None,
     )

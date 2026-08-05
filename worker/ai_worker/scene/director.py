@@ -37,6 +37,25 @@ from config.settings import EMOTION_TAGS, get_domain_setting
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_metaphor_intro_image(post, variant_config: dict | None = None) -> str | None:
+    """again_spring: variant_config.metaphor_id → local PNG under assets/metaphors/{id}.png."""
+    from pathlib import Path as _P
+    cfg = variant_config if isinstance(variant_config, dict) else {}
+    mid = cfg.get("metaphor_id") or cfg.get("metaphorId")
+    if not isinstance(mid, str) or not mid.strip():
+        return None
+    mid = mid.strip()
+    candidates = [
+        _P("/app/assets/metaphors") / f"{mid}.png",
+        _P(__file__).resolve().parents[3] / "assets" / "metaphors" / f"{mid}.png",
+        _P("/home/justant/Data/WaggleBot/assets/metaphors") / f"{mid}.png",
+    ]
+    for c in candidates:
+        if c.is_file():
+            return str(c)
+    return None
+
 SceneType = Literal["intro", "video_text", "image_text", "text_only", "image_only", "outro", "comments", "chat"]
 
 # 반전/충격 키워드가 등장하면 단독 강조 처리
@@ -1167,6 +1186,8 @@ class SceneDirector:
         comments: list | None = None,
         chat_messages: list | None = None,
         outro_text: str | None = None,
+        site_code: str | None = None,
+        variant_config: dict | None = None,
     ) -> None:
         self.profile = profile
         self._images: list[str] = list(images)
@@ -1178,6 +1199,8 @@ class SceneDirector:
         # 외부 연동(예: Again Spring)에서 넘어온 고정 아웃트로 문구. 지정 시 mood
         # fixed_texts에서의 random.choice()를 건너뛰고 이 문구를 그대로 사용한다.
         self.outro_text = outro_text if outro_text and outro_text.strip() else None
+        self.site_code = site_code
+        self.variant_config = variant_config if isinstance(variant_config, dict) else {}
         self._character_voices: dict[str, str] = {}       # character_label → voice_key
         self._comment_author_voices: dict[str, str] = {}  # author → voice_key
         self._chat_sender_voices: dict[str, str] = {}     # sender → voice_key
@@ -1268,6 +1291,10 @@ class SceneDirector:
             # 이미지 있으면 첫 이미지 사용
             intro_img = self._images.pop(0)
             intro_type = "image_text"
+        elif self.site_code == "again_spring":
+            # Again Spring: metaphor illustration or blank cream (never mood stock / empty box)
+            intro_img = _resolve_metaphor_intro_image(None, self.variant_config)
+            intro_type = "intro"
         else:
             # 이미지 없으면 mood 폴더에서 랜덤 (로컬 에셋이므로 타입은 항상 intro)
             intro_asset = _pick_asset("intro_image_dir")
@@ -1611,16 +1638,25 @@ class SceneDirector:
         return voice
 
     def _assign_comment_voice(self, author: str) -> str | None:
-        """댓글 작성자별 voice를 결정적으로 배정 (동일 작성자 = 동일 목소리)."""
+        """댓글 작성자별 voice 배정. 동일 작성자=동일 목소리.
+
+        풀에서 내레이터와 겹치지 않는 키를 우선해 랜덤 선택한다 (최대 다양성).
+        """
         key = author or "익명"
         if key in self._comment_author_voices:
             return self._comment_author_voices[key]
         if self.comment_voices:
-            voice: str = self.comment_voices[(hash(key) & 0x7FFFFFFF) % len(self.comment_voices)]
+            pool = [v for v in self.comment_voices if v and v != self.narrator_voice]
+            if not pool:
+                pool = [v for v in self.comment_voices if v]
+            used = set(self._comment_author_voices.values())
+            unused = [v for v in pool if v not in used]
+            pick_from = unused or pool
+            voice = random.choice(pick_from) if pick_from else self.narrator_voice
         else:
             voice = self.narrator_voice  # type: ignore[assignment]
         self._comment_author_voices[key] = voice
-        logger.debug("[director] comment author '%s' → voice=%s", key, voice)
+        logger.info("[director] comment author '%s' → voice=%s", key, voice)
         return voice
 
     def _assign_chat_voice(self, sender: str, is_mine: bool) -> str | None:
