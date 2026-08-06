@@ -18,8 +18,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 외부 서비스(Again Spring 등) 사연을 Post/Comment/Content로 적재한다.
@@ -35,6 +38,10 @@ public class ExternalIngestService {
 
     private static final String OUTRO_PAIRED = "상대방의 사연도 궁금하시죠? 댓글에서 확인해 보세요.";
     private static final String OUTRO_SOLO = "여러분은 어떻게 생각하세요? 댓글로 알려주세요.";
+
+    /** Again Spring Shorts 댓글 씬은 화면 슬롯 + TTS 낭독 모두 최대 3개 — ingest 단계에서부터 고정. */
+    private static final int MAX_INGESTED_COMMENTS = 3;
+    private static final Set<String> VALID_SIDES = Set.of("author", "partner", "neutral");
 
     private final PostRepository postRepo;
     private final CommentRepository commentRepo;
@@ -136,20 +143,40 @@ public class ExternalIngestService {
 
     private void upsertComments(Long postId, List<ExternalJobRequest.CommentInput> comments) {
         if (comments == null || comments.isEmpty()) return;
+        // Again Spring Shorts: 재수집 시 이전 해시/닉 불일치 댓글을 남기지 않도록 전부 교체한다.
+        commentRepo.deleteByPostId(postId);
+        // 최대 3개까지만 적재 — 이미 적재된(중복) 댓글도 슬롯을 소비해 재시도 시 상한이 흔들리지 않게 한다.
+        int inserted = 0;
         for (ExternalJobRequest.CommentInput c : comments) {
-            if (c == null || isBlank(c.author()) || c.body() == null) continue;
-            String hash = sha256(c.author() + ":" + c.body());
-            if (commentRepo.existsByPostIdAndAuthorAndContentHash(postId, c.author(), hash)) {
-                continue; // 재시도 시 동일 댓글 중복 삽입 방지 (uq_post_comment)
+            if (inserted >= MAX_INGESTED_COMMENTS) break;
+            if (c == null || c.body() == null) continue;
+            String author = c.displayAuthor();  // nickname 우선 — authorId(해시)는 절대 표시하지 않음
+            if (isBlank(author)) continue;
+            String hash = sha256(author + ":" + c.body());
+            if (commentRepo.existsByPostIdAndAuthorAndContentHash(postId, author, hash)) {
+                inserted++; // 재시도 시 동일 댓글 중복 삽입 방지 (uq_post_comment)
+                continue;
             }
             Comment comment = new Comment();
             comment.setPostId(postId);
-            comment.setAuthor(c.author());
+            comment.setAuthor(author);
             comment.setContent(c.body());
             comment.setContentHash(hash);
             comment.setLikes(c.likeCount() != null ? c.likeCount() : 0);
+            comment.setCreatedAt(c.createdAt() != null
+                ? LocalDateTime.ofInstant(c.createdAt(), ZoneOffset.UTC)
+                : LocalDateTime.now());
+            comment.setSide(normalizeSide(c.side()));
             commentRepo.save(comment);
+            inserted++;
         }
+    }
+
+    /** "author" | "partner" | "neutral"만 허용 — 그 외/누락은 "neutral"로 정규화 (진영색 스타일 안전값). */
+    private static String normalizeSide(String side) {
+        if (side == null) return "neutral";
+        String s = side.trim().toLowerCase(Locale.ROOT);
+        return VALID_SIDES.contains(s) ? s : "neutral";
     }
 
     private void upsertContent(

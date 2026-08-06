@@ -430,9 +430,9 @@ TTS_ALIGNMENT_MODEL: str = os.getenv("TTS_ALIGNMENT_MODEL", "small")
 TTS_ALIGNMENT_DEVICE: str = os.getenv("TTS_ALIGNMENT_DEVICE", "cpu")
 TTS_ALIGNMENT_COMPUTE_TYPE: str = os.getenv("TTS_ALIGNMENT_COMPUTE_TYPE", "int8")
 TTS_ALIGNMENT_MIN_CONFIDENCE: float = 0.55
-TTS_TEXT_LEAD_SEC: float = 0.15
+TTS_TEXT_LEAD_SEC: float = 0.10
 TTS_OUTRO_PRE_PAUSE_SEC: float = 0.25
-TTS_OUTRO_TEXT_LEAD_SEC: float = 0.15
+TTS_OUTRO_TEXT_LEAD_SEC: float = 0.10
 TTS_OUTRO_TAIL_SEC: float = 0.50
 
 # ---------------------------------------------------------------------------

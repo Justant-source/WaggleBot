@@ -119,6 +119,10 @@ class Comment(Base):
     content = Column(Text, nullable=False)
     content_hash = Column(String(64), nullable=False)
     likes = Column(Integer, nullable=False, default=0)
+    # 외부 ingest(Again Spring 등)에서 전달되는 작성 시각 — 크롤러 댓글은 NULL 유지
+    created_at = Column(DateTime, nullable=True)
+    # "author" | "partner" | "neutral" — Again Spring Shorts 댓글 씬 진영색 스타일용
+    side = Column(String(16), nullable=True)
 
     post = relationship("Post", back_populates="comments")
 

@@ -68,6 +68,11 @@ _STACK_BY_STRATEGY: dict[str, int] = {
     "text_heavy": 3,
 }
 
+# Again Spring Shorts: 댓글 씬은 화면 슬롯 + TTS 낭독 모두 최대 3개로 고정
+# (다른 커뮤니티 콘텐츠는 scene_policy.json의 기존 top_n을 그대로 유지한다)
+MAX_SHORTS_COMMENTS = 3
+_VALID_COMMENT_SIDES = ("author", "partner", "neutral")
+
 
 @dataclass
 class SceneDecision:
@@ -95,7 +100,7 @@ class SceneDecision:
     video_subtype: str | None = None         # "itv" | "ttv" | None (video_text에서만 사용)
     merged_scene_indices: list[int] | None = None  # 병합된 원본 씬 인덱스들
     # --- 댓글 씬 전용 필드 ---
-    comment_items: list[dict] | None = None  # [{"author","content","likes","is_best"}]
+    comment_items: list[dict] | None = None  # [{"author","content","likes","created_at","side","is_best"}]
     dwell_sec: float = 4.0                   # 무음 체류 시간 (comments/chat 씬)
     # --- 채팅 씬 전용 필드 ---
     chat_messages: list[dict] | None = None  # [{"sender":str,"text":str,"is_mine":bool}]
@@ -1396,7 +1401,9 @@ class SceneDirector:
         if policy:
             comments_rule = policy.get("scene_rules", {}).get("comments", {})
             if comments_rule.get("enabled", True) and self._db_comments:
-                top_n: int = comments_rule.get("top_n", 5)
+                top_n: int = int(comments_rule.get("top_n", 5))
+                if self.site_code == "again_spring":
+                    top_n = min(top_n, MAX_SHORTS_COMMENTS)
                 dwell: float = float(comments_rule.get("dwell_sec", 4.0))
                 # likes 내림차순 정렬
                 sorted_cmts = sorted(
@@ -1405,13 +1412,7 @@ class SceneDirector:
                     reverse=True,
                 )[:top_n]
                 comment_items: list[dict] = [
-                    {
-                        "author": getattr(c, "author", None) or "익명",
-                        "content": getattr(c, "content", "") or "",
-                        "likes": getattr(c, "likes", 0) or 0,
-                        "is_best": (i == 0),  # 추천 1위 → BEST
-                        "voice": self._assign_comment_voice(getattr(c, "author", None) or "익명"),
-                    }
+                    self._build_comment_item(c, is_best=(i == 0))
                     for i, c in enumerate(sorted_cmts)
                 ]
                 scenes.append(SceneDecision(
@@ -1636,6 +1637,39 @@ class SceneDirector:
         self._character_voices[label] = voice
         logger.debug("[director] character '%s' → voice=%s", label, voice)
         return voice
+
+    
+    @staticmethod
+    def _sanitize_display_author(raw: str | None) -> str:
+        nick = (raw or "").strip() or "익명"
+        compact = "".join(ch for ch in nick.lower() if ch.isalnum())
+        if len(compact) >= 24 and all(ch in "0123456789abcdef" for ch in compact):
+            return "익명"
+        return nick
+
+    def _build_comment_item(self, comment, is_best: bool) -> dict:
+        """DB Comment 객체 → 렌더러용 comment_items dict.
+
+        author: 실제 닉네임을 그대로 사용한다 (해시 ID는 표시하지 않음 — 외부 ingest 쪽
+        ExternalIngestService.CommentInput#displayAuthor()에서 이미 닉네임으로 해석되어
+        DB author 컬럼에 저장되므로, 여기서는 별도 변환 없이 신뢰한다).
+        content/likes/created_at/side를 그대로 보존해 렌더러(다른 에이전트 담당)가
+        진영색·작성 시각 표시에 사용할 수 있게 한다.
+        """
+        author = self._sanitize_display_author(getattr(comment, "author", None))
+        created_at = getattr(comment, "created_at", None)
+        side = getattr(comment, "side", None) or "neutral"
+        if side not in _VALID_COMMENT_SIDES:
+            side = "neutral"
+        return {
+            "author": author,
+            "content": getattr(comment, "content", "") or "",
+            "likes": getattr(comment, "likes", 0) or 0,
+            "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else None,
+            "side": side,
+            "is_best": is_best,
+            "voice": self._assign_comment_voice(author),
+        }
 
     def _assign_comment_voice(self, author: str) -> str | None:
         """댓글 작성자별 voice 배정. 동일 작성자=동일 목소리.

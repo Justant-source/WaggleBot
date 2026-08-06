@@ -1,12 +1,19 @@
 """ai_worker/renderer/_frames.py — PIL 프레임 렌더링 함수 (internal)
 
-와글 브랜드 디자인 v3:
+와글 브랜드 디자인 v3 (기본 테마):
   - 옐로우 헤더 #FBD024 + 코드 드로잉 (base_layout.png 불필요)
   - 제목블록: 굵은 검정 제목 + 메타줄 + 구분선
   - 자막: 굵은 검정 #161616, 흐림 없음, 위로 누적
   - 미디어: 자연비율 contain (좌우 흰여백)
   - 아웃트로: 마스코트 + 참여 유도 질문 + 댓글입력 목업
   - 댓글씬: 아바타·닉네임·BEST·추천수 세로 리스트
+
+다시봄 Tone L 테마 (site_code=='again_spring', layout['global']['theme']=='tone_l'):
+  - 옐로우 헤더 제거 — 배경과 같은 톤(#EDF1E8) + 하단 보더(#D3DCC9)
+  - 제목·본문 낭독(인트로 훅·이미지 캡션·text_only·비디오 자막) = 세리프(Noto Serif KR
+    Medium) + 좌측 정렬(제목블록과 동일 여백). UI/메타(채널명·메타줄)는 산세리프 유지
+  - 색상·정렬·폰트 분기는 `_theme_name()` / `_body_font_file()` / `_body_align()` 참조.
+    댓글·아웃트로 세부 스타일(블러·페이드·진영색 등)은 이 테마 분기 대상이 아님(별도 작업).
 """
 
 import datetime
@@ -17,7 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +38,46 @@ CANVAS_W = 1080
 CANVAS_H = 1920
 HEADER_H = 150
 HEADER_COLOR = "#FBD024"
+
+
+# ---------------------------------------------------------------------------
+# 테마 헬퍼 — 사이트별 크로마·타이포 분기 (기본: 와글 / again_spring: Tone L)
+#
+# 색상은 config/layout.json의 `themes.tone_l`가 layout.py에서 site_code=='again_spring'
+# 일 때만 병합되어 layout['global']/['scenes']에 이미 반영된 상태로 들어온다. 여기서는
+# 색상 자체를 분기하지 않고, config만으로 표현할 수 없는 폰트 패밀리·정렬만 분기한다.
+# ---------------------------------------------------------------------------
+
+def _theme_name(layout: dict) -> str:
+    """layout['global']['theme'] — 'tone_l'(다시봄) 또는 기본값('waggle')."""
+    return layout.get("global", {}).get("theme", "waggle")
+
+
+def _title_font_file(layout: dict) -> str:
+    """제목블록(헤더 아래 제목) 폰트 — Tone L: 세리프 Medium(굵기 500), 기본: 산세리프 Bold."""
+    return "NotoSerifKR-Medium.ttf" if _theme_name(layout) == "tone_l" else "NotoSansKR-Bold.ttf"
+
+
+def _body_font_file(layout: dict) -> str:
+    """본문 낭독 폰트 — 인트로 훅·이미지 캡션·text_only·비디오 자막 공통.
+
+    Tone L: 감정이 실리는 자리는 세리프(디자인 SSOT 3.2절, 굵기 500 상한).
+    기본(와글): 기존 산세리프 Bold 유지.
+    """
+    return "NotoSerifKR-Medium.ttf" if _theme_name(layout) == "tone_l" else "NotoSansKR-Bold.ttf"
+
+
+def _channel_font_file(layout: dict) -> str:
+    """헤더 채널명 폰트 — UI 요소라 Tone L에서도 산세리프 유지, 굵기만 Medium(500)으로 낮춘다."""
+    return "NotoSansKR-Medium.ttf" if _theme_name(layout) == "tone_l" else "NotoSansKR-Bold.ttf"
+
+
+def _body_align(layout: dict) -> tuple[str, int]:
+    """본문 낭독 정렬 — Tone L: 제목블록과 동일 좌측 여백, 기본: 중앙."""
+    if _theme_name(layout) == "tone_l":
+        pad_x = layout.get("global", {}).get("title_block", {}).get("pad_x", 44)
+        return "left", pad_x
+    return "center", 0
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +236,27 @@ def _wrap_korean(
 
     keep_all=True: 단어 내 강제분리 없음 (어절 단위 유지, 제목·댓글용).
     keep_all=False: 긴 단어는 글자 단위 강제 분리 (기본값).
+
+    하드 줄바꿈(`\n`)은 먼저 분리한다. 남겨 두면 PIL ImageDraw.text가 한
+    호출 안에서 여러 줄을 그려, 호출측 line_height 루프와 겹친다.
     """
+    if not text:
+        return [""]
+    paragraphs = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    out: list[str] = []
+    for para in paragraphs:
+        out.extend(_wrap_korean_paragraph(para, font, max_width, keep_all=keep_all))
+    return out or [""]
+
+
+def _wrap_korean_paragraph(
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+    *,
+    keep_all: bool = False,
+) -> list[str]:
+    """개행이 없는 단일 단락을 폭 기준으로 줄바꿈한다."""
     if _font_w(font, text) <= max_width:
         return [text]
 
@@ -205,7 +272,6 @@ def _wrap_korean(
             if current:
                 lines.append(current)
             if not keep_all and _font_w(font, word) > max_width:
-                # 글자 단위 강제 분리
                 for ch in word:
                     if current and _font_w(font, current + ch) > max_width:
                         lines.append(current)
@@ -230,11 +296,20 @@ def _draw_centered_text(
     canvas_w: int,
     stroke_color: str = "",
     stroke_width: int = 0,
+    align: str = "center",
+    pad_x: int = 0,
 ) -> int:
-    """줄 목록을 중앙 정렬로 그리고, 마지막 줄 아래 y를 반환한다."""
+    """줄 목록을 정렬(align)로 그리고, 마지막 줄 아래 y를 반환한다.
+
+    align="center" (기본, 하위호환): 캔버스 중앙 정렬.
+    align="left": pad_x 여백에서 좌측 정렬 (Tone L 본문 낭독용).
+    """
     y = y_start
     for line in lines:
-        cx = int((canvas_w - _font_w(font, line)) / 2)
+        if align == "left":
+            cx = pad_x
+        else:
+            cx = int((canvas_w - _font_w(font, line)) / 2)
         if stroke_color and stroke_width > 0:
             draw.text((cx, y), line, font=font, fill=color,
                       stroke_width=stroke_width, stroke_fill=stroke_color)
@@ -265,10 +340,19 @@ def _fmt_count(val: int | str | None) -> str:
     return str(n)
 
 
-def _relative_time(dt: datetime.datetime | None) -> str:
-    """datetime → '3시간 전' 형식 상대 시간 문자열. None이면 ''."""
-    if dt is None:
+def _relative_time(dt: datetime.datetime | str | None) -> str:
+    """datetime(또는 ISO 문자열) → '3시간 전' 형식 상대 시간 문자열. None/파싱 실패면 ''.
+
+    comment_items["created_at"]는 SceneDirector가 ``datetime.isoformat()`` 문자열로
+    직렬화해 전달한다 — 문자열/datetime 양쪽을 모두 허용한다.
+    """
+    if dt is None or dt == "":
         return ""
+    if isinstance(dt, str):
+        try:
+            dt = datetime.datetime.fromisoformat(dt)
+        except ValueError:
+            return ""
     try:
         now = datetime.datetime.now(dt.tzinfo)
         diff = now - dt
@@ -303,7 +387,10 @@ def _draw_header(
     layout: dict,
     font_dir: Path,
 ) -> None:
-    """옐로우 와글 헤더바 + 셰브론(‹) + 채널명 + 햄버거(≡)를 그린다."""
+    """브랜드 헤더바 + 셰브론(‹) + 채널명 + 햄버거(≡)를 그린다.
+
+    기본(와글): 옐로우 배경. Tone L(다시봄): 배경과 같은 톤 + 하단 보더(옐로우 바 없음).
+    """
     from ai_worker.renderer.layout import _load_font
 
     g = layout["global"]
@@ -316,9 +403,16 @@ def _draw_header(
     channel = hdr.get("channel_name", "와글")
     title_fs = hdr.get("title_font_size", 52)
     stroke = hdr.get("icon_stroke", 6)
+    theme = _theme_name(layout)
 
     # 배경
     draw.rectangle([(0, 0), (cw, h)], fill=bg)
+
+    # Tone L: 색 블록 대신 하단 얇은 보더로만 헤더 영역을 구분 (옐로우 바 없음)
+    if theme == "tone_l":
+        border_color = hdr.get("border_color", "#D3DCC9")
+        border_th = hdr.get("border_thickness", 2)
+        draw.rectangle([(0, h - border_th), (cw, h)], fill=border_color)
 
     cy = h // 2
 
@@ -331,7 +425,7 @@ def _draw_header(
     )
 
     # 채널명 — 수평 중앙
-    font = _load_font(font_dir, "NotoSansKR-Bold.ttf", title_fs)
+    font = _load_font(font_dir, _channel_font_file(layout), title_fs)
     tw = int(_font_w(font, channel))
     tx = (cw - tw) // 2
     ty = (h - title_fs) // 2 - 2
@@ -387,7 +481,7 @@ def _draw_title_block(
     content_gap: int = g.get("content", {}).get("gap_top", 28)
 
     # ── 제목 ──────────────────────────────────────────────────────────────
-    font = _load_font(font_dir, "NotoSansKR-Bold.ttf", font_size)
+    font = _load_font(font_dir, _title_font_file(layout), font_size)
     max_w = cw - 2 * pad_x
     wrapped = _wrap_korean(title, font, max_w, keep_all=True)
     n_lines = min(len(wrapped), max_lines)
@@ -470,7 +564,7 @@ def _title_block_bottom_y(
     content_gap: int = g.get("content", {}).get("gap_top", 28)
 
     # 제목 줄 수
-    font = _load_font(font_dir, "NotoSansKR-Bold.ttf", font_size)
+    font = _load_font(font_dir, _title_font_file(layout), font_size)
     max_w = cw - 2 * pad_x
     wrapped = _wrap_korean(title, font, max_w, keep_all=True)
     n_lines = min(len(wrapped), max_lines)
@@ -560,7 +654,8 @@ def _render_intro_frame(
     media_gap: int = media_cfg.get("gap_top", 56)
     media_radius: int = media_cfg.get("radius", 8)
 
-    font = _load_font(font_dir, "NotoSansKR-Bold.ttf", cap_fs)
+    font = _load_font(font_dir, _body_font_file(layout), cap_fs)
+    align, cap_pad_x = _body_align(layout)
     img = base_frame.copy()
     draw = ImageDraw.Draw(img)
 
@@ -569,7 +664,8 @@ def _render_intro_frame(
     cap_bottom = cap_y
     if hook_text:
         lines = _wrap_korean(hook_text, font, cap_max_w)[:cap_max_lines]
-        _draw_centered_text(draw, lines, font, cap_y, cap_lh, cap_color, cw)
+        _draw_centered_text(draw, lines, font, cap_y, cap_lh, cap_color, cw,
+                            align=align, pad_x=cap_pad_x)
         cap_bottom = cap_y + len(lines) * cap_lh
 
     # 미디어 (자연비율 contain, 중앙 배치). 이미지 없으면 크림 빈화면만 (회색 박스 금지).
@@ -614,7 +710,8 @@ def _render_image_text_frame(
     media_gap: int = media_cfg.get("gap_top", 48)
     media_radius: int = media_cfg.get("radius", 8)
 
-    font = _load_font(font_dir, "NotoSansKR-Bold.ttf", cap_fs)
+    font = _load_font(font_dir, _body_font_file(layout), cap_fs)
+    align, cap_pad_x = _body_align(layout)
     img = base_frame.copy()
     draw = ImageDraw.Draw(img)
 
@@ -622,7 +719,8 @@ def _render_image_text_frame(
     cap_y = content_top + cap_pad_top
     lines = _wrap_korean(text, font, cap_max_w)[:cap_max_lines]
     if lines:
-        _draw_centered_text(draw, lines, font, cap_y, cap_lh, cap_color, cw)
+        _draw_centered_text(draw, lines, font, cap_y, cap_lh, cap_color, cw,
+                            align=align, pad_x=cap_pad_x)
     cap_bottom = cap_y + len(lines) * cap_lh
 
     # 미디어 (자연비율 contain)
@@ -663,8 +761,9 @@ def _render_text_only_frame(
     color: str = ta.get("color", "#161616")
     pad_top: int = ta.get("pad_top", 96)
 
-    font = _load_font(font_dir, "NotoSansKR-Bold.ttf", font_size)
+    font = _load_font(font_dir, _body_font_file(layout), font_size)
     cw = layout["canvas"]["width"]
+    align, pad_x = _body_align(layout)
 
     img = base_frame.copy()
     draw = ImageDraw.Draw(img)
@@ -674,7 +773,10 @@ def _render_text_only_frame(
         if entry_i > 0:
             y += slot_gap  # 슬롯 간 간격 (첫 슬롯 제외)
         for line_text in entry.get("lines", []):
-            cx = int((cw - _font_w(font, line_text)) / 2)
+            if align == "left":
+                cx = pad_x
+            else:
+                cx = int((cw - _font_w(font, line_text)) / 2)
             draw.text((cx, y), line_text, font=font, fill=color)
             y += lh
 
@@ -725,9 +827,15 @@ def _render_outro_frame(
     font_dir: Path,
     out_path: Path,
 ) -> Path:
-    """씬 outro — 마스코트 + 참여유도 질문 + 댓글입력 목업 (구독유도 없음).
+    """씬 outro — 참여유도 질문 + 댓글입력 목업 (구독유도 없음).
 
-    header_only_frame을 베이스로 사용 (제목블록 없음).
+    header_only_frame을 베이스로 사용 (제목블록 없음). 배경은 이미 site theme
+    (와글: 흰색 / Again Spring Tone L: #EDF1E8)이 반영된 상태로 들어온다.
+
+    기본(와글): 마스코트(코드 드로잉) + Bold 산세리프 질문(2줄 허용) + 서브캡션 + CTA.
+    Tone L(``scenes.outro.mascot.enabled == false``): 마스코트 제거, 세리프 한 줄
+    질문만으로 CTA를 구성 — 서브캡션·CTA 문구는 기본 비활성(``enabled: false``)으로
+    "구독 유도" 류 부가 문구 없이 질문 하나에 집중한다.
     """
     from ai_worker.renderer.layout import _load_font
 
@@ -749,40 +857,45 @@ def _render_outro_frame(
     img = header_only_frame.copy()
     draw = ImageDraw.Draw(img)
 
-    # ── 마스코트 (코드 드로잉) ────────────────────────────────────────────
+    mascot_enabled: bool = mascot_cfg.get("enabled", True)
     mascot_d: int = mascot_cfg.get("diameter", 220)
-    mascot_color: str = mascot_cfg.get("circle_color", "#1A1A1A")
-    feature_color: str = mascot_cfg.get("feature_color", "#FBD024")
     mascot_pad: int = mascot_cfg.get("pad_top", 180)
 
-    mx0 = (cw - mascot_d) // 2
-    my0 = hdr_h + mascot_pad
-    mx1 = mx0 + mascot_d
-    my1 = my0 + mascot_d
-    draw.ellipse([(mx0, my0), (mx1, my1)], fill=mascot_color)
+    if mascot_enabled:
+        # ── 마스코트 (코드 드로잉) ────────────────────────────────────────
+        mascot_color: str = mascot_cfg.get("circle_color", "#1A1A1A")
+        feature_color: str = mascot_cfg.get("feature_color", "#FBD024")
 
-    # 눈 — 두 옐로우 타원
-    eye_w = int(mascot_d * 0.12)
-    eye_h = int(mascot_d * 0.17)
-    eye_cy = my0 + int(mascot_d * 0.38)
-    eye_gap = int(mascot_d * 0.19)
-    mcx = (mx0 + mx1) // 2
-    for ex in [mcx - eye_gap - eye_w // 2, mcx + eye_gap - eye_w // 2]:
-        draw.ellipse([(ex, eye_cy - eye_h // 2),
-                      (ex + eye_w, eye_cy + eye_h // 2)],
-                     fill=feature_color)
+        mx0 = (cw - mascot_d) // 2
+        my0 = hdr_h + mascot_pad
+        mx1 = mx0 + mascot_d
+        my1 = my0 + mascot_d
+        draw.ellipse([(mx0, my0), (mx1, my1)], fill=mascot_color)
 
-    # 입 — 호
-    mouth_w = int(mascot_d * 0.24)
-    mouth_h = int(mascot_d * 0.10)
-    mouth_y = my0 + int(mascot_d * 0.60)
-    mx0m = mcx - mouth_w // 2
-    draw.arc(
-        [(mx0m, mouth_y), (mx0m + mouth_w, mouth_y + mouth_h)],
-        start=0, end=180, fill=feature_color, width=5,
-    )
+        # 눈 — 두 옐로우 타원
+        eye_w = int(mascot_d * 0.12)
+        eye_h = int(mascot_d * 0.17)
+        eye_cy = my0 + int(mascot_d * 0.38)
+        eye_gap = int(mascot_d * 0.19)
+        mcx = (mx0 + mx1) // 2
+        for ex in [mcx - eye_gap - eye_w // 2, mcx + eye_gap - eye_w // 2]:
+            draw.ellipse([(ex, eye_cy - eye_h // 2),
+                          (ex + eye_w, eye_cy + eye_h // 2)],
+                         fill=feature_color)
 
-    y = my1  # 마스코트 아래부터
+        # 입 — 호
+        mouth_w = int(mascot_d * 0.24)
+        mouth_h = int(mascot_d * 0.10)
+        mouth_y = my0 + int(mascot_d * 0.60)
+        mx0m = mcx - mouth_w // 2
+        draw.arc(
+            [(mx0m, mouth_y), (mx0m + mouth_w, mouth_y + mouth_h)],
+            start=0, end=180, fill=feature_color, width=5,
+        )
+        y = my1  # 마스코트 아래부터
+    else:
+        # Tone L: 마스코트 없이 넉넉한 여백만 (편지지 호흡)
+        y = hdr_h + int(sc.get("content_pad_top_no_mascot", mascot_pad + mascot_d))
 
     # ── 큰 질문 자막 ──────────────────────────────────────────────────────
     q_fs: int = q_cfg.get("font_size", 62)
@@ -790,25 +903,38 @@ def _render_outro_frame(
     q_gap: int = q_cfg.get("gap_top", 60)
     q_max_w: int = q_cfg.get("max_width", 900)
     q_lh: int = q_cfg.get("line_height", 78)
+    q_font_file: str = q_cfg.get("font_family", "NotoSansKR-Bold.ttf")
+    q_single_line: bool = bool(q_cfg.get("single_line", False))
 
-    q_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", q_fs)
     question = overlay_text.strip() or "여러분이라면 어떻게 하셨을까요?"
-    q_lines = _wrap_korean(question, q_font, q_max_w)
+    q_font = _load_font(font_dir, q_font_file, q_fs)
+
+    if q_single_line:
+        # 한 줄 강제 — 폭 초과 시 폰트 크기를 점진적으로 줄여 한 줄에 맞춘다.
+        cur_fs = q_fs
+        while _font_w(q_font, question) > q_max_w and cur_fs > 32:
+            cur_fs -= 2
+            q_font = _load_font(font_dir, q_font_file, cur_fs)
+        q_lines = [question]
+    else:
+        q_lines = _wrap_korean(question, q_font, q_max_w)
+
     q_y = y + q_gap
     _draw_centered_text(draw, q_lines, q_font, q_y, q_lh, q_color, cw)
     y = q_y + len(q_lines) * q_lh
 
-    # ── 서브 캡션 ─────────────────────────────────────────────────────────
-    sub_text: str = sub_cfg.get("text", "생각을 댓글로 남겨주세요")
-    sub_fs: int = sub_cfg.get("font_size", 36)
-    sub_color: str = sub_cfg.get("color", "#7A7A7A")
-    sub_gap: int = sub_cfg.get("gap_top", 40)
+    # ── 서브 캡션 (옵션 — Tone L 기본 비활성) ────────────────────────────
+    if sub_cfg.get("enabled", True):
+        sub_text: str = sub_cfg.get("text", "생각을 댓글로 남겨주세요")
+        sub_fs: int = sub_cfg.get("font_size", 36)
+        sub_color: str = sub_cfg.get("color", "#7A7A7A")
+        sub_gap: int = sub_cfg.get("gap_top", 40)
 
-    sub_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", sub_fs)
-    sub_x = (cw - int(_font_w(sub_font, sub_text))) // 2
-    sub_y = y + sub_gap
-    draw.text((sub_x, sub_y), sub_text, font=sub_font, fill=sub_color)
-    y = sub_y + int(sub_fs * 1.35)
+        sub_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", sub_fs)
+        sub_x = (cw - int(_font_w(sub_font, sub_text))) // 2
+        sub_y = y + sub_gap
+        draw.text((sub_x, sub_y), sub_text, font=sub_font, fill=sub_color)
+        y = sub_y + int(sub_fs * 1.35)
 
     # ── 댓글 입력창 목업 ──────────────────────────────────────────────────
     box_w: int = box_cfg.get("width", 860)
@@ -820,6 +946,9 @@ def _render_outro_frame(
     placeholder: str = box_cfg.get("placeholder", "댓글 추가...")
     ph_color: str = box_cfg.get("placeholder_color", "#9C9C9C")
     box_gap: int = box_cfg.get("gap_top", 56)
+    av_bg: str = box_cfg.get("avatar_bg", hdr_bg)
+    av_fg: str = box_cfg.get("avatar_fg", hdr_ink)
+    send_color: str = box_cfg.get("send_color", "#C9C9C9")
 
     box_x = (cw - box_w) // 2
     box_y = y + box_gap
@@ -843,18 +972,18 @@ def _render_outro_frame(
                 fill=box_bg,
             )
 
-    # 아바타 (옐로우 원 + 글자)
+    # 아바타 (기본: 옐로우 원 + 글자 / Tone L: config의 avatar_bg·avatar_fg)
     av_margin = (box_h - av_size) // 2
     av_x0 = box_x + av_margin + 8
     av_y0 = box_y + av_margin
     draw.ellipse(
         [(av_x0, av_y0), (av_x0 + av_size, av_y0 + av_size)],
-        fill=hdr_bg,
+        fill=av_bg,
     )
     av_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", int(av_size * 0.45))
     ax = av_x0 + (av_size - int(_font_w(av_font, av_label))) // 2
     ay = av_y0 + int(av_size * 0.25)
-    draw.text((ax, ay), av_label, font=av_font, fill=hdr_ink)
+    draw.text((ax, ay), av_label, font=av_font, fill=av_fg)
 
     # 플레이스홀더
     ph_x = av_x0 + av_size + 20
@@ -871,23 +1000,57 @@ def _render_outro_frame(
         (arr_cx - arr_r, arr_cy - arr_r),
         (arr_cx - arr_r, arr_cy + arr_r),
         (arr_cx + arr_r, arr_cy),
-    ], fill="#C9C9C9")
+    ], fill=send_color)
 
     y = box_y + box_h
 
-    # ── CTA ───────────────────────────────────────────────────────────────
-    cta_text: str = cta_cfg.get("text", "↓ 댓글 창에서 의견 나눠요")
-    cta_fs: int = cta_cfg.get("font_size", 30)
-    cta_color: str = cta_cfg.get("color", "#7A7A7A")
-    cta_gap: int = cta_cfg.get("gap_top", 36)
+    # ── CTA (옵션 — Tone L 기본 비활성: 질문 한 줄이 곧 CTA) ────────────────
+    if cta_cfg.get("enabled", True):
+        cta_text: str = cta_cfg.get("text", "↓ 댓글 창에서 의견 나눠요")
+        cta_fs: int = cta_cfg.get("font_size", 30)
+        cta_color: str = cta_cfg.get("color", "#7A7A7A")
+        cta_gap: int = cta_cfg.get("gap_top", 36)
 
-    cta_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", cta_fs)
-    cta_x = (cw - int(_font_w(cta_font, cta_text))) // 2
-    cta_y = y + cta_gap
-    draw.text((cta_x, cta_y), cta_text, font=cta_font, fill=cta_color)
+        cta_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", cta_fs)
+        cta_x = (cw - int(_font_w(cta_font, cta_text))) // 2
+        cta_y = y + cta_gap
+        draw.text((cta_x, cta_y), cta_text, font=cta_font, fill=cta_color)
 
     img.save(str(out_path), "PNG")
     return out_path
+
+
+def _draw_blurred_text(
+    base: Image.Image,
+    xy: tuple[int, int],
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    color: str,
+    radius: float,
+) -> Image.Image:
+    """텍스트를 별도 투명 레이어에 선명하게 그린 뒤 가우시안 블러 적용, base에 합성.
+
+    base: RGBA 이미지 (in-place 합성 후 동일 객체 반환)
+    xy: 텍스트 좌상단 좌표 (base 기준)
+    radius: 블러 반경(px). 1080폭 기준 1.5~2.5 권장 — 모양은 보이되 읽기는 어려운 정도.
+    """
+    pad = max(8, int(radius * 4))
+    tw = int(_font_w(font, text))
+    try:
+        ascent, descent = font.getmetrics()
+        th = ascent + descent
+    except Exception:
+        th = int(getattr(font, "size", 32) * 1.4)
+
+    layer = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
+    ImageDraw.Draw(layer).text((pad, pad), text, font=font, fill=color)
+    if radius > 0:
+        layer = layer.filter(ImageFilter.GaussianBlur(radius=radius))
+
+    if base.mode != "RGBA":
+        base = base.convert("RGBA")
+    base.alpha_composite(layer, (xy[0] - pad, xy[1] - pad))
+    return base
 
 
 def _render_comments_frame(
@@ -898,11 +1061,20 @@ def _render_comments_frame(
     out_path: Path,
     content_top: int,
     reveal_count: int | None = None,
+    fade_alpha: float = 1.0,
 ) -> Path:
     """씬 comments — 정렬바 + 커뮤니티 댓글 세로 리스트.
 
-    comment_items: [{"author":str, "content":str, "likes":int, "is_best":bool}]
+    comment_items: [{"author","content","likes","created_at","side","is_best"}]
+    필드 누락은 허용 — 없으면 안전한 기본값으로 처리한다.
     reveal_count: 누적 공개 개수(1~N). None이면 전체 표시(레거시 동작).
+    fade_alpha: 가장 최근에 새로 공개된 댓글(행) 1개에만 적용하는 불투명도(0~1).
+        기본 1.0(완전 불투명, 기존 동작 그대로). 점진 공개 페이드인에 쓰인다.
+
+    ``scenes.comments.row.style == "card"``(Again Spring Tone L 오버라이드)면
+    각 댓글이 카드(배경+보더)로 렌더되고, 닉네임에는 미디엄 블러 + 진영 표시
+    (``side``가 "author"/"partner"면 ``* 닉네임`` + 피치/세이지)가 적용된다.
+    ``row.style`` 미지정(기본 "list")이면 기존 와글 리스트+구분선 렌더를 그대로 유지한다.
     """
     from ai_worker.renderer.layout import _load_font
 
@@ -913,6 +1085,15 @@ def _render_comments_frame(
 
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
+
+    # 표시 개수 상한 (Again Spring: 3). 미설정(와글)이면 상한 없음 — 기존 동작 유지.
+    max_items: int | None = row_cfg.get("max_items")
+    if max_items:
+        comment_items = comment_items[:max_items]
+        if reveal_count is not None:
+            reveal_count = min(reveal_count, max_items)
+
+    row_style: str = row_cfg.get("style", "list")
 
     # 폰트 로드
     sort_fs: int = sort_cfg.get("font_size", 34)
@@ -928,6 +1109,8 @@ def _render_comments_frame(
     text_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", text_size)
     footer_font = _load_font(font_dir, "NotoSansKR-Regular.ttf", footer_fs)
     badge_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", badge_fs)
+    av_font_size = max(14, int(av_d * 0.42))
+    av_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", av_font_size)
 
     pad_x: int = row_cfg.get("pad_x", 44)
     av_gap: int = row_cfg.get("avatar_gap", 20)
@@ -943,6 +1126,19 @@ def _render_comments_frame(
     row_pad_top: int = row_cfg.get("row_pad_top", 28)
     row_pad_bot: int = row_cfg.get("row_pad_bot", 28)
 
+    # Tone L 전용: 닉네임 블러 + 진영색(* 접두). 미설정이면 완전 하위호환.
+    nick_blur_radius: float = float(row_cfg.get("nick_blur_radius", 0))
+    faction_colors: dict = row_cfg.get("faction_colors") or {}
+    show_time: bool = bool(row_cfg.get("show_time", False))
+
+    # 카드 스타일 (row_style == "card") 전용 치수
+    card_bg: str = row_cfg.get("card_bg", "#FFFFFF")
+    card_border: str = row_cfg.get("card_border", "")
+    card_border_w: int = int(row_cfg.get("card_border_width", 1))
+    card_radius: int = int(row_cfg.get("card_radius", 14))
+    card_gap: int = int(row_cfg.get("card_gap", 18))
+    card_pad_x: int = int(row_cfg.get("card_pad_x", 24))
+
     badge_bg: str = badge_cfg.get("bg", "#FF5436")
     badge_fg: str = badge_cfg.get("fg", "#FFFFFF")
     badge_label: str = badge_cfg.get("label", "BEST")
@@ -955,14 +1151,17 @@ def _render_comments_frame(
     count_color: str = sort_cfg.get("count_color", "#161616")
     label_color: str = sort_cfg.get("label_color", "#9C9C9C")
     sort_label: str = sort_cfg.get("label", "추천순 ▾")
+    sort_divider_color: str = sort_cfg.get("divider_color", divider_color)
 
-    # 아바타 색상 팔레트
+    # 아바타 색상 팔레트 (side 미지정 댓글용 폴백)
     _AV_COLORS = [
         "#4A90D9", "#E67E22", "#27AE60", "#9B59B6",
         "#E74C3C", "#1ABC9C", "#F39C12", "#2980B9",
     ]
 
-    img = base_frame.copy()
+    # base_frame 배경은 이미 site theme(글로벌 background_color)이 반영된 상태로 들어온다 —
+    # Again Spring(Tone L)은 layout['global']['background_color']=#EDF1E8이 이미 베이킹됨.
+    img = base_frame.convert("RGBA").copy()
     draw = ImageDraw.Draw(img)
 
     # ── 정렬 바 ────────────────────────────────────────────────────────────
@@ -980,101 +1179,182 @@ def _render_comments_frame(
 
     y += int(sort_fs * 1.4) + 8
 
-    # 구분선
-    draw.rectangle([(0, y), (cw, y + divider_th)], fill=divider_color)
-    y += divider_th
+    if row_style == "card":
+        y += card_gap // 2
+    else:
+        # 구분선 (list 스타일)
+        draw.rectangle([(0, y), (cw, y + divider_th)], fill=sort_divider_color)
+        y += divider_th
 
-    # ── 댓글 행 ────────────────────────────────────────────────────────────
-    text_x = pad_x + av_d + av_gap
-    text_area_w = cw - text_x - pad_x
-    av_font_size = max(14, int(av_d * 0.42))
+    # ── 댓글 행 치수 ──────────────────────────────────────────────────────
+    if row_style == "card":
+        content_x0 = pad_x + card_pad_x
+    else:
+        content_x0 = pad_x
+    row_text_x = content_x0 + av_d + av_gap
+    text_area_w = cw - row_text_x - (pad_x + card_pad_x if row_style == "card" else pad_x)
 
     # 노출 범위 결정 (reveal_count=None이면 전체)
     visible = comment_items if reveal_count is None else comment_items[:reveal_count]
 
-    # 최신 항목이 항상 보이도록 오래된 항목부터 drop (bottom-anchor window)
     def _row_h(item: dict) -> int:
-        """댓글 1행의 픽셀 높이 측정 (draw 없이)."""
+        """댓글 1행이 차지하는 총 세로 폭 측정 (draw 없이). 다음 행 간격 포함."""
         content_text = item.get("content", "")
         c_lines = _wrap_korean(content_text, text_font, text_area_w, keep_all=True)
         n_lines = min(len(c_lines), text_max_lines)
-        row_inner = nick_lh + 8 + (n_lines * text_lh) + 8 + footer_lh
-        return row_pad_top + row_inner + row_pad_bot + divider_th
+        blur_pad = int(nick_blur_radius * 3) if nick_blur_radius > 0 else 0
+        row_inner = max(nick_lh, av_d) + 8 + blur_pad + (n_lines * text_lh) + 8 + footer_lh
+        base_h = row_pad_top + row_inner + row_pad_bot
+        return base_h + (card_gap if row_style == "card" else divider_th)
 
     heights = [_row_h(it) for it in visible]
-    band_h = (ch - 60) - y  # 정렬바 구분선 아래 ~ 하단 여백
+    band_h = (ch - 60) - y  # 정렬바 아래 ~ 하단 여백
 
+    # 최신 항목이 항상 보이도록 오래된 항목부터 drop (bottom-anchor window)
     start = 0
     while sum(heights[start:]) > band_h and start < len(visible) - 1:
         start += 1
     draw_items = visible[start:]
+    draw_heights = heights[start:]
 
-    for c_i, item in enumerate(draw_items):
-        row_y = y + row_pad_top
+    def _display_nick(raw: str | None) -> str:
+        """표시용 닉. userId/해시처럼 보이면 익명, 너무 길면 자른다."""
+        nick = (raw or "").strip() or "익명"
+        compact = "".join(ch for ch in nick.lower() if ch.isalnum())
+        if len(compact) >= 24 and all(ch in "0123456789abcdef" for ch in compact):
+            return "익명"
+        if len(nick) > 12:
+            return nick[:12] + "…"
+        return nick
 
-        # 아바타 원
+    def _nick_and_color(item: dict) -> tuple[str, str, str]:
+        """(표시 닉네임, 닉네임 색상, 아바타 색상) — side 기준 진영 표시."""
+        base_nick = _display_nick(item.get("author"))
+        side = (item.get("side") or "").strip().lower()
+        if faction_colors and side in ("author", "partner"):
+            faction_color = faction_colors.get(side, nick_color)
+            return f"* {base_nick}", faction_color, faction_color
+        neutral_color = faction_colors.get("neutral", nick_color) if faction_colors else nick_color
         av_color = _AV_COLORS[hash(item.get("author", "") or "") % len(_AV_COLORS)]
-        draw.ellipse(
-            [(pad_x, row_y), (pad_x + av_d, row_y + av_d)],
+        return base_nick, neutral_color, av_color
+
+    def _draw_comment_row(
+        target: Image.Image, item: dict, row_y0: int, row_h: int,
+    ) -> tuple[Image.Image, int]:
+        """댓글 1행을 target(RGBA)에 그리고 (이미지, 다음 행 시작 y)를 반환."""
+        gap = card_gap if row_style == "card" else divider_th
+        row_bottom = row_y0 + row_h - gap
+
+        if row_style == "card":
+            d0 = ImageDraw.Draw(target)
+            try:
+                d0.rounded_rectangle(
+                    [(pad_x, row_y0), (cw - pad_x, row_bottom)],
+                    radius=card_radius, fill=card_bg,
+                    outline=(card_border if card_border else None),
+                    width=(card_border_w if card_border else 0),
+                )
+            except TypeError:
+                d0.rounded_rectangle(
+                    [(pad_x, row_y0), (cw - pad_x, row_bottom)],
+                    radius=card_radius, fill=card_bg,
+                )
+
+        d = ImageDraw.Draw(target)
+        row_y = row_y0 + row_pad_top
+
+        nick_text, resolved_nick_color, av_color = _nick_and_color(item)
+
+        # 아바타 원 (항상 선명 — 블러 없음)
+        d.ellipse(
+            [(content_x0, row_y), (content_x0 + av_d, row_y + av_d)],
             fill=av_color,
         )
-        av_char = (item.get("author") or "익")[0]
-        av_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", av_font_size)
-        ax = pad_x + (av_d - int(_font_w(av_font, av_char))) // 2
+        av_char = (_display_nick(item.get("author")) or "익")[0]
+        ax = content_x0 + (av_d - int(_font_w(av_font, av_char))) // 2
         ay = row_y + int(av_d * 0.28)
-        draw.text((ax, ay), av_char, font=av_font, fill="#FFFFFF")
+        d.text((ax, ay), av_char, font=av_font, fill="#FFFFFF")
 
-        # 닉네임 + BEST 배지
-        nick = item.get("author") or "익명"
-        draw.text((text_x, row_y), nick, font=nick_font, fill=nick_color)
+        # 닉네임 — Tone L: 미디엄 블러(모양은 보이되 읽기 어려움). 와글: 선명(기존 동작).
+        if nick_blur_radius > 0:
+            target = _draw_blurred_text(
+                target, (row_text_x, row_y), nick_text, nick_font,
+                resolved_nick_color, nick_blur_radius,
+            )
+            d = ImageDraw.Draw(target)
+        else:
+            d.text((row_text_x, row_y), nick_text, font=nick_font, fill=resolved_nick_color)
+        nick_w = int(_font_w(nick_font, nick_text))
 
         if item.get("is_best"):
-            nick_w = int(_font_w(nick_font, nick))
-            badge_x0 = text_x + nick_w + 16
+            badge_x0 = row_text_x + nick_w + 16
             badge_label_w = int(_font_w(badge_font, badge_label))
             badge_x1 = badge_x0 + badge_label_w + badge_px * 2
             badge_y0 = row_y + 2
             badge_y1 = badge_y0 + nick_size + badge_py * 2
             try:
-                draw.rounded_rectangle(
+                d.rounded_rectangle(
                     [(badge_x0, badge_y0), (badge_x1, badge_y1)],
                     radius=badge_r, fill=badge_bg,
                 )
             except AttributeError:
-                draw.rectangle(
+                d.rectangle(
                     [(badge_x0, badge_y0), (badge_x1, badge_y1)],
                     fill=badge_bg,
                 )
-            draw.text(
+            d.text(
                 (badge_x0 + badge_px, badge_y0 + badge_py),
                 badge_label, font=badge_font, fill=badge_fg,
             )
 
-        # 댓글 본문
+        # 댓글 본문 (항상 선명 — 블러 없음)
         content_text = item.get("content", "")
         c_lines = _wrap_korean(content_text, text_font, text_area_w, keep_all=True)
         c_lines = c_lines[:text_max_lines]
-        content_y = row_y + nick_lh + 8
+        blur_pad = int(nick_blur_radius * 3) if nick_blur_radius > 0 else 0
+        content_y = row_y + max(nick_lh, av_d) + 8 + blur_pad
         for tl in c_lines:
-            draw.text((text_x, content_y), tl, font=text_font, fill=text_color)
+            tl = tl.replace("\n", " ").replace("\r", " ")
+            d.text((row_text_x, content_y), tl, font=text_font, fill=text_color)
             content_y += text_lh
 
-        # 푸터 (추천수 + 답글)
+        # 푸터 — 추천수 + (옵션) 상대시간 + 답글. 항상 선명.
         likes = item.get("likes", 0)
         likes_str = _fmt_count(likes) if (likes or 0) > 0 else "0"
-        footer_text = f"▲  {likes_str}    답글"
+        footer_parts = [f"▲  {likes_str}"]
+        if show_time:
+            rel = _relative_time(item.get("created_at"))
+            if rel:
+                footer_parts.append(rel)
+        footer_parts.append("답글")
+        footer_text = "    ".join(footer_parts)
         footer_y = content_y + 8
-        draw.text((text_x, footer_y), footer_text, font=footer_font, fill=footer_color)
+        d.text((row_text_x, footer_y), footer_text, font=footer_font, fill=footer_color)
 
-        row_bottom = footer_y + footer_lh + row_pad_bot
+        if row_style != "card":
+            d.rectangle([(0, row_bottom), (cw, row_bottom + divider_th)], fill=divider_color)
 
-        # 행 구분선
-        draw.rectangle(
-            [(0, row_bottom), (cw, row_bottom + divider_th)],
-            fill=divider_color,
-        )
-        y = row_bottom + divider_th
+        return target, row_y0 + row_h
 
+    # 점진 공개 페이드: 가장 최근에 새로 드러난 행에만 fade_alpha 적용.
+    # (bottom-anchor 윈도잉 후에도 항상 draw_items의 마지막 원소가 최신 항목이다 —
+    #  오래된 항목만 앞에서 drop되므로.)
+    newest_pos = len(draw_items) - 1 if reveal_count is not None else -1
+
+    for c_i, (item, row_h) in enumerate(zip(draw_items, draw_heights)):
+        is_newest_fading = (c_i == newest_pos) and fade_alpha < 0.999
+        if is_newest_fading:
+            layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+            layer, next_y = _draw_comment_row(layer, item, y, row_h)
+            alpha_scale = max(0.0, min(1.0, fade_alpha))
+            alpha_ch = layer.split()[3].point(lambda a: int(a * alpha_scale))
+            layer.putalpha(alpha_ch)
+            img.alpha_composite(layer)
+            y = next_y
+        else:
+            img, y = _draw_comment_row(img, item, y, row_h)
+
+    img = img.convert("RGB")
     img.save(str(out_path), "PNG")
     return out_path
 
@@ -1304,11 +1584,13 @@ def _render_video_text_overlay(
 
     video_text_cfg = layout.get("scenes", {}).get("video_text", {})
     canvas_cfg = layout.get("canvas", {})
+    theme = _theme_name(layout)
     cache_raw = (
         f"{text}"
         f"|{video_text_cfg}"
         f"|{canvas_cfg.get('width')}x{canvas_cfg.get('height')}"
         f"|ct{content_top}"
+        f"|theme{theme}"
         f"|{out_png.suffix}"
     )
     cache_key = hashlib.md5(cache_raw.encode("utf-8")).hexdigest()
@@ -1325,6 +1607,7 @@ def _render_video_text_overlay(
 
     overlay = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
+    align, pad_x = _body_align(layout)
 
     if content_top > 0:
         # 새 디자인: caption_above 기반
@@ -1336,7 +1619,7 @@ def _render_video_text_overlay(
         max_w: int = cap_cfg.get("max_width", 900)
         cap_max_lines: int = cap_cfg.get("max_lines", 2)
 
-        font = _load_font(font_dir, "NotoSansKR-Bold.ttf", font_size)
+        font = _load_font(font_dir, _body_font_file(layout), font_size)
         lines = _wrap_korean(text, font, max_w)[:cap_max_lines]
         y_start = content_top + cap_pad_top
     else:
@@ -1348,12 +1631,13 @@ def _render_video_text_overlay(
         max_w = ta.get("max_width", 900)
         cap_max_lines = ta.get("max_lines", 2)
 
-        font = _load_font(font_dir, "NotoSansKR-Bold.ttf", font_size)
+        font = _load_font(font_dir, _body_font_file(layout), font_size)
         lines = _wrap_korean(text, font, max_w)[:cap_max_lines]
         total_h = len(lines) * lh
         y_start = ta.get("y", 450) - total_h // 2
 
-    _draw_centered_text(draw, lines, font, y_start, lh, cap_color, cw)
+    _draw_centered_text(draw, lines, font, y_start, lh, cap_color, cw,
+                        align=align, pad_x=pad_x)
 
     overlay.save(str(out_png), "PNG")
     _overlay_cache[cache_key] = out_png

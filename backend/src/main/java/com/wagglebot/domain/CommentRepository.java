@@ -8,4 +8,6 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
 
     /** uq_post_comment (post_id, author, content_hash)와 동일 키 — 외부 ingest 재시도 시 중복 삽입 방지. */
     boolean existsByPostIdAndAuthorAndContentHash(Long postId, String author, String contentHash);
+
+    void deleteByPostId(Long postId);
 }

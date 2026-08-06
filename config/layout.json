@@ -36,11 +36,10 @@
     "height": 1920
   },
   "global": {
-    "font_bold":    "assets/fonts/NotoSansKR-Bold.ttf",
-    "font_medium":  "assets/fonts/NotoSansKR-Medium.ttf",
+    "font_bold": "assets/fonts/NotoSansKR-Bold.ttf",
+    "font_medium": "assets/fonts/NotoSansKR-Medium.ttf",
     "font_regular": "assets/fonts/NotoSansKR-Regular.ttf",
     "background_color": "#FFFFFF",
-
     "header": {
       "height": 150,
       "bg_color": "#FBD024",
@@ -49,7 +48,6 @@
       "title_font_size": 52,
       "icon_stroke": 6
     },
-
     "title_block": {
       "pad_top": 32,
       "pad_x": 44,
@@ -72,7 +70,6 @@
         "color": "#E7E7E7"
       }
     },
-
     "content": {
       "gap_top": 28
     }
@@ -128,13 +125,16 @@
       },
       "elements": {
         "image_area": {
-          "x": 90, "y": 550,
-          "width": 820, "height": 820,
+          "x": 90,
+          "y": 550,
+          "width": 820,
+          "height": 820,
           "fit_mode": "contain",
           "border_radius": 8
         },
         "text_area": {
-          "x": 540, "y": 450,
+          "x": 540,
+          "y": 450,
           "max_width": 900,
           "font_size": 50,
           "font_weight": "bold",
@@ -214,8 +214,10 @@
       },
       "elements": {
         "image_area": {
-          "x": 90, "y": 550,
-          "width": 820, "height": 820,
+          "x": 90,
+          "y": 550,
+          "width": 820,
+          "height": 820,
           "fit_mode": "contain",
           "border_radius": 8
         }
@@ -338,5 +340,119 @@
     "image_heavy_threshold": 0.8,
     "image_mixed_threshold": 0.3,
     "sfx": {}
+  },
+  "themes": {
+    "tone_l": {
+      "description": "다시봄(Again Spring) Tone L — 웹 사연 상세 페이지와 동일한 편지지 톤. site_code=='again_spring' 전용, 다른 사이트(와글 기본)에는 병합되지 않는다.",
+      "global": {
+        "background_color": "#EDF1E8",
+        "header": {
+          "bg_color": "#EDF1E8",
+          "ink_color": "#2E3A2E",
+          "border_color": "#D3DCC9",
+          "border_thickness": 2
+        },
+        "title_block": {
+          "color": "#2E3A2E",
+          "meta": {
+            "color": "#7C8A77",
+            "sep": " · "
+          },
+          "divider": {
+            "color": "#D3DCC9"
+          }
+        }
+      },
+      "scenes": {
+        "intro": {
+          "caption": {
+            "color": "#2E3A2E"
+          }
+        },
+        "image_text": {
+          "caption_above": {
+            "color": "#2E3A2E"
+          }
+        },
+        "text_only": {
+          "elements": {
+            "text_area": {
+              "color": "#2E3A2E"
+            }
+          }
+        },
+        "video_text": {
+          "caption_above": {
+            "color": "#2E3A2E"
+          },
+          "elements": {
+            "text_area": {
+              "color": "#2E3A2E"
+            }
+          }
+        },
+        "comments": {
+          "description": "다시봄 댓글 카드 — Tone L(편지지) 카드형, 닉네임 미디엄 블러 + 진영 표시(*+피치/세이지)",
+          "sort_bar": {
+            "count_color": "#2E3A2E",
+            "label_color": "#7C8A77",
+            "divider_color": "#D3DCC9"
+          },
+          "row": {
+            "style": "card",
+            "max_items": 3,
+            "card_bg": "#F7F9F2",
+            "card_border": "#D3DCC9",
+            "card_border_width": 1,
+            "card_radius": 14,
+            "card_gap": 20,
+            "card_pad_x": 26,
+            "nick_color": "#2E3A2E",
+            "nick_blur_radius": 1.2,
+            "text_color": "#2E3A2E",
+            "footer_color": "#7C8A77",
+            "show_time": true,
+            "faction_colors": {
+              "author": "#C9785A",
+              "partner": "#5F8F76",
+              "neutral": "#2E3A2E"
+            },
+            "best_badge": {
+              "bg": "#8A3A1F",
+              "fg": "#FFFFFF"
+            }
+          }
+        },
+        "outro": {
+          "description": "다시봄 아웃트로 — 마스코트 제거, 세리프 한 줄 질문 + 댓글입력 목업만 유지",
+          "mascot": {
+            "enabled": false
+          },
+          "content_pad_top_no_mascot": 260,
+          "question": {
+            "font_family": "NotoSerifKR-Medium.ttf",
+            "font_size": 56,
+            "color": "#2E3A2E",
+            "max_width": 980,
+            "gap_top": 20,
+            "single_line": true
+          },
+          "sub_caption": {
+            "enabled": false
+          },
+          "input_box": {
+            "bg": "#F7F9F2",
+            "border": "#D3DCC9",
+            "avatar_bg": "#2E3A2E",
+            "avatar_fg": "#F7F9F2",
+            "send_color": "#8A3A1F",
+            "gap_top": 72
+          },
+          "cta_text": {
+            "enabled": false
+          }
+        }
+      }
+    }
   }
 }

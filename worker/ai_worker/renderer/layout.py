@@ -42,7 +42,7 @@ from ai_worker.renderer._frames import (
     _render_outro_frame, _render_comments_frame,
     _render_video_text_overlay, _render_chat_frame, _wrap_korean, _draw_centered_text,
     _truncate, _fit_cover, _fit_contain, _paste_rounded, _load_image,
-    _title_block_bottom_y, _fmt_count, _relative_time,
+    _title_block_bottom_y, _fmt_count, _relative_time, _body_font_file,
 )
 from ai_worker.renderer._tts import (
     _tts_chunk_async, _generate_tts_chunks, _merge_chunks,
@@ -59,6 +59,15 @@ logger = logging.getLogger(__name__)
 _LAYOUT_CONFIG: dict | None = None
 _STATIC_CONCAT_CFR_ARGS: list[str] = ["-vsync", "cfr", "-r", "30"]
 _STATIC_FINAL_FRAME_HOLD_FILTER: str = "tpad=stop_mode=clone:stop=-1"
+
+# Again Spring(Tone L) 댓글 씬 — 레이아웃·낭독 모두 최대 3개로 고정(잠금된 제품 결정).
+# 표시 상한은 config/layout.json의 themes.tone_l.scenes.comments.row.max_items에도
+# 동일하게 반영되어 있다 — 여기서는 TTS/문장 생성 단계의 상한을 맞춘다.
+_AGAIN_SPRING_MAX_COMMENTS = 3
+# 댓글 점진 공개 시, 가장 최근 항목에 적용하는 페이드인 알파 단계(오름차순, 마지막 값
+# 이전까지만 별도 프레임 — 최종 프레임은 항상 fade_alpha=1.0의 기존 프레임을 재사용한다).
+_COMMENT_FADE_ALPHAS: tuple[float, ...] = (0.28, 0.58, 0.85)
+_COMMENT_FADE_MAX_BUDGET_SEC = 0.30
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +86,20 @@ def _load_layout() -> dict:
 # ---------------------------------------------------------------------------
 # 공통 유틸리티
 # ---------------------------------------------------------------------------
+
+def _deep_merge(base: dict, overrides: dict) -> dict:
+    """overrides를 base에 재귀적으로 병합한다 (base를 in-place로 변경 후 반환).
+
+    사이트별 테마 오버레이(예: themes.tone_l)를 기본 layout 위에 얹을 때 사용 —
+    다른 사이트의 기본 global/scenes 딕셔너리는 건드리지 않는다(호출부에서 deepcopy 후 사용).
+    """
+    for k, v in overrides.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
 
 def _apply_vf_weight(font: ImageFont.FreeTypeFont, filename: str) -> None:
     """가변 폰트(Variable Font)의 굵기 축을 파일명에서 추론해 설정한다."""
@@ -145,7 +168,7 @@ def _text_lead_for_transition(following: dict, duration: float) -> float:
     """Return the visual lead for the following spoken frame.
 
     Audio timings remain untouched.  The preceding visual frame simply yields
-    its last 150 ms to the next spoken line, so a viewer reads the line before
+    its last 100 ms to the next spoken line, so a viewer reads the line before
     its first syllable.  A silent decorative frame must not trigger a swap.
     """
     if following.get("sent_idx") is None or duration <= 0.001:
@@ -163,19 +186,39 @@ def _build_visual_timeline(
     frame_paths: list[Path],
     plan: list[dict],
     durations: list[float],
+    fade_frames: dict[int, list[Path]] | None = None,
 ) -> list[tuple[Path, float]]:
     """Build frame durations separately from the audio timeline.
 
     The returned timeline intentionally has no duplicate final frame. The
     static filter's ``tpad`` holds the final still until the audio-capped mux
     ends, avoiding the ffconcat terminal-entry edge case.
+
+    fade_frames: optional {plan_index: [fade_step_path, ...]} — pre-rendered
+    partial-opacity frames for a plan entry (e.g. a newly-revealed comment
+    card fading in). Their combined duration is carved *out of* that entry's
+    own current_duration (never added), so total per-index duration — and
+    therefore audio/video sync — is unchanged. Used only by comments-scene
+    entries on Again Spring (Tone L); everything else passes fade_frames=None
+    and behaves exactly as before.
     """
+    fade_frames = fade_frames or {}
     visual: list[tuple[Path, float]] = []
     for index, (frame_path, duration) in enumerate(zip(frame_paths, durations)):
         lead = 0.0
         if index + 1 < len(plan):
             lead = _text_lead_for_transition(plan[index + 1], duration)
         current_duration = duration - lead
+
+        steps = fade_frames.get(index)
+        if steps and current_duration > 0:
+            budget = min(_COMMENT_FADE_MAX_BUDGET_SEC, current_duration * 0.5)
+            step_dur = budget / len(steps)
+            if step_dur >= 0.02:
+                for step_path in steps:
+                    visual.append((step_path, step_dur))
+                current_duration -= budget
+
         if current_duration > 0:
             visual.append((frame_path, current_duration))
         if lead > 0:
@@ -280,8 +323,14 @@ def _plan_sequence(
 
 def _scenes_to_plan_and_sentences(
     scenes: list,
+    max_comment_items: int | None = None,
 ) -> tuple[list[dict], list[dict], list[str]]:
-    """SceneDecision 목록을 내부 렌더러 형식 (sentences, plan, images)으로 변환한다."""
+    """SceneDecision 목록을 내부 렌더러 형식 (sentences, plan, images)으로 변환한다.
+
+    max_comment_items: comments 씬에서 사용할 최대 댓글 개수(낭독 TTS 포함 상한).
+        None이면 상한 없음(기존 동작 유지, 와글 기본). Again Spring Tone L은
+        레이아웃·낭독 모두 최대 3개로 고정한다(``_render_pipeline`` 호출부 참조).
+    """
     sentences: list[dict] = []
     plan: list[dict] = []
     images: list[str] = []
@@ -375,6 +424,8 @@ def _scenes_to_plan_and_sentences(
         elif scene.type == "comments":
             # 항목당 1개 TTS 엔트리 — text_only 패턴과 동일하게 점진적 낭독
             items = getattr(scene, "comment_items", None) or []
+            if max_comment_items:
+                items = items[:max_comment_items]
             for k, item in enumerate(items):
                 content = (item.get("content") or "").strip()
                 if not content:
@@ -480,8 +531,16 @@ def _render_pipeline(
     scenes_list: list | None = None,
     meta: dict | None = None,
     narration_audio: Path | None = None,
+    comments_fade_enabled: bool = False,
 ) -> Path:
-    """sentences / plan / images 를 받아 mp4를 생성한다."""
+    """sentences / plan / images 를 받아 mp4를 생성한다.
+
+    comments_fade_enabled: True면 comments 씬의 각 신규 공개 항목에 짧은 페이드인
+        서브프레임을 추가로 렌더한다(Again Spring Tone L 전용). 정적 concat 경로
+        (비디오 클립이 섞이지 않은 일반적인 경우)에서만 적용되고, has_video_scenes
+        하이브리드 경로에서는 기존처럼 즉시 표시된다(비디오 세그먼트는 frame_idx가
+        plan/frame_paths와 1:1로 대응해야 하므로 서브프레임 확장을 적용하지 않음).
+    """
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -565,8 +624,8 @@ def _render_pipeline(
         # ── Step 7: text_only용 줄바꿈 사전 계산 ──────────────
         sc_to = layout["scenes"]["text_only"]
         to_ta = sc_to["elements"]["text_area"]
-        # Bold 폰트로 줄바꿈 계산 (v3: 자막이 Bold로 바뀜)
-        to_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", to_ta["font_size"])
+        # 실제 렌더 폰트와 동일 기준으로 줄바꿈 계산 (테마별 분기: 와글=Bold 산세리프 / Tone L=세리프)
+        to_font = _load_font(font_dir, _body_font_file(layout), to_ta["font_size"])
         to_max_w = to_ta["max_width"]
         to_max_chars = sc_to.get("text_max_chars", 0)
 
@@ -584,6 +643,7 @@ def _render_pipeline(
         t1 = time.time()
         frame_paths: list[Path] = []
         text_only_history: list[dict] = []
+        comment_fade_frames: dict[int, list[Path]] = {}
 
         for frame_idx, entry in enumerate(plan):
             scene_type = entry["type"]
@@ -656,10 +716,25 @@ def _render_pipeline(
                 scene = _get_scene_for_entry(entry, sentences, scenes_list)
                 items = getattr(scene, "comment_items", None) if scene else None
                 reveal = entry.get("item_idx")
+                reveal_count = (reveal + 1) if reveal is not None else None
                 _render_comments_frame(
                     base_frame, items or [], layout, font_dir, frame_path, content_top,
-                    reveal_count=(reveal + 1) if reveal is not None else None,
+                    reveal_count=reveal_count,
                 )
+                # Tone L: 새로 드러난 카드가 즉시 나타나지 않고 짧게 페이드인하도록
+                # 낮은 alpha의 서브프레임을 미리 렌더한다 (정적 concat 경로 전용 —
+                # _build_visual_timeline이 이 프레임들의 지속시간을 본 프레임의
+                # current_duration에서 그대로 떼어 쓰므로 오디오 타이밍은 불변).
+                if comments_fade_enabled and reveal_count is not None:
+                    fade_paths: list[Path] = []
+                    for step_i, alpha in enumerate(_COMMENT_FADE_ALPHAS):
+                        fade_path = tmp_dir / f"frame_{frame_idx:03d}_cfade{step_i}.png"
+                        _render_comments_frame(
+                            base_frame, items or [], layout, font_dir, fade_path, content_top,
+                            reveal_count=reveal_count, fade_alpha=alpha,
+                        )
+                        fade_paths.append(fade_path)
+                    comment_fade_frames[frame_idx] = fade_paths
 
             elif scene_type == "chat":
                 # 채팅 버블 씬: SceneDecision에서 chat_messages 추출, reveal_count로 누적 공개
@@ -808,8 +883,10 @@ def _render_pipeline(
             # ── Step 9 (기존): 정적 PNG concat ─────────────────────
             concat_file = tmp_dir / "concat_list.txt"
             # Audio durations and frame durations are independent: each next
-            # spoken line borrows its first 150 ms from the preceding visual.
-            visual_timeline = _build_visual_timeline(frame_paths, plan, durations)
+            # spoken line borrows its first 100 ms from the preceding visual.
+            visual_timeline = _build_visual_timeline(
+                frame_paths, plan, durations, fade_frames=comment_fade_frames,
+            )
             concat_file.write_text(
                 _build_static_concat_manifest(visual_timeline), encoding="utf-8",
             )
@@ -1023,7 +1100,11 @@ def render_layout_video_from_scenes(
     if output_path is None:
         output_path = video_dir / f"post_{post.origin_id}_SD.mp4"
 
-    sentences, plan, images = _scenes_to_plan_and_sentences(scenes)
+    _is_again_spring = getattr(post, "site_code", None) == "again_spring"
+    sentences, plan, images = _scenes_to_plan_and_sentences(
+        scenes,
+        max_comment_items=_AGAIN_SPRING_MAX_COMMENTS if _is_again_spring else None,
+    )
     logger.info(
         "[layout:scenes] post_id=%d 씬=%d 문장=%d 이미지=%d",
         post.id, len(scenes), len(sentences), len(images),
@@ -1053,10 +1134,15 @@ def render_layout_video_from_scenes(
         "comments": _stats.get("comments_count") or 0,
     }
 
-    # Again Spring 외부 잡: 헤더/폴백 브랜드를 "다시봄"으로
-    if getattr(post, "site_code", None) == "again_spring":
+    # Again Spring 외부 잡: 브랜드를 "다시봄"으로 + 웹 사연 상세(Tone L) 크롬으로 재도색.
+    # 다른 사이트(와글 기본 옐로우 브랜드)는 이 블록을 타지 않으므로 영향 없음.
+    if _is_again_spring:
         import copy
         layout = copy.deepcopy(layout)
+        tone_l = layout.get("themes", {}).get("tone_l", {})
+        _deep_merge(layout.setdefault("global", {}), tone_l.get("global", {}))
+        _deep_merge(layout.setdefault("scenes", {}), tone_l.get("scenes", {}))
+        layout["global"]["theme"] = "tone_l"
         layout.setdefault("global", {}).setdefault("header", {})["channel_name"] = "다시봄"
         layout.setdefault("global", {}).setdefault("title_block", {}).setdefault("meta", {})[
             "author_fallback"
@@ -1073,4 +1159,5 @@ def render_layout_video_from_scenes(
         scenes_list=scenes,
         meta=meta,
         narration_audio=Path(narration_audio) if narration_audio else None,
+        comments_fade_enabled=_is_again_spring,
     )
