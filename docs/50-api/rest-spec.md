@@ -1,6 +1,6 @@
 # WaggleBot — API 명세 (L5)
 
-> last-verified: 2026-08-05 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java`, `worker/ai_worker/tts/fish_client.py`
+> last-verified: 2026-08-08 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/`, `worker/ai_worker/tts/fish_client.py` · 2026-08-08 ClaudeService 재시도 로직 추가
 > scope: llm-worker·backend·Fish Speech·ComfyUI API 엔드포인트 명세 — SSOT
 
 ## 서비스별 Base URL
@@ -67,13 +67,21 @@ LLM 호출. Python `call_llm()` 함수가 이 엔드포인트를 사용.
 }
 ```
 
-**에러 응답:**
-| HTTP | 예외 | 원인 |
-|------|------|------|
-| 400 | IllegalArgumentException | prompt 누락 |
-| 429 | QueueFullException | 큐 포화 (queueCapacity=500) |
-| 502 | CliFailedException | Claude CLI 비정상 종료 |
-| 504 | InvocationTimeoutException | 타임아웃 초과 |
+**에러 응답 및 재시도 정책:**
+| HTTP | 예외 | 원인 | 재시도 |
+|------|------|------|--------|
+| 400 | IllegalArgumentException | prompt 누락 | ✗ |
+| 429 | QueueFullException | 큐 포화 (queueCapacity=500) | ✗ |
+| 502 | CliFailedException | Claude CLI 비정상 종료 (3회 재시도 후) | ✓ 내부 3회 지수백오프 (1s, 2s, 4s) |
+| 502 | CliFailedException | 인증/권한 오류 감지 시 즉시 실패 | ✗ (재시도 불가) |
+| 504 | InvocationTimeoutException | 타임아웃 초과 | ✗ |
+
+**재시도 정책 상세:**
+- **ClaudeService.runClaudeWithRetry()** 내부에서 최대 3회 시도
+- 지수 백오프: 1초 → 2초 → 4초
+- 인증 오류 감지 시: 즉시 502 반환 (재시도 안 함)
+  - 감지 패턴: "auth", "login", "oauth", "credential", "unauthorized", "permission denied", "invalid token"
+- 호출자는 502 수신 시 최대 3회 재시도가 이미 내부에서 처리됨을 인지
 
 ### GET /healthz
 

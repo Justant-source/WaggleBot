@@ -114,8 +114,14 @@ graph TD
 - **역할:** Claude CLI subprocess 게이트웨이. Python ai_worker의 모든 LLM 호출을 처리
 - **소스:** `worker/llm/` (완전 구현)
 - **포트:** `8090`
-- **중요 볼륨:** `~/.claude:/root/.claude` — Claude CLI 구독 인증
+- **사용자:** `uid:gid = 1000:1000` (호스트 justant 사용자와 동일, 파일 소유권 유지)
+- **HOME 환경변수:** `/home/justant` (Claude CLI 인증 토큰 관리 경로)
+- **중요 볼륨:** `~/.claude:/home/justant/.claude` — Claude CLI 구독 인증 (host justant 사용자 소유 유지)
 - **헬스체크:** `wget -qO- http://localhost:8090/healthz` (30s, 5회)
+- **재시도 정책:** 
+  - ClaudeService 내부 3회 지수 백오프 (1s, 2s, 4s 지연)
+  - 인증/권한 오류 감지 시 즉시 실패 (무의미한 재시도 차단)
+  - 의존: ~/.claude/.credentials.json 소유권 = 1000:1000 필수 (자동 refresh 시 보존)
 - **주요 설정:**
   ```
   LLM_DEFAULT_MODEL=claude-haiku-4-5-20251001
