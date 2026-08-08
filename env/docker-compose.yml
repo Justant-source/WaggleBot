@@ -247,6 +247,7 @@ services:
       context: ../worker/llm
     container_name: llm-worker
     restart: unless-stopped
+    user: "1000:1000"
     ports:
       - "8090:8090"
     environment:
@@ -255,8 +256,9 @@ services:
       LLM_POOL_SIZE: "${LLM_POOL_SIZE:-100}"
       LLM_QUEUE_CAPACITY: "${LLM_QUEUE_CAPACITY:-500}"
       CLAUDE_BIN: "claude"
+      HOME: "/home/justant"
     volumes:
-      - ${CLAUDE_HOST_CONFIG_DIR:-/home/justant/.claude}:/root/.claude
+      - ${CLAUDE_HOST_CONFIG_DIR:-/home/justant/.claude}:/home/justant/.claude
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
       interval: 30s

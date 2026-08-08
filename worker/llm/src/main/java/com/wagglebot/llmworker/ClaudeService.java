@@ -46,7 +46,7 @@ public class ClaudeService {
             throws Exception {
         String resolvedModel = (model != null && !model.isBlank()) ? model : defaultModel;
 
-        Future<String> future = executor.submit(() -> runClaude(prompt, resolvedModel, jsonMode));
+        Future<String> future = executor.submit(() -> runClaudeWithRetry(prompt, resolvedModel, jsonMode));
         try {
             return future.get(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -68,7 +68,11 @@ public class ClaudeService {
         cmd.add(prompt);
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.environment().put("HOME", "/root");
+        String homeDir = System.getenv("HOME");
+        if (homeDir == null || homeDir.isEmpty()) {
+            homeDir = "/home/justant";
+        }
+        pb.environment().put("HOME", homeDir);
         pb.redirectErrorStream(false);
 
         log.debug("claude cmd: {} model={}", claudeBin, model);
@@ -107,6 +111,81 @@ public class ClaudeService {
             return unwrapCliJsonResult(output);
         }
         return output;
+    }
+
+    /**
+     * Wrapper around runClaude with exponential backoff retry logic (3 attempts).
+     * Detects authentication errors and fails immediately without retry.
+     */
+    private String runClaudeWithRetry(String prompt, String model, Boolean jsonMode)
+            throws IOException, InterruptedException {
+        final int MAX_RETRIES = 3;
+        final long[] BACKOFF_DELAYS = {1000, 2000, 4000}; // milliseconds
+
+        IOException lastException = null;
+
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                return runClaude(prompt, model, jsonMode);
+            } catch (IOException e) {
+                String stderr = extractStderrFromError(e.getMessage());
+                if (isAuthenticationError(stderr)) {
+                    log.error("Claude authentication error detected on attempt {}, failing immediately: {}",
+                            attempt, stderr);
+                    throw e;
+                }
+
+                lastException = e;
+                if (attempt < MAX_RETRIES) {
+                    long delay = BACKOFF_DELAYS[attempt - 1];
+                    log.warn("Claude invocation failed on attempt {}/{}, retrying after {}ms: {}",
+                            attempt, MAX_RETRIES, delay, e.getMessage());
+                    Thread.sleep(delay);
+                } else {
+                    log.error("Claude invocation failed after all {} attempts", MAX_RETRIES);
+                }
+            }
+        }
+
+        if (lastException != null) {
+            throw lastException;
+        }
+
+        throw new IOException("Unexpected retry loop termination");
+    }
+
+    /**
+     * Detects common authentication/authorization error patterns in stderr.
+     */
+    private boolean isAuthenticationError(String stderr) {
+        if (stderr == null || stderr.isEmpty()) {
+            return false;
+        }
+
+        String lower = stderr.toLowerCase();
+        return lower.contains("auth")
+                || lower.contains("login")
+                || lower.contains("oauth")
+                || lower.contains("credential")
+                || lower.contains("unauthorized")
+                || lower.contains("permission denied")
+                || lower.contains("invalid token")
+                || lower.contains("access denied");
+    }
+
+    /**
+     * Extracts stderr portion from error message (format: "claude exited N: <stderr>").
+     */
+    private String extractStderrFromError(String errorMessage) {
+        if (errorMessage == null) {
+            return "";
+        }
+
+        if (errorMessage.contains(": ")) {
+            return errorMessage.split(": ", 2)[1];
+        }
+
+        return errorMessage;
     }
 
     /** Claude --output-format json returns a CLI envelope; surface the model text in result. */
