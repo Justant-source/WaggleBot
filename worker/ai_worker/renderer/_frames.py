@@ -39,6 +39,12 @@ CANVAS_H = 1920
 HEADER_H = 150
 HEADER_COLOR = "#FBD024"
 
+# Tone L 카테고리 칩 한글 표시명 (다시봄 카테고리 enum → 표시 텍스트)
+_CATEGORY_KO = {
+    "COUPLE": "연인", "MARRIED": "부부", "FAMILY": "가족",
+    "WORK": "직장", "FRIEND": "친구", "OTHER": "기타",
+}
+
 
 # ---------------------------------------------------------------------------
 # 테마 헬퍼 — 사이트별 크로마·타이포 분기 (기본: 와글 / again_spring: Tone L)
@@ -108,10 +114,31 @@ def _get_dc_session() -> requests.Session:
     return _dc_session
 
 
+def _composite_on_background(img: Image.Image, bg_color: str = "#FFFFFF") -> Image.Image:
+    """알파 채널이 있는 이미지를 단색 배경 위에 합성해 RGB로 변환한다.
+
+    투명 PNG(예: 메타포 일러스트)를 그냥 .convert("RGB")하면 투명 영역이
+    검정으로 깔린다(알파 버림 시 밑에 깔린 RGB 값을 그대로 씀 — 대부분의
+    SVG→PNG 변환기가 투명 영역 RGB를 (0,0,0)으로 채워두기 때문). 알파를
+    실제 배경색 위에 합성한 뒤 RGB로 평탄화해야 의도한 배경색이 나온다.
+    """
+    if img.mode in ("RGBA", "LA") or ("transparency" in img.info):
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, bg_color)
+        bg.alpha_composite(rgba)
+        return bg.convert("RGB")
+    return img.convert("RGB")
+
+
 def _load_image(
-    src: str, cache_dir: Path, max_retries: int = 2,
+    src: str, cache_dir: Path, max_retries: int = 2, bg_color: str = "#FFFFFF",
 ) -> Optional[Image.Image]:
-    """URL 또는 로컬 경로에서 이미지 로드. 실패 시 재시도 후 None."""
+    """URL 또는 로컬 경로에서 이미지 로드. 실패 시 재시도 후 None.
+
+    bg_color: 알파 채널이 있는 이미지(투명 PNG)를 평탄화할 때 깔 배경색.
+    다시봄 Tone L 메타포 이미지는 실제로 투명 PNG이므로, 호출측(layout.py)이
+    테마 팔레트의 surface 색을 넘겨 검정 배경 버그를 방지한다.
+    """
     if src.startswith("http://") or src.startswith("https://"):
         url_hash = hashlib.md5(src.encode()).hexdigest()[:16]
         cache_path = cache_dir / f"img_{url_hash}.jpg"
@@ -160,12 +187,12 @@ def _load_image(
                         )
                         return None
         try:
-            return Image.open(cache_path).convert("RGB")
+            return _composite_on_background(Image.open(cache_path), bg_color)
         except Exception as e:
             logger.warning("이미지 열기 실패: %s — %s", cache_path, e)
             return None
     try:
-        return Image.open(src).convert("RGB")
+        return _composite_on_background(Image.open(src), bg_color)
     except Exception as e:
         logger.warning("로컬 이미지 로드 실패: %s — %s", src, e)
         return None
@@ -209,6 +236,159 @@ def _paste_rounded(
     ov.putalpha(mask)
     base.paste(ov, (x, y), ov)
     return base.convert("RGB")
+
+
+# ---------------------------------------------------------------------------
+# Tone L 헬퍼 함수들
+# ---------------------------------------------------------------------------
+
+def _draw_sprout_mark(draw, cx, cy, size, palette):
+    """다시봄 식물 마크 — 두 잎 타원 + 줄기 + 씨앗."""
+    leaf_w = int(size * 0.25)
+    leaf_h = int(size * 0.45)
+    lx_off = int(size * 0.15)
+    ly_off_top = int(size * -0.12)
+    draw.ellipse([(cx - lx_off - leaf_w // 2, cy + ly_off_top - leaf_h // 2),
+                  (cx - lx_off + leaf_w // 2, cy + ly_off_top + leaf_h // 2)],
+                 fill=palette.get("peach", "#C9785A"))
+    rx_off = int(size * 0.15)
+    ry_off_top = int(size * -0.12)
+    draw.ellipse([(cx + rx_off - leaf_w // 2, cy + ry_off_top - leaf_h // 2),
+                  (cx + rx_off + leaf_w // 2, cy + ry_off_top + leaf_h // 2)],
+                 fill=palette.get("sage", "#5F8F76"))
+    stem_x = cx
+    stem_y_top = cy + int(size * 0.15)
+    stem_y_bot = cy + int(size * 0.35)
+    draw.rectangle([(stem_x - 1, stem_y_top), (stem_x + 1, stem_y_bot)],
+                   fill=palette.get("muted", "#A08670"))
+    seed_r = int(size * 0.04)
+    seed_y = stem_y_bot + int(size * 0.06)
+    draw.ellipse([(stem_x - seed_r, seed_y - seed_r), (stem_x + seed_r, seed_y + seed_r)],
+                 fill=palette.get("ink", "#5C4030"))
+
+
+def _draw_step_dots(draw, canvas_w, stage, layout):
+    """3단계 스텝 닷 페이저."""
+    cfg = layout.get("themes", {}).get("tone_l", {}).get("step_dots", {})
+    dot_size = cfg.get("dot_size", 18)
+    pill_w = cfg.get("pill_width", 52)
+    pill_h = cfg.get("pill_height", 18)
+    gap = cfg.get("gap_between", 24)
+    inactive_c = cfg.get("dot_inactive_color", "#E5DED2")
+    active_c = cfg.get("pill_active_color", "#C9785A")
+    canvas_h = layout.get("canvas", {}).get("height", 1920)
+    ribbon_h = layout.get("themes", {}).get("tone_l", {}).get("ribbon", {}).get("height", 22)
+    dots_y = canvas_h - ribbon_h - cfg.get("gap_bottom", 80)
+    total_w = pill_w + gap + dot_size + gap + dot_size
+    dots_x = (canvas_w - total_w) // 2
+    for i, dot_stage in enumerate([1, 2, 3]):
+        if i == 0:
+            pos_x = dots_x
+        elif i == 1:
+            pos_x = dots_x + pill_w + gap
+        else:
+            pos_x = dots_x + pill_w + gap + dot_size + gap
+        if stage == dot_stage:
+            pill_y = dots_y + (dot_size - pill_h) // 2
+            try:
+                draw.rounded_rectangle([(pos_x, pill_y), (pos_x + pill_w, pill_y + pill_h)],
+                                      radius=pill_h // 2, fill=active_c)
+            except TypeError:
+                draw.rectangle([(pos_x, pill_y), (pos_x + pill_w, pill_y + pill_h)], fill=active_c)
+        else:
+            draw.ellipse([(pos_x, dots_y), (pos_x + dot_size, dots_y + dot_size)], fill=inactive_c)
+
+
+def _draw_ribbon(draw, canvas_w, canvas_h, layout):
+    """하단 리본 — 좌 peach, 우 sage."""
+    cfg = layout.get("themes", {}).get("tone_l", {}).get("ribbon", {})
+    ribbon_h = cfg.get("height", 22)
+    left_c = cfg.get("left_color", "#C9785A")
+    right_c = cfg.get("right_color", "#5F8F76")
+    mid_x = canvas_w // 2
+    ribbon_y = canvas_h - ribbon_h
+    draw.rectangle([(0, ribbon_y), (mid_x, canvas_h)], fill=left_c)
+    draw.rectangle([(mid_x, ribbon_y), (canvas_w, canvas_h)], fill=right_c)
+
+
+def _draw_chip(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    active: bool,
+    palette: dict,
+) -> int:
+    """pill 배지(카테고리/정렬 칩 공용). 다음 칩을 이어그릴 x좌표를 반환한다."""
+    pad_x, pad_y = 18, 10
+    tw = int(_font_w(font, text))
+    try:
+        ascent, descent = font.getmetrics()
+        th = ascent + descent
+    except Exception:
+        th = int(getattr(font, "size", 26) * 1.3)
+    w = tw + pad_x * 2
+    h = th + pad_y * 2
+    if active:
+        fill = palette.get("sage", "#5F8F76")
+        text_color = palette.get("surface", "#FFF8F0")
+        outline = None
+    else:
+        fill = palette.get("card", "#FFFFFF")
+        text_color = palette.get("muted", "#A08670")
+        outline = palette.get("border", "#E5DED2")
+    try:
+        if outline:
+            draw.rounded_rectangle([(x, y), (x + w, y + h)], radius=h // 2,
+                                   fill=fill, outline=outline, width=2)
+        else:
+            draw.rounded_rectangle([(x, y), (x + w, y + h)], radius=h // 2, fill=fill)
+    except AttributeError:
+        draw.rectangle([(x, y), (x + w, y + h)], fill=fill)
+    draw.text((x + pad_x, y + pad_y), text, font=font, fill=text_color)
+    return x + w
+
+
+def _draw_card(
+    img: Image.Image,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    radius: int,
+    palette: dict,
+    border_color: str | None = None,
+) -> Image.Image:
+    """흰 카드(배경+보더+옅은 그림자)를 img 위에 합성해 반환한다."""
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+
+    shadow_pad = 30
+    shadow = Image.new("RGBA", (w + shadow_pad * 2, h + shadow_pad * 2), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    try:
+        sd.rounded_rectangle(
+            [(shadow_pad, shadow_pad + 6), (shadow_pad + w, shadow_pad + h + 6)],
+            radius=radius, fill=(60, 45, 25, 60),
+        )
+    except AttributeError:
+        sd.rectangle(
+            [(shadow_pad, shadow_pad + 6), (shadow_pad + w, shadow_pad + h + 6)],
+            fill=(60, 45, 25, 60),
+        )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=14))
+    img.alpha_composite(shadow, (x - shadow_pad, y - shadow_pad))
+
+    draw = ImageDraw.Draw(img)
+    card_bg = palette.get("card", "#FFFFFF")
+    card_border = border_color or palette.get("border", "#E5DED2")
+    try:
+        draw.rounded_rectangle([(x, y), (x + w, y + h)], radius=radius,
+                               fill=card_bg, outline=card_border, width=2)
+    except TypeError:
+        draw.rounded_rectangle([(x, y), (x + w, y + h)], radius=radius, fill=card_bg)
+    return img
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -415,24 +595,37 @@ def _draw_header(
         draw.rectangle([(0, h - border_th), (cw, h)], fill=border_color)
 
     cy = h // 2
+    safe_x = 90 if theme == "tone_l" else 52
 
     # 셰브론 (‹) — 좌측 아이콘
     arm = 28
-    tip_x = 52
+    tip_x = safe_x
     draw.line(
         [(tip_x + arm, cy - arm), (tip_x, cy), (tip_x + arm, cy + arm)],
         fill=ink, width=stroke,
     )
 
-    # 채널명 — 수평 중앙
+    # 채널명 — 수평 중앙 (Tone L: 새싹 마크 + 텍스트를 한 블록으로 중앙 정렬)
     font = _load_font(font_dir, _channel_font_file(layout), title_fs)
     tw = int(_font_w(font, channel))
-    tx = (cw - tw) // 2
-    ty = (h - title_fs) // 2 - 2
-    draw.text((tx, ty), channel, font=font, fill=ink)
+    if theme == "tone_l":
+        palette = g.get("palette", {})
+        mark_size = 58
+        mark_gap = 16
+        block_w = mark_size + mark_gap + tw
+        block_x = (cw - block_w) // 2
+        mark_cx = block_x + mark_size // 2
+        _draw_sprout_mark(draw, mark_cx, cy, mark_size, palette)
+        tx = block_x + mark_size + mark_gap
+        ty = (h - title_fs) // 2 - 2
+        draw.text((tx, ty), channel, font=font, fill=ink)
+    else:
+        tx = (cw - tw) // 2
+        ty = (h - title_fs) // 2 - 2
+        draw.text((tx, ty), channel, font=font, fill=ink)
 
     # 햄버거 (≡) — 우측
-    mx = cw - 96
+    mx = cw - safe_x - 52
     line_len = 52
     for i in (-1, 0, 1):
         my = cy + i * 18
@@ -539,8 +732,12 @@ def _title_block_bottom_y(
     """제목블록 아래쪽 콘텐츠 시작 Y를 순수 계산으로 반환한다.
 
     PIL 드로잉 없이 좌표만 계산 — 모든 씬 렌더러가 공유하는 린치핀.
+    Tone L: intro 전용 상단블록(칩+큰제목+메타) 기준으로 계산한다.
     """
     from ai_worker.renderer.layout import _load_font
+
+    if _theme_name(layout) == "tone_l":
+        return _draw_intro_topblock(None, layout, title, font_dir, None)
 
     g = layout["global"]
     hdr = g["header"]
@@ -581,6 +778,83 @@ def _title_block_bottom_y(
 # 베이스 프레임 생성
 # ---------------------------------------------------------------------------
 
+def _draw_intro_topblock(
+    draw: ImageDraw.ImageDraw,
+    layout: dict,
+    title: str,
+    font_dir: Path,
+    meta: dict | None,
+) -> int:
+    """Tone L intro 전용 상단 블록 — 칩(카테고리+정렬) + 큰 제목 + 메타줄.
+
+    드로잉과 계산(pure) 양쪽에서 재사용하도록 draw=None이면 계산만 하고 그리지 않는다.
+    """
+    from ai_worker.renderer.layout import _load_font
+
+    g = layout["global"]
+    hdr_h = g["header"].get("height", 240)
+    pad_x = g.get("title_block", {}).get("pad_x", 90)
+    max_lines = g.get("title_block", {}).get("max_lines", 3)
+    palette = g.get("palette", {})
+    cw = layout["canvas"]["width"]
+
+    sc = layout["scenes"]["intro"]
+    chips_cfg = sc.get("chips", {})
+    title_cfg = sc.get("title", {})
+    meta_cfg = sc.get("meta", {})
+
+    chip_fs = chips_cfg.get("font_size", 26)
+    chip_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", chip_fs)
+    chips_y = hdr_h + chips_cfg.get("gap_top", 8)
+    chips_h = int(chip_fs * 1.3) + 20
+
+    meta_dict = meta or {}
+    category = meta_dict.get("category")
+    cat_label = _CATEGORY_KO.get(category, category) if category else None
+
+    if draw is not None:
+        cx = pad_x
+        if cat_label:
+            cx = _draw_chip(draw, cx, chips_y, cat_label, chip_font, True, palette) + chips_cfg.get("gap_between", 12)
+        _draw_chip(draw, cx, chips_y, "최신순", chip_font, False, palette)
+
+    chips_bottom = chips_y + chips_h
+
+    title_fs = title_cfg.get("font_size", 62)
+    title_lh = title_cfg.get("line_height", 76)
+    title_font = _load_font(font_dir, _title_font_file(layout), title_fs)
+    max_w = cw - 2 * pad_x
+    wrapped = _wrap_korean(title, title_font, max_w, keep_all=True)
+    n_lines = min(len(wrapped), max_lines)
+    ty = chips_bottom + title_cfg.get("gap_top", 36)
+    if draw is not None:
+        for line in wrapped[:n_lines]:
+            draw.text((pad_x, ty), line, font=title_font, fill=palette.get("ink", "#5C4030"))
+            ty += title_lh
+    else:
+        ty += n_lines * title_lh
+    title_bottom = ty
+
+    meta_fs = meta_cfg.get("font_size", 28)
+    meta_gap = meta_cfg.get("gap_top", 22)
+    my = title_bottom + meta_gap
+    if draw is not None:
+        meta_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", meta_fs)
+        parts = []
+        author = (meta_dict.get("author") or "").strip() or "익명"
+        parts.append(author)
+        t = (meta_dict.get("time") or "").strip()
+        if t:
+            parts.append(t)
+        v = (meta_dict.get("views") or "").strip()
+        if v and v != "0":
+            parts.append(f"조회 {v}")
+        meta_text = " · ".join(parts)
+        draw.text((pad_x, my), meta_text, font=meta_font, fill=meta_cfg.get("color", "#A08670"))
+
+    return int(my + int(meta_fs * 1.35))
+
+
 def _create_base_frame(
     layout: dict,
     title: str,
@@ -588,22 +862,124 @@ def _create_base_frame(
     assets_dir: Path,
     meta: dict | None = None,
 ) -> Image.Image:
-    """와글 베이스 프레임: 흰 캔버스 + 옐로우 헤더바 + 제목블록 코드 드로잉.
+    """베이스 프레임: 흰 캔버스 + 헤더바 + 상단 블록.
 
+    와글: 옐로우 헤더바 + 제목블록(제목+메타+구분선).
+    Tone L: 헤더바(새싹마크) + intro 전용 상단블록(칩+큰제목+메타) — intro 씬 전용.
     assets_dir는 하위 호환용 파라미터(현재 미사용).
-    모든 씬 렌더러가 이 프레임을 .copy()해서 사용한다.
     """
     g = layout["global"]
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
+    theme = _theme_name(layout)
 
     base = Image.new("RGB", (cw, ch), g.get("background_color", "#FFFFFF"))
     draw = ImageDraw.Draw(base)
 
     _draw_header(draw, layout, font_dir)
-    _draw_title_block(draw, layout, title, font_dir, meta=meta)
+    if theme == "tone_l":
+        _draw_intro_topblock(draw, layout, title, font_dir, meta)
+    else:
+        _draw_title_block(draw, layout, title, font_dir, meta=meta)
 
     return base
+
+
+def _create_breadcrumb_frame(
+    layout: dict,
+    title: str,
+    font_dir: Path,
+    meta: dict | None = None,
+    show_title: bool = True,
+) -> Image.Image:
+    """Tone L 전용: 헤더 + 브레드크럼(카테고리 칩 + 익명·시간) [+ 작은 제목 1줄].
+
+    body(image_text/text_only)/comments 씬이 사용 — intro의 큰 제목블록과 달리
+    가볍게 상단만 표시한다. 와글(비-tone_l) 사이트에서는 호출되지 않지만,
+    안전하게 _create_base_frame과 동일하게 동작한다.
+    """
+    from ai_worker.renderer.layout import _load_font
+
+    g = layout["global"]
+    cw = layout["canvas"]["width"]
+    ch = layout["canvas"]["height"]
+    theme = _theme_name(layout)
+
+    base = Image.new("RGB", (cw, ch), g.get("background_color", "#FFFFFF"))
+    draw = ImageDraw.Draw(base)
+    _draw_header(draw, layout, font_dir)
+
+    if theme != "tone_l":
+        _draw_title_block(draw, layout, title, font_dir, meta=meta)
+        return base
+
+    hdr_h = g["header"].get("height", 240)
+    pad_x = g.get("title_block", {}).get("pad_x", 90)
+    palette = g.get("palette", {})
+    # image_text의 breadcrumb 설정을 공용으로 사용 (image_text/text_only/comments 동일 스타일)
+    bc_cfg = layout["scenes"].get("image_text", {}).get("breadcrumb", {})
+    title_cfg = layout["scenes"].get("image_text", {}).get("title", {})
+
+    bc_fs = bc_cfg.get("font_size", 26)
+    chip_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", bc_fs)
+    y = hdr_h + bc_cfg.get("gap_top", 8)
+
+    meta_dict = meta or {}
+    category = meta_dict.get("category")
+    cat_label = _CATEGORY_KO.get(category, category) if category else None
+    cx = pad_x
+    if cat_label:
+        cx = _draw_chip(draw, cx, y, cat_label, chip_font, True, palette) + 12
+
+    meta_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", bc_fs)
+    parts = []
+    t = (meta_dict.get("time") or "").strip()
+    parts.append("익명" if not (meta_dict.get("author") or "").strip() else meta_dict["author"].strip())
+    if t:
+        parts.append(t)
+    meta_text = " · ".join(parts)
+    ty_meta = y + 8
+    draw.text((cx + 14, ty_meta), meta_text, font=meta_font, fill=palette.get("muted", "#A08670"))
+
+    bc_bottom = y + int(bc_fs * 1.3) + 20
+
+    if show_title:
+        t_fs = title_cfg.get("font_size", 38)
+        t_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", t_fs)
+        max_w = cw - 2 * pad_x
+        line = _truncate(title, 26)
+        ty = bc_bottom + title_cfg.get("gap_top", 20)
+        draw.text((pad_x, ty), line, font=t_font, fill=title_cfg.get("color", "#A08670"))
+
+    return base
+
+
+def _breadcrumb_bottom_y(
+    layout: dict,
+    title: str,
+    font_dir: Path,
+    show_title: bool = True,
+) -> int:
+    """_create_breadcrumb_frame과 동일 계산을 드로잉 없이 수행 — 콘텐츠 시작 Y 반환."""
+    if _theme_name(layout) != "tone_l":
+        return _title_block_bottom_y(layout, title, font_dir)
+
+    g = layout["global"]
+    hdr_h = g["header"].get("height", 240)
+    bc_cfg = layout["scenes"].get("image_text", {}).get("breadcrumb", {})
+    title_cfg = layout["scenes"].get("image_text", {}).get("title", {})
+    bc_fs = bc_cfg.get("font_size", 26)
+
+    y = hdr_h + bc_cfg.get("gap_top", 8)
+    bc_bottom = y + int(bc_fs * 1.3) + 20
+
+    if not show_title:
+        return int(bc_bottom) + 8
+
+    t_fs = title_cfg.get("font_size", 38)
+    t_gap = title_cfg.get("gap_top", 20)
+    t_lh = int(t_fs * 1.4)
+    return int(bc_bottom + t_gap + t_lh)
 
 
 def _create_header_only_frame(
@@ -633,15 +1009,50 @@ def _render_intro_frame(
     font_dir: Path,
     out_path: Path,
     content_top: int,
+    stage: int | None = None,
 ) -> Path:
-    """씬 intro — hook 자막(중앙, 굵은 검정) + 자연비율 표지 이미지."""
+    """씬 intro — hook 자막(중앙, 굵은 검정) + 자연비율 표지 이미지.
+
+    Tone L: 자막 없음(상단 블록이 이미 제목을 표시) — 메타포 이미지가 아래 남은
+    영역을 COVER로 꽉 채운다(스텝닷 위까지). 기본(와글): 기존 자막+contain 유지.
+    """
     from ai_worker.renderer.layout import _load_font
 
+    theme = _theme_name(layout)
     sc = layout["scenes"]["intro"]
-    cap_cfg = sc.get("caption", {})
-    media_cfg = sc.get("media", {})
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
+
+    img = base_frame.copy()
+    draw = ImageDraw.Draw(img)
+
+    if theme == "tone_l":
+        media_cfg = sc.get("media", {})
+        pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
+        media_radius = media_cfg.get("radius", 16)
+        media_gap = media_cfg.get("gap_top", 48)
+        step_cfg = layout.get("themes", {}).get("tone_l", {}).get("step_dots", {})
+        ribbon_h = layout.get("themes", {}).get("tone_l", {}).get("ribbon", {}).get("height", 22)
+        dots_reserve = step_cfg.get("gap_bottom", 80) + step_cfg.get("dot_size", 18) + 20
+
+        media_y = content_top + media_gap
+        media_bottom = ch - ribbon_h - dots_reserve
+        media_h = max(100, media_bottom - media_y)
+        media_w = cw - 2 * pad_x
+        if img_pil is not None:
+            fitted = _fit_cover(img_pil, media_w, media_h)
+            img = _paste_rounded(img, fitted, pad_x, media_y, media_radius)
+
+        img = img.convert("RGB")
+        draw = ImageDraw.Draw(img)
+        _draw_step_dots(draw, cw, stage or 1, layout)
+        _draw_ribbon(draw, cw, ch, layout)
+        img.save(str(out_path), "PNG")
+        return out_path
+
+    sc_cap = sc
+    cap_cfg = sc_cap.get("caption", {})
+    media_cfg = sc_cap.get("media", {})
 
     cap_fs: int = cap_cfg.get("font_size", 50)
     cap_lh: int = cap_cfg.get("line_height", 62)
@@ -656,8 +1067,6 @@ def _render_intro_frame(
 
     font = _load_font(font_dir, _body_font_file(layout), cap_fs)
     align, cap_pad_x = _body_align(layout)
-    img = base_frame.copy()
-    draw = ImageDraw.Draw(img)
 
     # 자막 (위)
     cap_y = content_top + cap_pad_top
@@ -689,15 +1098,71 @@ def _render_image_text_frame(
     font_dir: Path,
     out_path: Path,
     content_top: int,
+    stage: int | None = None,
 ) -> Path:
-    """씬 image_text — 자막(위) + 자연비율 이미지(좌우 흰여백)."""
+    """씬 image_text — 자막(위) + 자연비율 이미지(좌우 흰여백).
+
+    Tone L: 브레드크럼은 이미 base_frame(breadcrumb_frame)에 그려진 상태로 들어온다.
+    카드 안에 인용구 텍스트 + 1:1 이미지를 배치한다.
+    """
     from ai_worker.renderer.layout import _load_font
 
+    theme = _theme_name(layout)
     sc = layout["scenes"]["image_text"]
-    cap_cfg = sc.get("caption_above", {})
-    media_cfg = sc.get("media", {})
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
+
+    if theme == "tone_l":
+        palette = layout["global"].get("palette", {})
+        pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
+        card_cfg = sc.get("card", {})
+        quote_cfg = sc.get("quote", {})
+        image_cfg = sc.get("image", {})
+
+        card_x = pad_x
+        card_w = cw - 2 * pad_x
+        card_pad = card_cfg.get("pad", 44)
+        card_radius = card_cfg.get("radius", 28)
+        card_y = content_top + card_cfg.get("gap_top", 36)
+
+        q_fs = quote_cfg.get("font_size", 54)
+        q_lh = quote_cfg.get("line_height", 68)
+        q_font = _load_font(font_dir, _body_font_file(layout), q_fs)
+        inner_w = card_w - 2 * card_pad
+        q_lines = _wrap_korean(text, q_font, inner_w, keep_all=True)[:4]
+
+        img_size = card_w - 2 * card_pad
+        img_gap = image_cfg.get("gap_top", 40)
+        card_h = card_pad + len(q_lines) * q_lh + img_gap + img_size + card_pad
+        max_card_h = ch - card_y - 140
+        if card_h > max_card_h:
+            card_h = max_card_h
+            img_size = max(200, card_h - card_pad - len(q_lines) * q_lh - img_gap - card_pad)
+
+        img = base_frame.copy()
+        img = _draw_card(img, card_x, card_y, card_w, card_h, card_radius, palette)
+        draw = ImageDraw.Draw(img)
+
+        ty = card_y + card_pad
+        for line in q_lines:
+            draw.text((card_x + card_pad, ty), line, font=q_font,
+                      fill=quote_cfg.get("color", "#5C4030"))
+            ty += q_lh
+
+        if img_pil is not None:
+            img_radius = image_cfg.get("radius", 20)
+            fitted = _fit_cover(img_pil, img_size, img_size)
+            img = _paste_rounded(img.convert("RGB"), fitted, card_x + card_pad, ty + img_gap, img_radius)
+
+        img = img.convert("RGB")
+        draw = ImageDraw.Draw(img)
+        _draw_step_dots(draw, cw, stage or 2, layout)
+        _draw_ribbon(draw, cw, ch, layout)
+        img.save(str(out_path), "PNG")
+        return out_path
+
+    cap_cfg = sc.get("caption_above", {})
+    media_cfg = sc.get("media", {})
 
     cap_fs: int = cap_cfg.get("font_size", 50)
     cap_lh: int = cap_cfg.get("line_height", 62)
@@ -748,9 +1213,45 @@ def _render_text_only_frame(
     font_dir: Path,
     out_path: Path,
     content_top: int,
+    stage: int | None = None,
 ) -> Path:
-    """씬 text_only — 굵은 검정 자막 누적, 흐림·시안 댓글 분기 제거."""
+    """씬 text_only — 자막 누적 표시.
+
+    Tone L: 불릿 스타일 — 과거 문장(muted+border 불릿) vs 현재 문장(ink+peach 불릿).
+    기본(와글): 기존 굵은 검정 누적 표시 유지.
+    """
     from ai_worker.renderer.layout import _load_font
+
+    theme = _theme_name(layout)
+    cw = layout["canvas"]["width"]
+    ch = layout["canvas"]["height"]
+    img = base_frame.copy()
+    draw = ImageDraw.Draw(img)
+
+    if theme == "tone_l":
+        palette = layout["global"].get("palette", {})
+        pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
+        sc = layout["scenes"]["text_only"]
+        bul_cfg = sc.get("bullets", {})
+
+        font_size = bul_cfg.get("font_size", 52)
+        lh = bul_cfg.get("line_height", 84)
+        font = _load_font(font_dir, _body_font_file(layout), font_size)
+
+        y = content_top + bul_cfg.get("gap_top", 64)
+        last_idx = len(text_history) - 1
+        for entry_i, entry in enumerate(text_history):
+            is_current = entry_i == last_idx
+            text_color = palette.get("ink", "#5C4030") if is_current else palette.get("muted", "#A08670")
+            lines = entry.get("lines", [])
+            for line_text in lines:
+                draw.text((pad_x, y), line_text, font=font, fill=text_color)
+                y += lh
+
+        _draw_step_dots(draw, cw, stage or 2, layout)
+        _draw_ribbon(draw, cw, ch, layout)
+        img.save(str(out_path), "PNG")
+        return out_path
 
     sc = layout["scenes"]["text_only"]
     ta = sc["elements"]["text_area"]
@@ -762,11 +1263,7 @@ def _render_text_only_frame(
     pad_top: int = ta.get("pad_top", 96)
 
     font = _load_font(font_dir, _body_font_file(layout), font_size)
-    cw = layout["canvas"]["width"]
     align, pad_x = _body_align(layout)
-
-    img = base_frame.copy()
-    draw = ImageDraw.Draw(img)
 
     y = content_top + pad_top
     for entry_i, entry in enumerate(text_history):
@@ -839,23 +1336,99 @@ def _render_outro_frame(
     """
     from ai_worker.renderer.layout import _load_font
 
+    theme = _theme_name(layout)
     sc = layout["scenes"]["outro"]
-    mascot_cfg = sc.get("mascot", {})
-    q_cfg = sc.get("question", {})
-    sub_cfg = sc.get("sub_caption", {})
-    box_cfg = sc.get("input_box", {})
-    cta_cfg = sc.get("cta_text", {})
-
     g = layout["global"]
     hdr = g["header"]
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
     hdr_h: int = hdr.get("height", 150)
-    hdr_bg: str = hdr.get("bg_color", "#FBD024")
-    hdr_ink: str = hdr.get("ink_color", "#1A1A1A")
 
     img = header_only_frame.copy()
     draw = ImageDraw.Draw(img)
+
+    if theme == "tone_l":
+        palette = g.get("palette", {})
+        sprout_cfg = sc.get("sprout_mark", {})
+        q_cfg = sc.get("question", {})
+        cta_cfg = sc.get("cta", {})
+        pill_cfg = sc.get("input_pill", {})
+        domain_cfg = sc.get("domain", {})
+
+        mark_size = sprout_cfg.get("size", 200)
+        y = hdr_h + sprout_cfg.get("gap_top", 48)
+        _draw_sprout_mark(draw, cw // 2, y + mark_size // 2, mark_size, palette)
+        y += mark_size
+
+        q_fs = q_cfg.get("font_size", 72)
+        q_lh = q_cfg.get("line_height", 90)
+        q_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", q_fs)
+        question = overlay_text.strip() or "여러분이라면 어떻게 하셨을까요?"
+        q_lines = _wrap_korean(question, q_font, q_cfg.get("max_width", 900))
+        q_y = y + q_cfg.get("gap_top", 48)
+        _draw_centered_text(draw, q_lines, q_font, q_y, q_lh, q_cfg.get("color", "#5C4030"), cw)
+        y = q_y + len(q_lines) * q_lh
+
+        cta_fs = cta_cfg.get("font_size", 48)
+        cta_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", cta_fs)
+        cta_text = "댓글로 여러분의 생각을 남겨주세요"
+        cta_lines = _wrap_korean(cta_text, cta_font, 900)
+        cta_y = y + cta_cfg.get("gap_top", 40)
+        _draw_centered_text(draw, cta_lines, cta_font, cta_y, int(cta_fs * 1.4),
+                            cta_cfg.get("color", "#5C4030"), cw)
+        y = cta_y + len(cta_lines) * int(cta_fs * 1.4)
+
+        box_w = pill_cfg.get("width", 860)
+        box_h = pill_cfg.get("height", 104)
+        box_x = (cw - box_w) // 2
+        box_y = y + pill_cfg.get("gap_top", 72)
+        box_r = pill_cfg.get("radius", box_h // 2)
+        try:
+            draw.rounded_rectangle([(box_x, box_y), (box_x + box_w, box_y + box_h)],
+                                   radius=box_r, fill=pill_cfg.get("bg", "#FFFFFF"),
+                                   outline=pill_cfg.get("border", "#E5DED2"),
+                                   width=pill_cfg.get("border_width", 2))
+        except TypeError:
+            draw.rounded_rectangle([(box_x, box_y), (box_x + box_w, box_y + box_h)],
+                                   radius=box_r, fill=pill_cfg.get("bg", "#FFFFFF"))
+        av_size = pill_cfg.get("avatar_size", 68)
+        av_margin = (box_h - av_size) // 2
+        av_x0 = box_x + av_margin + 8
+        av_y0 = box_y + av_margin
+        draw.ellipse([(av_x0, av_y0), (av_x0 + av_size, av_y0 + av_size)],
+                     fill=pill_cfg.get("avatar_bg", "#5F8F76"))
+        av_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", int(av_size * 0.42))
+        draw.text((av_x0 + (av_size - int(_font_w(av_font, "나"))) // 2, av_y0 + int(av_size * 0.24)),
+                  "나", font=av_font, fill=pill_cfg.get("avatar_label_color", "#FFF8F0"))
+        ph_font = _load_font(font_dir, "NotoSansKR-Regular.ttf", int(box_h * 0.3))
+        draw.text((av_x0 + av_size + 20, box_y + (box_h - int(box_h * 0.3)) // 2 - 2),
+                  pill_cfg.get("placeholder", "댓글 추가..."), font=ph_font,
+                  fill=pill_cfg.get("placeholder_color", "#C4B3A0"))
+        arr_r = int(box_h * 0.2)
+        arr_cx = box_x + box_w - av_margin - arr_r - 8
+        arr_cy = box_y + box_h // 2
+        draw.polygon([(arr_cx - arr_r, arr_cy - arr_r), (arr_cx - arr_r, arr_cy + arr_r),
+                     (arr_cx + arr_r, arr_cy)], fill=pill_cfg.get("send_color", "#C9785A"))
+        y = box_y + box_h
+
+        dom_fs = domain_cfg.get("font_size", 34)
+        dom_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", dom_fs)
+        dom_text = "againspring.net"
+        dom_x = (cw - int(_font_w(dom_font, dom_text))) // 2
+        dom_y = y + domain_cfg.get("gap_top", 56)
+        draw.text((dom_x, dom_y), dom_text, font=dom_font, fill=domain_cfg.get("color", "#A08670"))
+
+        _draw_ribbon(draw, cw, ch, layout)
+        img.save(str(out_path), "PNG")
+        return out_path
+
+    mascot_cfg = sc.get("mascot", {})
+    q_cfg = sc.get("question", {})
+    sub_cfg = sc.get("sub_caption", {})
+    box_cfg = sc.get("input_box", {})
+    cta_cfg = sc.get("cta_text", {})
+    hdr_bg: str = hdr.get("bg_color", "#FBD024")
+    hdr_ink: str = hdr.get("ink_color", "#1A1A1A")
 
     mascot_enabled: bool = mascot_cfg.get("enabled", True)
     mascot_d: int = mascot_cfg.get("diameter", 220)
@@ -1053,6 +1626,36 @@ def _draw_blurred_text(
     return base
 
 
+_MOSAIC_SHADES: list[str] = ["#ECECEC", "#D8D8D8", "#C2C2C2", "#A6A6A6", "#8C8C8C", "#767676"]
+
+
+def _draw_mosaic_nickname(
+    draw: ImageDraw.ImageDraw,
+    xy: tuple[int, int],
+    nickname: str,
+    font: ImageFont.FreeTypeFont,
+    cell: int = 12,
+) -> int:
+    """닉네임을 무채색 격자 모자이크로 렌더 — 글자 형태만 어렴풋, 판독 불가.
+
+    클로드 디자인 원본(다시봄 레이아웃 - 댓글.dc.html .rc-mosaic)과 동일하게
+    12px 정사각 셀 1행을 그린다. 셀 개수는 실제 닉네임의 렌더 폭에 비례해
+    자연스러운 길이 편차를 만들고, seed는 닉네임 문자 합으로 결정해 같은
+    작성자는 항상 같은 패턴을 갖는다(매 프레임 재생성 시 깜빡임 방지).
+
+    Returns: 그려진 모자이크의 전체 폭(px) — 이후 요소(BEST 배지 등) 배치용.
+    """
+    text_w = max(cell * 6, int(_font_w(font, nickname or "익명")))
+    n_cells = max(6, min(28, round(text_w / cell)))
+    seed = sum(ord(c) for c in (nickname or "익명"))
+    x, y = xy
+    for i in range(n_cells):
+        shade = _MOSAIC_SHADES[(seed + i * 7) % len(_MOSAIC_SHADES)]
+        cx = x + i * cell
+        draw.rectangle([(cx, y), (cx + cell, y + cell)], fill=shade)
+    return n_cells * cell
+
+
 def _render_comments_frame(
     base_frame: Image.Image,
     comment_items: list[dict],
@@ -1062,6 +1665,7 @@ def _render_comments_frame(
     content_top: int,
     reveal_count: int | None = None,
     fade_alpha: float = 1.0,
+    stage: int | None = None,
 ) -> Path:
     """씬 comments — 정렬바 + 커뮤니티 댓글 세로 리스트.
 
@@ -1078,7 +1682,117 @@ def _render_comments_frame(
     """
     from ai_worker.renderer.layout import _load_font
 
+    theme = _theme_name(layout)
     sc = layout["scenes"]["comments"]
+    cw = layout["canvas"]["width"]
+    ch = layout["canvas"]["height"]
+
+    if theme == "tone_l":
+        palette = layout["global"].get("palette", {})
+        pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
+        sort_cfg = sc.get("sort_bar", {})
+        cards_cfg = sc.get("cards", {})
+        avatar_cfg = sc.get("avatar", {})
+        nick_cfg = sc.get("nickname", {})
+        text_cfg = sc.get("text", {})
+        footer_cfg = sc.get("footer", {})
+
+        max_items = cards_cfg.get("max_items", 3)
+        items = comment_items[:max_items]
+        visible = items if reveal_count is None else items[:reveal_count]
+
+        img = base_frame.copy()
+        draw = ImageDraw.Draw(img)
+
+        sort_fs = sort_cfg.get("font_size", 36)
+        sort_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", sort_fs)
+        label_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", sort_fs - 8)
+        y = content_top + sort_cfg.get("gap_top", 8)
+        draw.text((pad_x, y), "댓글 ", font=sort_font, fill=sort_cfg.get("count_color", "#5C4030"))
+        prefix_w = int(_font_w(sort_font, "댓글 "))
+        count_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", sort_fs)
+        draw.text((pad_x + prefix_w, y), str(len(items)), font=count_font,
+                  fill=palette.get("peach", "#C9785A"))
+        label = sort_cfg.get("label", "추천순 ▾")
+        lbl_w = int(_font_w(label_font, label))
+        draw.text((cw - pad_x - lbl_w, y), label, font=label_font,
+                  fill=sort_cfg.get("label_color", "#A08670"))
+        y += int(sort_fs * 1.5)
+        divider_color = sort_cfg.get("divider_color", "#E5DED2")
+        draw.rectangle([(pad_x, y), (cw - pad_x, y + sort_cfg.get("divider_thickness", 2))],
+                       fill=divider_color)
+        y += cards_cfg.get("gap_top", 30)
+
+        nick_fs = nick_cfg.get("font_size", 28)
+        nick_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", nick_fs)
+        text_fs = text_cfg.get("font_size", 36)
+        text_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", text_fs)
+        text_lh = text_cfg.get("line_height", 52)
+        text_max_lines = text_cfg.get("max_lines", 2)
+        footer_font = _load_font(font_dir, "NotoSansKR-Regular.ttf", footer_cfg.get("font_size", 26))
+        av_d = avatar_cfg.get("size", 72)
+        card_pad_x = cards_cfg.get("pad_x", 24)
+        card_pad_y = cards_cfg.get("pad_y", 20)
+        card_w = cw - 2 * pad_x
+
+        for item in visible:
+            author = (item.get("author") or "익명").strip() or "익명"
+            side = (item.get("side") or "").strip().lower()
+            content = item.get("content", "") or ""
+            likes = item.get("likes", 0) or 0
+            is_best = bool(item.get("is_best"))
+
+            text_lines = _wrap_korean(content, text_font, card_w - 2 * card_pad_x - av_d - avatar_cfg.get("gap_right", 16), keep_all=True)[:text_max_lines]
+            card_h = card_pad_y + max(av_d, nick_fs + 10) + 10 + len(text_lines) * text_lh + 10 + int(footer_cfg.get("font_size", 26) * 1.4) + card_pad_y
+
+            border_color = cards_cfg.get("best_border", "#C9785A") if is_best else cards_cfg.get("border", "#E5DED2")
+            img = _draw_card(img, pad_x, y, card_w, card_h, cards_cfg.get("radius", 24), palette, border_color)
+            draw = ImageDraw.Draw(img)
+
+            av_bg = {"author": avatar_cfg.get("author_bg", "#C9785A"),
+                     "partner": avatar_cfg.get("partner_bg", "#5F8F76")}.get(side, avatar_cfg.get("neutral_bg", "#A08670"))
+            av_x, av_y = pad_x + card_pad_x, y + card_pad_y
+            draw.ellipse([(av_x, av_y), (av_x + av_d, av_y + av_d)], fill=av_bg)
+            initial = author[0] if author else "익"
+            init_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", int(av_d * 0.4))
+            draw.text((av_x + (av_d - int(_font_w(init_font, initial))) // 2, av_y + int(av_d * 0.22)),
+                      initial, font=init_font, fill=avatar_cfg.get("text_color", "#FFF8F0"))
+
+            tx = av_x + av_d + avatar_cfg.get("gap_right", 16)
+            ny = y + card_pad_y
+            # 닉네임 — 무채색 격자 모자이크로 익명화(클로드 디자인 .rc-mosaic 참조)
+            mosaic_cell = 12
+            mosaic_y = ny + max(0, (nick_fs - mosaic_cell) // 2)
+            mosaic_w = _draw_mosaic_nickname(draw, (tx, mosaic_y), author, nick_font, mosaic_cell)
+            if is_best:
+                # BEST 배지 — 모자이크 실측 폭 바로 옆(gap 12px), 같은 행 세로 중앙 정렬
+                # (참조: .rc-nickrow{display:flex;align-items:center;gap:12px})
+                badge_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", 22)
+                badge_w = int(_font_w(badge_font, "BEST")) + 32
+                badge_h = 32
+                badge_x = tx + mosaic_w + 12
+                badge_y = ny + max(0, (nick_fs - badge_h) // 2)
+                draw.rounded_rectangle([(badge_x, badge_y), (badge_x + badge_w, badge_y + badge_h)],
+                                       radius=8, fill=palette.get("peach", "#C9785A"))
+                bw = int(_font_w(badge_font, "BEST"))
+                draw.text((badge_x + (badge_w - bw) // 2, badge_y + (badge_h - 22) // 2 - 2),
+                          "BEST", font=badge_font, fill="#FFF8F0")
+
+            ty = ny + nick_fs + nick_cfg.get("gap_bottom", 4) + 6
+            for line in text_lines:
+                draw.text((tx, ty), line, font=text_font, fill=text_cfg.get("color", "#5C4030"))
+                ty += text_lh
+            foot_text = f"공감 {likes} · {_relative_time(item.get('created_at'))}".rstrip(" ·")
+            draw.text((tx, ty + footer_cfg.get("gap_top", 8)), foot_text, font=footer_font,
+                      fill=footer_cfg.get("color", "#A08670"))
+
+            y += card_h + cards_cfg.get("gap_between", 24)
+
+        _draw_step_dots(draw, cw, stage or 3, layout)
+        _draw_ribbon(draw, cw, ch, layout)
+        img.save(str(out_path), "PNG")
+        return out_path
+
     sort_cfg = sc.get("sort_bar", {})
     row_cfg = sc.get("row", {})
     badge_cfg = row_cfg.get("best_badge", {})

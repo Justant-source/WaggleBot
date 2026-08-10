@@ -43,6 +43,7 @@ from ai_worker.renderer._frames import (
     _render_video_text_overlay, _render_chat_frame, _wrap_korean, _draw_centered_text,
     _truncate, _fit_cover, _fit_contain, _paste_rounded, _load_image,
     _title_block_bottom_y, _fmt_count, _relative_time, _body_font_file,
+    _create_breadcrumb_frame, _breadcrumb_bottom_y, _theme_name,
 )
 from ai_worker.renderer._tts import (
     _tts_chunk_async, _generate_tts_chunks, _merge_chunks,
@@ -550,15 +551,36 @@ def _render_pipeline(
         content_top = _title_block_bottom_y(layout, title, font_dir)
         base_frame = _create_base_frame(layout, title, font_dir, ASSETS_DIR, meta=meta)
         header_only_frame = _create_header_only_frame(layout, font_dir)
+
+        # Tone L: body(image_text/text_only)/comments 씬은 큰 제목블록 대신
+        # 가벼운 브레드크럼(칩+메타[+작은 제목]) 헤더를 쓴다 — content_top도 그만큼 짧다.
+        # 와글(기본) 사이트는 _create_breadcrumb_frame/_breadcrumb_bottom_y가
+        # 내부적으로 base_frame/content_top과 동일한 값을 반환하므로 동작 불변.
+        if _theme_name(layout) == "tone_l":
+            content_top_body = _breadcrumb_bottom_y(layout, title, font_dir, show_title=True)
+            content_top_comments = _breadcrumb_bottom_y(layout, title, font_dir, show_title=False)
+            breadcrumb_frame = _create_breadcrumb_frame(layout, title, font_dir, meta=meta, show_title=True)
+            breadcrumb_frame_no_title = _create_breadcrumb_frame(layout, title, font_dir, meta=meta, show_title=False)
+        else:
+            content_top_body = content_top
+            content_top_comments = content_top
+            breadcrumb_frame = base_frame
+            breadcrumb_frame_no_title = base_frame
         logger.info("[layout] 베이스 프레임 생성 완료 (content_top=%d)", content_top)
 
         # ── Step 4: 이미지 사전 다운로드 ──────────────────────
+        # Tone L 메타포 이미지는 투명 PNG — surface(크림톤) 배경 위에 합성해야
+        # 검정 배경 버그(알파 버림 시 투명영역 RGB가 그대로 검정으로 남는 문제)를 막는다.
+        _img_bg_color = (
+            layout.get("global", {}).get("palette", {}).get("surface", "#FFFFFF")
+            if _theme_name(layout) == "tone_l" else "#FFFFFF"
+        )
         image_cache: dict[int, Optional["Image.Image"]] = {}
         for entry in plan:
             img_idx = entry.get("img_idx")
             if img_idx is not None and img_idx not in image_cache:
                 url = images[img_idx] if img_idx < len(images) else None
-                image_cache[img_idx] = _load_image(url, tmp_dir) if url else None
+                image_cache[img_idx] = _load_image(url, tmp_dir, bg_color=_img_bg_color) if url else None
 
         # ── Steps 5~6: TTS 생성 또는 캐시 로드 ───────────────────
         merged_tts = tmp_dir / "merged_tts.wav"
@@ -659,7 +681,7 @@ def _render_pipeline(
                 hook_text = sentences[sent_idx]["text"] if sent_idx is not None else ""
                 _render_intro_frame(
                     base_frame, img_pil, hook_text,
-                    layout, font_dir, frame_path, content_top,
+                    layout, font_dir, frame_path, content_top, stage=1,
                 )
 
             elif scene_type == "image_text":
@@ -671,11 +693,13 @@ def _render_pipeline(
                     fallback_entry = {"lines": lines,
                                       "block_type": entry.get("block_type", "body")}
                     _render_text_only_frame(
-                        base_frame, [fallback_entry], layout, font_dir, frame_path, content_top,
+                        breadcrumb_frame, [fallback_entry], layout, font_dir, frame_path,
+                        content_top_body, stage=2,
                     )
                 else:
                     _render_image_text_frame(
-                        base_frame, img_pil, text, layout, font_dir, frame_path, content_top,
+                        breadcrumb_frame, img_pil, text, layout, font_dir, frame_path,
+                        content_top_body, stage=2,
                     )
 
             elif scene_type == "text_only":
@@ -695,7 +719,8 @@ def _render_pipeline(
                     max_slots,
                 )
                 _render_text_only_frame(
-                    base_frame, text_only_history, layout, font_dir, frame_path, content_top,
+                    breadcrumb_frame, text_only_history, layout, font_dir, frame_path,
+                    content_top_body, stage=2,
                 )
 
             elif scene_type == "image_only":
@@ -718,8 +743,9 @@ def _render_pipeline(
                 reveal = entry.get("item_idx")
                 reveal_count = (reveal + 1) if reveal is not None else None
                 _render_comments_frame(
-                    base_frame, items or [], layout, font_dir, frame_path, content_top,
-                    reveal_count=reveal_count,
+                    breadcrumb_frame_no_title, items or [], layout, font_dir, frame_path,
+                    content_top_comments,
+                    reveal_count=reveal_count, stage=3,
                 )
                 # Tone L: 새로 드러난 카드가 즉시 나타나지 않고 짧게 페이드인하도록
                 # 낮은 alpha의 서브프레임을 미리 렌더한다 (정적 concat 경로 전용 —
@@ -730,8 +756,9 @@ def _render_pipeline(
                     for step_i, alpha in enumerate(_COMMENT_FADE_ALPHAS):
                         fade_path = tmp_dir / f"frame_{frame_idx:03d}_cfade{step_i}.png"
                         _render_comments_frame(
-                            base_frame, items or [], layout, font_dir, fade_path, content_top,
-                            reveal_count=reveal_count, fade_alpha=alpha,
+                            breadcrumb_frame_no_title, items or [], layout, font_dir, fade_path,
+                            content_top_comments,
+                            reveal_count=reveal_count, fade_alpha=alpha, stage=3,
                         )
                         fade_paths.append(fade_path)
                     comment_fade_frames[frame_idx] = fade_paths
@@ -1124,17 +1151,30 @@ def render_layout_video_from_scenes(
                 )
             break
 
-    # ── 메타 정보 빌드 (제목블록 메타줄 표시용) ──────────────────────────
+    # ── 메타 정보 빌드 (제목블록/브레드크럼 메타줄 표시용) ──────────────────
     _stats: dict = post.stats if isinstance(post.stats, dict) else {}
     _author_raw: str = getattr(post, "author", None) or ""
+    # SceneDirector가 모든 씬에 동일하게 세팅한 category/view_count(variant_config 유래) —
+    # again_spring 전용 필드. 없으면 None → meta.get(...) 쪽에서 자연히 생략됨.
+    _scene_category = next(
+        (getattr(sc, "category", None) for sc in scenes if getattr(sc, "category", None)), None,
+    )
+    _scene_view_count = next(
+        (getattr(sc, "view_count", None) for sc in scenes if getattr(sc, "view_count", None) is not None),
+        None,
+    )
     meta: dict = {
         "author": _author_raw or None,          # None이면 config author_fallback 사용
         "time": _relative_time(getattr(post, "created_at", None)),
-        "views": _fmt_count(_stats.get("views")),
+        "views": _fmt_count(_scene_view_count) if _scene_view_count is not None else _fmt_count(_stats.get("views")),
         "comments": _stats.get("comments_count") or 0,
+        "category": _scene_category,
     }
 
-    # Again Spring 외부 잡: 브랜드를 "다시봄"으로 + 웹 사연 상세(Tone L) 크롬으로 재도색.
+    # Again Spring 외부 잡: 웹 사연 상세(Tone L) 크롬으로 재도색.
+    # 브랜드명·author_fallback은 layout.json themes.tone_l(=deep_merge 결과)이 SSOT —
+    # 여기서 다시 덮어쓰지 않는다(과거 "다시봄" 하드코딩 오버라이드 제거, 새 디자인의
+    # "다시봄 광장" 채널명 / "익명" author_fallback이 그대로 적용되도록).
     # 다른 사이트(와글 기본 옐로우 브랜드)는 이 블록을 타지 않으므로 영향 없음.
     if _is_again_spring:
         import copy
@@ -1143,12 +1183,6 @@ def render_layout_video_from_scenes(
         _deep_merge(layout.setdefault("global", {}), tone_l.get("global", {}))
         _deep_merge(layout.setdefault("scenes", {}), tone_l.get("scenes", {}))
         layout["global"]["theme"] = "tone_l"
-        layout.setdefault("global", {}).setdefault("header", {})["channel_name"] = "다시봄"
-        layout.setdefault("global", {}).setdefault("title_block", {}).setdefault("meta", {})[
-            "author_fallback"
-        ] = "다시봄"
-        if not meta.get("author"):
-            meta["author"] = "다시봄"
 
     return _render_pipeline(
         post.id, post.title or "", sentences, plan, images,

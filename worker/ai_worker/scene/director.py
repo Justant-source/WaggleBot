@@ -56,6 +56,33 @@ def _resolve_metaphor_intro_image(post, variant_config: dict | None = None) -> s
             return str(c)
     return None
 
+
+def _resolve_metaphor_images(variant_config: dict | None = None) -> list[str]:
+    """again_spring: variant_config.metaphor_ids (list, preferred) or metaphor_id (single, legacy)
+    → ordered list of existing local PNG paths under assets/metaphors/{id}.png. First entry = representative.
+    """
+    from pathlib import Path as _P
+    cfg = variant_config if isinstance(variant_config, dict) else {}
+    ids = cfg.get("metaphor_ids") or cfg.get("metaphorIds")
+    if not isinstance(ids, list) or not ids:
+        single = cfg.get("metaphor_id") or cfg.get("metaphorId")
+        ids = [single] if isinstance(single, str) and single.strip() else []
+    resolved: list[str] = []
+    for mid in ids:
+        if not isinstance(mid, str) or not mid.strip():
+            continue
+        mid = mid.strip()
+        candidates = [
+            _P("/app/assets/metaphors") / f"{mid}.png",
+            _P(__file__).resolve().parents[3] / "assets" / "metaphors" / f"{mid}.png",
+            _P("/home/justant/Data/WaggleBot/assets/metaphors") / f"{mid}.png",
+        ]
+        for c in candidates:
+            if c.is_file():
+                resolved.append(str(c))
+                break
+    return resolved
+
 SceneType = Literal["intro", "video_text", "image_text", "text_only", "image_only", "outro", "comments", "chat"]
 
 # 반전/충격 키워드가 등장하면 단독 강조 처리
@@ -104,6 +131,9 @@ class SceneDecision:
     dwell_sec: float = 4.0                   # 무음 체류 시간 (comments/chat 씬)
     # --- 채팅 씬 전용 필드 ---
     chat_messages: list[dict] | None = None  # [{"sender":str,"text":str,"is_mine":bool}]
+    # --- 메타데이터 필드 ---
+    category: str | None = None              # 콘텐츠 카테고리 (variant_config에서 전달)
+    view_count: int | None = None            # 뷰 수 (variant_config에서 전달)
 
 
 @dataclass
@@ -1017,16 +1047,21 @@ def distribute_images(
     max_images: int,
     tts_emotion: str = "",
     mood: str = "daily",
+    enable_video_bucket: bool = True,
 ) -> list[SceneDecision]:
     """본문 아이템에 이미지를 균등 분배 + 씬 유형 균형 배분.
 
     씬 유형 균형:
-    - 이미지 있을 때 (1:1:1): 비디오+텍스트 : 정적텍스트 : 이미지+텍스트
-    - 이미지 없을 때 (1:1): 비디오+텍스트 : 정적텍스트
+    - enable_video_bucket=True (기본, 다른 사이트):
+      이미지 있을 때 (1:1:1): 비디오+텍스트 : 정적텍스트 : 이미지+텍스트
+      이미지 없을 때 (1:1): 비디오+텍스트 : 정적텍스트
+    - enable_video_bucket=False (again_spring):
+      이미지 있을 때: 이미지+텍스트를 균등 분배, 나머지는 모두 text_only (비디오 없음)
+      이미지 없을 때: 모든 씬이 text_only (정적)
 
     video_mode 사전 할당:
-    - 비디오 씬: video_mode="t2v" (Phase 6/7에서 프롬프트+비디오 생성)
-    - 정적/이미지 씬: video_mode="static" (Phase 6/7 자동 스킵)
+    - enable_video_bucket=True: 비디오 씬="t2v", 정적/이미지 씬="static"
+    - enable_video_bucket=False: 모든 씬="static"
 
     Args:
         body_items: (text, voice_override, block_type, author, pre_split_lines) 튜플 리스트
@@ -1034,6 +1069,7 @@ def distribute_images(
         max_images: 최대 이미지 사용 수
         tts_emotion: TTS 감정 키
         mood: 콘텐츠 mood 키
+        enable_video_bucket: 비디오 버킷 분배 활성화 (기본값 True)
     """
     # 4-튜플 (text, voice, block_type, author) → 5-튜플 (…, pre_split_lines=None)로 정규화
     body_items = [
@@ -1074,92 +1110,134 @@ def distribute_images(
     has_images = bool(remaining_imgs)
 
     if has_images:
-        # ── 이미지 있음: 1:1:1 (비디오 : 정적텍스트 : 이미지+텍스트) ──
-        n_available = len(remaining_imgs)
-        base = total // 3
-        remainder = total % 3
-        n_video = base + (1 if remainder >= 1 else 0)
-        n_image_text = min(base + (1 if remainder >= 2 else 0), n_available)
-        n_static = total - n_video - n_image_text
+        if enable_video_bucket:
+            # ── 이미지 있음, enable_video_bucket=True: 1:1:1 (비디오 : 정적텍스트 : 이미지+텍스트) ──
+            n_available = len(remaining_imgs)
+            base = total // 3
+            remainder = total % 3
+            n_video = base + (1 if remainder >= 1 else 0)
+            n_image_text = min(base + (1 if remainder >= 2 else 0), n_available)
+            n_static = total - n_video - n_image_text
 
-        # image_text 위치: 균등 분배 (기존 interval 로직)
-        if n_image_text > 0:
-            interval = total / (n_image_text + 1)
-            img_positions = sorted(
-                {round(interval * (k + 1)) - 1 for k in range(n_image_text)}
-            )
+            # image_text 위치: 균등 분배 (기존 interval 로직)
+            if n_image_text > 0:
+                interval = total / (n_image_text + 1)
+                img_positions = sorted(
+                    {round(interval * (k + 1)) - 1 for k in range(n_image_text)}
+                )
+            else:
+                img_positions = []
+            img_pos_set = set(img_positions)
+
+            # 나머지 위치에서 비디오/정적 교대 배치
+            non_img_indices = [i for i in range(total) if i not in img_pos_set]
+            video_positions: set[int] = set()
+            place_video = True
+            v_placed = 0
+            s_placed = 0
+            for idx in non_img_indices:
+                if place_video and v_placed < n_video:
+                    video_positions.add(idx)
+                    v_placed += 1
+                    place_video = False
+                elif s_placed < n_static:
+                    s_placed += 1
+                    place_video = True
+                else:
+                    video_positions.add(idx)
+                    v_placed += 1
+
+            # 씬 생성
+            img_idx = 0
+            scenes: list[SceneDecision] = []
+            for line_idx, (text, voice, bt, au, psl) in enumerate(body_items):
+                if line_idx in img_pos_set and img_idx < n_image_text:
+                    scenes.append(_make(
+                        "image_text", text, remaining_imgs[img_idx],
+                        voice, bt, au, psl, video_mode="static",
+                    ))
+                    img_idx += 1
+                elif line_idx in video_positions:
+                    scenes.append(_make(
+                        "text_only", text, voice=voice, block_type=bt,
+                        author=au, pre_split_lines=psl, video_mode="t2v",
+                    ))
+                else:
+                    scenes.append(_make(
+                        "text_only", text, voice=voice, block_type=bt,
+                        author=au, pre_split_lines=psl, video_mode="static",
+                    ))
         else:
-            img_positions = []
-        img_pos_set = set(img_positions)
+            # ── 이미지 있음, enable_video_bucket=False: 이미지 균등분배, 나머지 text_only ──
+            n_available = len(remaining_imgs)
+            n_image_text = min(n_available, total)
+            n_static = total - n_image_text
 
-        # 나머지 위치에서 비디오/정적 교대 배치
-        non_img_indices = [i for i in range(total) if i not in img_pos_set]
-        video_positions: set[int] = set()
-        place_video = True
-        v_placed = 0
-        s_placed = 0
-        for idx in non_img_indices:
-            if place_video and v_placed < n_video:
-                video_positions.add(idx)
-                v_placed += 1
-                place_video = False
-            elif s_placed < n_static:
-                s_placed += 1
-                place_video = True
+            # image_text 위치: 균등 분배 (enable_video_bucket=True와 동일한 interval 로직)
+            if n_image_text > 0:
+                interval = total / (n_image_text + 1)
+                img_positions = sorted(
+                    {round(interval * (k + 1)) - 1 for k in range(n_image_text)}
+                )
             else:
-                video_positions.add(idx)
-                v_placed += 1
+                img_positions = []
+            img_pos_set = set(img_positions)
 
-        # 씬 생성
-        img_idx = 0
-        scenes: list[SceneDecision] = []
-        for line_idx, (text, voice, bt, au, psl) in enumerate(body_items):
-            if line_idx in img_pos_set and img_idx < n_image_text:
-                scenes.append(_make(
-                    "image_text", text, remaining_imgs[img_idx],
-                    voice, bt, au, psl, video_mode="static",
-                ))
-                img_idx += 1
-            elif line_idx in video_positions:
-                scenes.append(_make(
-                    "text_only", text, voice=voice, block_type=bt,
-                    author=au, pre_split_lines=psl, video_mode="t2v",
-                ))
-            else:
-                scenes.append(_make(
-                    "text_only", text, voice=voice, block_type=bt,
-                    author=au, pre_split_lines=psl, video_mode="static",
-                ))
+            # 씬 생성 (비디오 없음, 모든 non-image는 text_only with static mode)
+            img_idx = 0
+            scenes: list[SceneDecision] = []
+            for line_idx, (text, voice, bt, au, psl) in enumerate(body_items):
+                if line_idx in img_pos_set and img_idx < n_image_text:
+                    scenes.append(_make(
+                        "image_text", text, remaining_imgs[img_idx],
+                        voice, bt, au, psl, video_mode="static",
+                    ))
+                    img_idx += 1
+                else:
+                    scenes.append(_make(
+                        "text_only", text, voice=voice, block_type=bt,
+                        author=au, pre_split_lines=psl, video_mode="static",
+                    ))
     else:
-        # ── 이미지 없음: 1:1 (비디오 : 정적텍스트) ──
-        n_video = (total + 1) // 2
-        n_static = total - n_video
+        # ── 이미지 없음 ──
+        if enable_video_bucket:
+            # enable_video_bucket=True: 1:1 (비디오 : 정적텍스트)
+            n_video = (total + 1) // 2
+            n_static = total - n_video
 
-        scenes = []
-        place_video = True
-        v_placed = 0
-        s_placed = 0
-        for text, voice, bt, au, psl in body_items:
-            if place_video and v_placed < n_video:
-                scenes.append(_make(
-                    "text_only", text, voice=voice, block_type=bt,
-                    author=au, pre_split_lines=psl, video_mode="t2v",
-                ))
-                v_placed += 1
-                place_video = False
-            elif s_placed < n_static:
+            scenes = []
+            place_video = True
+            v_placed = 0
+            s_placed = 0
+            for text, voice, bt, au, psl in body_items:
+                if place_video and v_placed < n_video:
+                    scenes.append(_make(
+                        "text_only", text, voice=voice, block_type=bt,
+                        author=au, pre_split_lines=psl, video_mode="t2v",
+                    ))
+                    v_placed += 1
+                    place_video = False
+                elif s_placed < n_static:
+                    scenes.append(_make(
+                        "text_only", text, voice=voice, block_type=bt,
+                        author=au, pre_split_lines=psl, video_mode="static",
+                    ))
+                    s_placed += 1
+                    place_video = True
+                else:
+                    scenes.append(_make(
+                        "text_only", text, voice=voice, block_type=bt,
+                        author=au, pre_split_lines=psl, video_mode="t2v",
+                    ))
+                    v_placed += 1
+        else:
+            # enable_video_bucket=False: 모든 씬이 text_only with static mode
+            scenes = []
+            for text, voice, bt, au, psl in body_items:
                 scenes.append(_make(
                     "text_only", text, voice=voice, block_type=bt,
                     author=au, pre_split_lines=psl, video_mode="static",
                 ))
-                s_placed += 1
-                place_video = True
-            else:
-                scenes.append(_make(
-                    "text_only", text, voice=voice, block_type=bt,
-                    author=au, pre_split_lines=psl, video_mode="t2v",
-                ))
-                v_placed += 1
 
     n_v = sum(1 for s in scenes if s.video_mode == "t2v")
     n_s = sum(1 for s in scenes if s.video_mode == "static" and s.type == "text_only")
@@ -1206,6 +1284,7 @@ class SceneDirector:
         self.outro_text = outro_text if outro_text and outro_text.strip() else None
         self.site_code = site_code
         self.variant_config = variant_config if isinstance(variant_config, dict) else {}
+        self._extra_metaphors: list[str] = []  # again_spring: 추가 metaphor 이미지 (intro 제외)
         self._character_voices: dict[str, str] = {}       # character_label → voice_key
         self._comment_author_voices: dict[str, str] = {}  # author → voice_key
         self._chat_sender_voices: dict[str, str] = {}     # sender → voice_key
@@ -1298,8 +1377,10 @@ class SceneDirector:
             intro_type = "image_text"
         elif self.site_code == "again_spring":
             # Again Spring: metaphor illustration or blank cream (never mood stock / empty box)
-            intro_img = _resolve_metaphor_intro_image(None, self.variant_config)
+            metaphor_paths = _resolve_metaphor_images(self.variant_config)
+            intro_img = metaphor_paths[0] if metaphor_paths else None
             intro_type = "intro"
+            self._extra_metaphors = metaphor_paths[1:]
         else:
             # 이미지 없으면 mood 폴더에서 랜덤 (로컬 에셋이므로 타입은 항상 intro)
             intro_asset = _pick_asset("intro_image_dir")
@@ -1337,32 +1418,49 @@ class SceneDirector:
             else:
                 body_items.append((str(item), self.narrator_voice, "body", None, None))
 
-        # 모드 결정: LLM vs rule_based
-        director_mode = get_domain_setting(
-            "scene", "scene_director", "mode", default="rule_based",
-        )
-        from config.settings import VIDEO_GEN_ENABLED
+        # Again Spring: 추가 metaphor 이미지를 본문 이미지에 주입 (intro 이미지 제외)
+        if self.site_code == "again_spring" and self._extra_metaphors:
+            self._images = list(self._extra_metaphors) + list(self._images)
 
-        if director_mode == "llm" and VIDEO_GEN_ENABLED:
-            body_scenes = self._llm_direct_body(
-                body_items=body_items,
-                body_images=list(self._images),
-                tts_emotion=tts_emotion,
-                mood=mood,
-                max_body_images=max_body_images,
-            )
-            if body_scenes is None:
-                # LLM 실패 시 rule_based 폴백
-                logger.warning("[scene_director] LLM 실패 — rule_based 폴백")
-                body_scenes = distribute_images(
-                    body_items, list(self._images), max_body_images,
-                    tts_emotion=tts_emotion, mood=mood,
-                )
-        else:
+        # enable_video_bucket: again_spring은 False (비디오 생성 없음), 다른 사이트는 True (기본)
+        enable_video_bucket = (self.site_code != "again_spring")
+
+        # again_spring: LLM director 우회 — 비디오 생성 없음, distribute_images 직접 사용
+        if self.site_code == "again_spring":
             body_scenes = distribute_images(
                 body_items, list(self._images), max_body_images,
                 tts_emotion=tts_emotion, mood=mood,
+                enable_video_bucket=False,
             )
+        else:
+            # 모드 결정: LLM vs rule_based (다른 사이트에만 적용)
+            director_mode = get_domain_setting(
+                "scene", "scene_director", "mode", default="rule_based",
+            )
+            from config.settings import VIDEO_GEN_ENABLED
+
+            if director_mode == "llm" and VIDEO_GEN_ENABLED:
+                body_scenes = self._llm_direct_body(
+                    body_items=body_items,
+                    body_images=list(self._images),
+                    tts_emotion=tts_emotion,
+                    mood=mood,
+                    max_body_images=max_body_images,
+                )
+                if body_scenes is None:
+                    # LLM 실패 시 rule_based 폴백
+                    logger.warning("[scene_director] LLM 실패 — rule_based 폴백")
+                    body_scenes = distribute_images(
+                        body_items, list(self._images), max_body_images,
+                        tts_emotion=tts_emotion, mood=mood,
+                        enable_video_bucket=enable_video_bucket,
+                    )
+            else:
+                body_scenes = distribute_images(
+                    body_items, list(self._images), max_body_images,
+                    tts_emotion=tts_emotion, mood=mood,
+                    enable_video_bucket=enable_video_bucket,
+                )
 
         # _images에서 사용된 이미지 소모 추적
         used_img_count = sum(1 for s in body_scenes if s.image_url is not None)
@@ -1447,6 +1545,14 @@ class SceneDirector:
             tts_emotion,
             bgm_path,
         )
+
+        # 모든 씬에 메타데이터 설정
+        _category = self.variant_config.get("category") if isinstance(self.variant_config, dict) else None
+        _view_count = self.variant_config.get("view_count") if isinstance(self.variant_config, dict) else None
+        for s in scenes:
+            s.category = _category
+            s.view_count = _view_count
+
         return scenes
 
     # ------------------------------------------------------------------

@@ -123,8 +123,11 @@ public class ExternalIngestService {
         upsertComments(post.getId(), req.comments());
         String ttsVoice = (options != null && options.ttsVoice() != null) ? options.ttsVoice().trim() : null;
         String metaphorId = (options != null && options.metaphorId() != null) ? options.metaphorId().trim() : null;
+        List<String> metaphorIds = (options != null && options.metaphorIds() != null) ? options.metaphorIds() : null;
         String commentVoices = (options != null && options.commentVoices() != null) ? options.commentVoices().trim() : null;
-        upsertContent(post.getId(), now, req, videoGen, paired, outroText, autoHdRender, ttsVoice, metaphorId, commentVoices);
+        String category = req.category() != null ? req.category().trim() : null;
+        Integer viewCount = req.viewCount();
+        upsertContent(post.getId(), now, req, videoGen, paired, outroText, autoHdRender, ttsVoice, metaphorId, metaphorIds, commentVoices, category, viewCount);
 
         log.info(
             "[external] ingest 완료: site={} originId={} postId={} paired={} videoGen={} autoHdRender={}",
@@ -184,7 +187,10 @@ public class ExternalIngestService {
         boolean videoGen, boolean paired, String outroText, boolean autoHdRender,
         String ttsVoice,
         String metaphorId,
-        String commentVoices
+        List<String> metaphorIds,
+        String commentVoices,
+        String category,
+        Integer viewCount
     ) {
         Content content = contentRepo.findByPostId(postId).orElseGet(() -> {
             Content c = new Content();
@@ -206,6 +212,15 @@ public class ExternalIngestService {
         }
         if (metaphorId != null && !metaphorId.isBlank()) {
             variantConfig.put("metaphor_id", metaphorId);
+        }
+        if (metaphorIds != null && !metaphorIds.isEmpty()) {
+            variantConfig.putPOJO("metaphor_ids", metaphorIds);
+        }
+        if (category != null && !category.isBlank()) {
+            variantConfig.put("category", category);
+        }
+        if (viewCount != null) {
+            variantConfig.put("view_count", viewCount);
         }
         if (commentVoices != null && !commentVoices.isBlank()) {
             // JSON array string preferred; comma-separated also accepted by Python resolver

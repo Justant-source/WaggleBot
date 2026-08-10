@@ -343,115 +343,224 @@
   },
   "themes": {
     "tone_l": {
-      "description": "다시봄(Again Spring) Tone L — 웹 사연 상세 페이지와 동일한 편지지 톤. site_code=='again_spring' 전용, 다른 사이트(와글 기본)에는 병합되지 않는다.",
+      "description": "다시봄(Again Spring) Tone L — 편지지 톤 + 식물 브랜드 마크 + 진영 리본 + 캐러셀 스텝 닷. site_code=='again_spring' 전용.",
       "global": {
-        "background_color": "#EDF1E8",
+        "background_color": "#F5EFE6",
         "header": {
-          "bg_color": "#EDF1E8",
-          "ink_color": "#2E3A2E",
-          "border_color": "#D3DCC9",
-          "border_thickness": 2
+          "height": 200,
+          "bg_color": "#FFF8F0",
+          "border_color": "#E5DED2",
+          "border_thickness": 2,
+          "ink_color": "#5C4030",
+          "channel_name": "다시봄 광장",
+          "title_font_size": 46
+        },
+        "palette": {
+          "bg": "#F5EFE6",
+          "surface": "#FFF8F0",
+          "card": "#FFFFFF",
+          "border": "#E5DED2",
+          "ink": "#5C4030",
+          "muted": "#A08670",
+          "peach": "#C9785A",
+          "sage": "#5F8F76"
         },
         "title_block": {
-          "color": "#2E3A2E",
+          "pad_top": 32,
+          "pad_x": 90,
+          "font_size": 50,
+          "color": "#5C4030",
+          "weight": "bold",
+          "line_height": 62,
+          "max_lines": 3,
           "meta": {
-            "color": "#7C8A77",
-            "sep": " · "
+            "gap_top": 16,
+            "font_size": 28,
+            "color": "#A08670",
+            "weight": "medium",
+            "sep": " · ",
+            "author_fallback": "익명"
           },
           "divider": {
-            "color": "#D3DCC9"
+            "gap_top": 20,
+            "thickness": 2,
+            "color": "#E5DED2"
           }
         }
       },
       "scenes": {
         "intro": {
-          "caption": {
-            "color": "#2E3A2E"
+          "description": "Tone L intro — 카테고리 칩 + 제목 + 메타 + COVER 이미지 (하단까지 확장)",
+          "chips": {
+            "gap_top": 28,
+            "font_size": 26,
+            "gap_between": 12
+          },
+          "title": {
+            "gap_top": 36,
+            "font_size": 62,
+            "line_height": 76
+          },
+          "meta": {
+            "gap_top": 22,
+            "font_size": 28,
+            "color": "#A08670"
+          },
+          "media": {
+            "gap_top": 48,
+            "radius": 16,
+            "fit_mode": "cover"
           }
         },
         "image_text": {
-          "caption_above": {
-            "color": "#2E3A2E"
+          "description": "Tone L image_text — 브레드크럼 + 제목(작은 muted) + 카드 안 인용문 + 1:1 사진",
+          "breadcrumb": {
+            "gap_top": 28,
+            "font_size": 26
+          },
+          "title": {
+            "gap_top": 20,
+            "font_size": 38,
+            "color": "#A08670"
+          },
+          "card": {
+            "gap_top": 36,
+            "radius": 28,
+            "pad": 44,
+            "shadow": true
+          },
+          "quote": {
+            "font_size": 54,
+            "line_height": 68,
+            "font_weight": 700,
+            "color": "#5C4030"
+          },
+          "image": {
+            "gap_top": 40,
+            "size": "1:1",
+            "radius": 20
           }
         },
         "text_only": {
-          "elements": {
-            "text_area": {
-              "color": "#2E3A2E"
-            }
-          }
-        },
-        "video_text": {
-          "caption_above": {
-            "color": "#2E3A2E"
+          "description": "Tone L text_only — 브레드크럼 + 누적 bullet 라인 (현재=peach bullet+ink text, 과거=border bullet+muted text)",
+          "breadcrumb": {
+            "gap_top": 8,
+            "font_size": 26
           },
-          "elements": {
-            "text_area": {
-              "color": "#2E3A2E"
-            }
+          "bullets": {
+            "gap_top": 64,
+            "font_size": 52,
+            "line_height": 84,
+            "bullet_size": 20,
+            "bullet_gap": 16
           }
         },
         "comments": {
-          "description": "다시봄 댓글 카드 — Tone L(편지지) 카드형, 닉네임 미디엄 블러 + 진영 표시(*+피치/세이지)",
+          "description": "Tone L comments — 댓글수 헤더 + 카드형 댓글 목록 (아바타+모자이크 닉네임+본문+푸터) + 최상 댓글 peach 보더",
           "sort_bar": {
-            "count_color": "#2E3A2E",
-            "label_color": "#7C8A77",
-            "divider_color": "#D3DCC9"
+            "gap_top": 8,
+            "font_size": 36,
+            "count_font_weight": 700,
+            "count_color": "#5C4030",
+            "label_color": "#A08670",
+            "label": "추천순 ▾",
+            "divider_color": "#E5DED2",
+            "divider_thickness": 2
           },
-          "row": {
-            "style": "card",
-            "max_items": 3,
-            "card_bg": "#F7F9F2",
-            "card_border": "#D3DCC9",
-            "card_border_width": 1,
-            "card_radius": 14,
-            "card_gap": 20,
-            "card_pad_x": 26,
-            "nick_color": "#2E3A2E",
-            "nick_blur_radius": 1.2,
-            "text_color": "#2E3A2E",
-            "footer_color": "#7C8A77",
-            "show_time": true,
-            "faction_colors": {
-              "author": "#C9785A",
-              "partner": "#5F8F76",
-              "neutral": "#2E3A2E"
-            },
-            "best_badge": {
-              "bg": "#8A3A1F",
-              "fg": "#FFFFFF"
-            }
+          "cards": {
+            "gap_top": 30,
+            "gap_between": 24,
+            "radius": 24,
+            "bg": "#FFFFFF",
+            "border": "#E5DED2",
+            "border_width": 1,
+            "best_border": "#C9785A",
+            "pad_x": 24,
+            "pad_y": 20,
+            "max_items": 3
+          },
+          "avatar": {
+            "size": 72,
+            "gap_right": 16,
+            "author_bg": "#C9785A",
+            "partner_bg": "#5F8F76",
+            "neutral_bg": "#A08670",
+            "text_color": "#FFF8F0"
+          },
+          "nickname": {
+            "mosaic_cell": 12,
+            "font_size": 28,
+            "gap_bottom": 4
+          },
+          "text": {
+            "font_size": 36,
+            "line_height": 52,
+            "color": "#5C4030",
+            "max_lines": 2
+          },
+          "footer": {
+            "gap_top": 8,
+            "font_size": 26,
+            "color": "#A08670"
           }
         },
         "outro": {
-          "description": "다시봄 아웃트로 — 마스코트 제거, 세리프 한 줄 질문 + 댓글입력 목업만 유지",
-          "mascot": {
-            "enabled": false
+          "description": "Tone L outro — 식물 마크(200px) + 질문(72px black) + CTA(48px sage underline) + 댓글 입력 목업",
+          "sprout_mark": {
+            "size": 200,
+            "gap_top": 48
           },
-          "content_pad_top_no_mascot": 260,
           "question": {
-            "font_family": "NotoSerifKR-Medium.ttf",
-            "font_size": 56,
-            "color": "#2E3A2E",
-            "max_width": 980,
-            "gap_top": 20,
-            "single_line": true
+            "gap_top": 48,
+            "font_size": 72,
+            "font_weight": 900,
+            "color": "#5C4030",
+            "max_width": 900,
+            "line_height": 90
           },
-          "sub_caption": {
-            "enabled": false
+          "cta": {
+            "gap_top": 40,
+            "font_size": 48,
+            "font_weight": 700,
+            "color": "#5C4030",
+            "underline_color": "#5F8F76"
           },
-          "input_box": {
-            "bg": "#F7F9F2",
-            "border": "#D3DCC9",
-            "avatar_bg": "#2E3A2E",
-            "avatar_fg": "#F7F9F2",
-            "send_color": "#8A3A1F",
-            "gap_top": 72
+          "input_pill": {
+            "gap_top": 72,
+            "height": 104,
+            "radius": 52,
+            "bg": "#FFFFFF",
+            "border": "#E5DED2",
+            "border_width": 2,
+            "avatar_size": 68,
+            "avatar_bg": "#5F8F76",
+            "avatar_label_color": "#FFF8F0",
+            "placeholder": "댓글 추가...",
+            "placeholder_color": "#C4B3A0",
+            "send_color": "#C9785A"
           },
-          "cta_text": {
-            "enabled": false
+          "domain": {
+            "gap_top": 56,
+            "font_size": 34,
+            "font_weight": 700,
+            "color": "#A08670",
+            "letter_spacing": 2
           }
         }
+      },
+      "ribbon": {
+        "height": 22,
+        "left_color": "#C9785A",
+        "right_color": "#5F8F76"
+      },
+      "step_dots": {
+        "gap_bottom": 80,
+        "dot_size": 18,
+        "dot_inactive_color": "#E5DED2",
+        "pill_width": 52,
+        "pill_height": 18,
+        "pill_active_color": "#C9785A",
+        "gap_between": 24
       }
     }
   }

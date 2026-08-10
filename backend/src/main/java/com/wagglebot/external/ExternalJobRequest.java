@@ -15,7 +15,9 @@ public record ExternalJobRequest(
     String body,
     List<CommentInput> comments,
     Boolean paired,
-    OptionsInput options
+    OptionsInput options,
+    String category,
+    Integer viewCount
 ) {
     /**
      * 댓글 씬(Again Spring Shorts)용 입력. 화면 최대 3개까지만 사용된다
@@ -44,5 +46,5 @@ public record ExternalJobRequest(
         }
     }
 
-    public record OptionsInput(Boolean videoGen, Boolean autoHdRender, String ttsVoice, String metaphorId, String commentVoices) {}
+    public record OptionsInput(Boolean videoGen, Boolean autoHdRender, String ttsVoice, String metaphorId, List<String> metaphorIds, String commentVoices) {}
 }
