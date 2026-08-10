@@ -1774,15 +1774,21 @@ class SceneDirector:
             "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else None,
             "side": side,
             "is_best": is_best,
-            "voice": self._assign_comment_voice(author),
+            "voice": self._assign_comment_voice(author, unique_key=str(getattr(comment, "id", None) or "") or None),
         }
 
-    def _assign_comment_voice(self, author: str) -> str | None:
+    def _assign_comment_voice(self, author: str, unique_key: str | None = None) -> str | None:
         """댓글 작성자별 voice 배정. 동일 작성자=동일 목소리.
 
         풀에서 내레이터와 겹치지 않는 키를 우선해 랜덤 선택한다 (최대 다양성).
+
+        again_spring은 모든 댓글이 author="익명"으로 표시되므로(개인정보 보호),
+        author만으로 캐싱하면 서로 다른 댓글이 전부 같은 캐시 키에 쏠려 결국
+        동일 목소리 하나로 고정되는 버그가 있었다(2026-08-10) — 실제로는 서로
+        다른 댓글이니 목소리도 다양하게 배정돼야 한다. unique_key(댓글 DB id 등)가
+        있고 author가 "익명"이면 unique_key로 캐싱해 댓글마다 새로 배정한다.
         """
-        key = author or "익명"
+        key = unique_key if (author == "익명" and unique_key) else (author or "익명")
         if key in self._comment_author_voices:
             return self._comment_author_voices[key]
         if self.comment_voices:
