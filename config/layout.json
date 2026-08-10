@@ -11,9 +11,9 @@
       "description": "인트로 후킹 문장"
     },
     "body_sentence": {
-      "max_chars": 20,
-      "max_lines": 1,
-      "description": "본문 한 줄 (image_text, text_only 공통)"
+      "max_chars": 80,
+      "max_lines": 4,
+      "description": "본문 한 등장(문장) — 길면 여러 시각 줄로 wrap. 화면당 등장 횟수는 text_only max_slots(3)"
     },
     "image_text_caption": {
       "max_chars": 40,
@@ -27,8 +27,8 @@
     },
     "body_line": {
       "max_chars": 40,
-      "max_lines": 2,
-      "description": "본문 한 줄 최대 20자, 최대 2줄"
+      "max_lines": 1,
+      "description": "본문 시각 한 줄 최대 40자 (한 등장이 길면 lines[]로 여러 줄)"
     }
   },
   "canvas": {
@@ -424,7 +424,7 @@
             "color": "#A08670"
           },
           "card": {
-            "gap_top": 36,
+            "gap_top": 120,
             "radius": 28,
             "pad": 44,
             "shadow": true
@@ -433,7 +433,8 @@
             "font_size": 54,
             "line_height": 68,
             "font_weight": 700,
-            "color": "#5C4030"
+            "color": "#5C4030",
+            "max_lines": 8
           },
           "image": {
             "gap_top": 40,
@@ -452,7 +453,8 @@
             "font_size": 52,
             "line_height": 84,
             "bullet_size": 20,
-            "bullet_gap": 16
+            "bullet_gap": 16,
+            "slot_gap": 28
           }
         },
         "comments": {
@@ -505,7 +507,7 @@
           }
         },
         "outro": {
-          "description": "Tone L outro — 식물 마크(200px) + 질문(72px black) + CTA(48px sage underline) + 댓글 입력 목업",
+          "description": "Tone L outro — 식물 마크(200px) + 질문(72px) + 댓글 입력 목업 (CTA 문구 \"남겨주세요\" 류는 제거)",
           "sprout_mark": {
             "size": 200,
             "gap_top": 48
@@ -523,7 +525,9 @@
             "font_size": 48,
             "font_weight": 700,
             "color": "#5C4030",
-            "underline_color": "#5F8F76"
+            "underline_color": "#5F8F76",
+            "enabled": false,
+            "text": ""
           },
           "input_pill": {
             "gap_top": 72,

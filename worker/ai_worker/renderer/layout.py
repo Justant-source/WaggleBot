@@ -3,7 +3,7 @@
 씬 타입:
   intro     - 제목만 (title_only.svg)   → 베이스 프레임 그대로 사용
   image_text  - 이미지 + 텍스트 (image_text.svg)
-  text_only - 텍스트만, 3슬롯 고정 Y (text_only.svg)
+  text_only - 텍스트만, 등장(문장) 최대 3회 누적 후 clear (각 등장은 여러 시각 줄 가능)
   outro     - 이미지만 (image_only.svg)   → 이미지가 남을 때 마지막 1프레임
 
 핵심 설계:
@@ -233,7 +233,12 @@ def _append_text_only_line(
     block_type: str,
     max_slots: int,
 ) -> list[dict]:
-    """Append one spoken line, resetting only after the third visible line."""
+    """Append one spoken *appearance* (sentence), resetting after max_slots appearances.
+
+    ``lines`` may contain multiple visual wrap lines for a single long sentence.
+    ``max_slots`` counts appearances (문장 추가 횟수), not visual line count —
+    a page may therefore show more than ``max_slots`` visual lines when sentences wrap.
+    """
     if len(history) >= max_slots:
         history = []
     return [*history, {"lines": lines, "block_type": block_type}]
@@ -706,11 +711,7 @@ def _render_pipeline(
                 # v3: 이전 슬롯 흐림(greying) 제거 — 전 슬롯 동일 검정
                 new_lines = sentences[sent_idx]["lines"] if sent_idx is not None else []
 
-                if len(text_only_history) >= max_slots:
-                    if len(new_lines) > max_slots:
-                        logger.warning("[layout] 프레임 %d: %d줄 초과 — 단독 표시",
-                                       frame_idx, len(new_lines))
-
+                # new_lines는 한 등장(문장)의 시각 wrap 줄 — max_slots와 무관하게 허용
                 sent_data = sentences[sent_idx] if sent_idx is not None else {}
                 text_only_history = _append_text_only_line(
                     text_only_history,

@@ -1,7 +1,6 @@
 {
   "_version": "2.0",
   "_description": "WaggleBot 쇼츠 화면 구성 정책. 이 파일만 수정하면 연출이 바뀐다. 모든 에셋은 폴더 단위로 관리하며 런타임에 랜덤 선택.",
-
   "moods": {
     "touching": {
       "label": "감동",
@@ -67,7 +66,6 @@
       "tts_emotion": "surprised"
     }
   },
-
   "scene_rules": {
     "intro": {
       "description": "제목을 읽어주는 첫 화면",
@@ -84,24 +82,27 @@
     },
     "body": {
       "description": "본문을 읽는 화면들",
-      "with_image": { "layout": "image_text" },
-      "without_image": { "layout": "text_only" },
+      "with_image": {
+        "layout": "image_text"
+      },
+      "without_image": {
+        "layout": "text_only"
+      },
       "image_distribution": "even_spread",
       "image_distribution_note": "공식: interval = total_lines / (remaining_images + 1)"
     },
     "outro": {
-      "description": "마지막 화면 — 참여 유도형 질문 + 마스코트 + 댓글 입력창 목업 (구독유도 제거)",
+      "description": "마지막 화면 — 참여 유도형 질문 + 댓글 입력창 목업 (댓글 CTA 문구 없음)",
       "layout": "outro",
       "fixed_texts": [
         "여러분이라면 어떻게 하셨을까요?",
         "이 상황, 어떻게 생각하시나요?",
-        "여러분의 생각을 댓글로 알려주세요!",
         "이게 맞는 행동일까요?",
         "이 이야기, 어떻게 생각하시나요?"
       ],
       "fixed_text_selection": "random",
       "narrate": true,
-      "note": "TTS로 질문 문구 내레이션. 마스코트·입력창 목업은 _frames.py 코드 드로잉"
+      "note": "TTS로 질문 문구 내레이션. '댓글로 남겨/알려주세요' 류 CTA 문구는 사용하지 않음."
     },
     "chat": {
       "description": "카카오톡 대화 버블 씬 — LLM이 추출한 chat_messages",
@@ -122,12 +123,20 @@
       "note": "likes 내림차순 정렬. 1위 is_best=true. 댓글별 TTS 낭독, 작성자별 다른 목소리"
     }
   },
-
   "defaults": {
     "fallback_mood": "daily",
     "max_body_images": 20,
     "min_body_lines_per_image": 2,
-    "supported_image_ext": [".png", ".jpg", ".jpeg", ".webp"],
-    "supported_bgm_ext": [".mp3", ".wav", ".ogg"]
+    "supported_image_ext": [
+      ".png",
+      ".jpg",
+      ".jpeg",
+      ".webp"
+    ],
+    "supported_bgm_ext": [
+      ".mp3",
+      ".wav",
+      ".ogg"
+    ]
   }
 }

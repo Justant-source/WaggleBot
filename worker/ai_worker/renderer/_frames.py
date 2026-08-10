@@ -1129,7 +1129,9 @@ def _render_image_text_frame(
         q_lh = quote_cfg.get("line_height", 68)
         q_font = _load_font(font_dir, _body_font_file(layout), q_fs)
         inner_w = card_w - 2 * card_pad
-        q_lines = _wrap_korean(text, q_font, inner_w, keep_all=True)[:4]
+        # max_lines: 문장 1회 등장당 시각 줄 수 상한(길면 wrap). 등장 횟수 제한이 아님.
+        q_max_lines = int(quote_cfg.get("max_lines", 8))
+        q_lines = _wrap_korean(text, q_font, inner_w, keep_all=True)[:q_max_lines]
 
         img_size = card_w - 2 * card_pad
         img_gap = image_cfg.get("gap_top", 40)
@@ -1239,14 +1241,18 @@ def _render_text_only_frame(
         font = _load_font(font_dir, _body_font_file(layout), font_size)
 
         y = content_top + bul_cfg.get("gap_top", 64)
+        slot_gap = int(bul_cfg.get("slot_gap", 28))
         last_idx = len(text_history) - 1
         for entry_i, entry in enumerate(text_history):
+            # 등장(문장 추가) 단위로 색 구분 — 한 등장이 길면 여러 시각 줄로 wrap
             is_current = entry_i == last_idx
             text_color = palette.get("ink", "#5C4030") if is_current else palette.get("muted", "#A08670")
             lines = entry.get("lines", [])
             for line_text in lines:
                 draw.text((pad_x, y), line_text, font=font, fill=text_color)
                 y += lh
+            if entry_i < last_idx:
+                y += slot_gap
 
         _draw_step_dots(draw, cw, stage or 2, layout)
         _draw_ribbon(draw, cw, ch, layout)
@@ -1369,14 +1375,17 @@ def _render_outro_frame(
         _draw_centered_text(draw, q_lines, q_font, q_y, q_lh, q_cfg.get("color", "#5C4030"), cw)
         y = q_y + len(q_lines) * q_lh
 
-        cta_fs = cta_cfg.get("font_size", 48)
-        cta_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", cta_fs)
-        cta_text = "댓글로 여러분의 생각을 남겨주세요"
-        cta_lines = _wrap_korean(cta_text, cta_font, 900)
-        cta_y = y + cta_cfg.get("gap_top", 40)
-        _draw_centered_text(draw, cta_lines, cta_font, cta_y, int(cta_fs * 1.4),
-                            cta_cfg.get("color", "#5C4030"), cw)
-        y = cta_y + len(cta_lines) * int(cta_fs * 1.4)
+        # CTA 문구("댓글로 여러분의 생각을 남겨주세요" 등) — enabled=false면 완전 생략
+        if cta_cfg.get("enabled", False):
+            cta_fs = cta_cfg.get("font_size", 48)
+            cta_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", cta_fs)
+            cta_text = cta_cfg.get("text", "").strip()
+            if cta_text:
+                cta_lines = _wrap_korean(cta_text, cta_font, 900)
+                cta_y = y + cta_cfg.get("gap_top", 40)
+                _draw_centered_text(draw, cta_lines, cta_font, cta_y, int(cta_fs * 1.4),
+                                    cta_cfg.get("color", "#5C4030"), cw)
+                y = cta_y + len(cta_lines) * int(cta_fs * 1.4)
 
         box_w = pill_cfg.get("width", 860)
         box_h = pill_cfg.get("height", 104)
