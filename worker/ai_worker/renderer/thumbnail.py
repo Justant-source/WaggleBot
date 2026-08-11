@@ -629,3 +629,13 @@ def get_thumbnail_path(site_code: str, origin_id: str) -> Path:
     thumb_dir = MEDIA_DIR / "thumbnails" / site_code
     thumb_dir.mkdir(parents=True, exist_ok=True)
     return thumb_dir / f"post_{origin_id}.jpg"
+
+def get_intro_thumbnail_path(site_code: str, origin_id: str) -> Path:
+    """인트로(첫) 프레임 썸네일. media/thumbnails/{site}/post_{id}_intro.png
+
+    Shorts/Reels용 — 메타포+제목 인트로 씬. YouTube Shorts oar 자동프레임은
+    본문 씬을 고를 수 있어 API thumbnails.set 에 이 파일을 올려야 한다.
+    """
+    thumb_dir = MEDIA_DIR / "thumbnails" / site_code
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    return thumb_dir / f"post_{origin_id}_intro.png"

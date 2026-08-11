@@ -251,12 +251,14 @@ Spring 프로퍼티 `app.external.api-key`). 누락·불일치 시 `401 {"error"
   "status": "PREVIEW_RENDERED",
   "externalId": "post_xxx",
   "progress": { "currentPhase": 7, "phaseName": "비디오 클립", "scenesDone": 3, "totalScenes": 5 },
-  "artifacts": { "videoUrl": "/api/media/tmp/videos/....mp4", "audioUrl": "/api/media/audio/....wav" },
+  "artifacts": { "videoUrl": "/api/media/tmp/videos/....mp4", "audioUrl": "/api/media/audio/....wav", "thumbnailUrl": "/api/media/thumbnails/again_spring/post_xxx_intro.png" },
   "hdRenderJobId": 456
 }
 ```
 - `progress`: `contents.pipeline_state.progress`를 `ProgressController`와 동일한 규칙으로 snake_case→camelCase 변환. 없으면 `null`.
-- `artifacts`: `status`가 `PREVIEW_RENDERED`/`RENDERED`일 때만 포함, `MediaController`(`/api/media/**`) 기준 상대 경로.
+- `artifacts`: `status`가 `PREVIEW_RENDERED`/`RENDERED`일 때만 포함
+- `artifacts.thumbnailUrl`/`thumbUrl`: 인트로(메타포+제목) PNG. `upload_meta.thumbnail_path`가 있고 파일이 존재할 때만 포함. ASM이 YouTube `thumbnails.set`에 올린다 (Shorts oar 자동프레임 대체).
+, `MediaController`(`/api/media/**`) 기준 상대 경로.
 - `hdRenderJobId`: `status=PREVIEW_RENDERED` + `variant_config.auto_hd_render=true`일 때만 등장. `GalleryController.hdRender()`와 동일하게 활성 `HD_RENDER` 잡이 있으면 그 ID를, 없으면 새로 큐잉한 잡 ID를 반환(중복 큐잉 방지).
 
 ---

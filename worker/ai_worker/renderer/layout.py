@@ -538,6 +538,7 @@ def _render_pipeline(
     meta: dict | None = None,
     narration_audio: Path | None = None,
     comments_fade_enabled: bool = False,
+    intro_thumb_path: Path | None = None,
 ) -> Path:
     """sentences / plan / images 를 받아 mp4를 생성한다.
 
@@ -1027,6 +1028,18 @@ def _render_pipeline(
         return output_path
 
     finally:
+        # Persist intro (frame_000) before tmp cleanup — Shorts thumbnail source.
+        if intro_thumb_path is not None:
+            intro_src = tmp_dir / "frame_000.png"
+            try:
+                if intro_src.is_file() and intro_src.stat().st_size > 1000:
+                    intro_thumb_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(intro_src, intro_thumb_path)
+                    logger.info("[layout] intro thumbnail saved: %s", intro_thumb_path)
+                else:
+                    logger.warning("[layout] intro frame missing/tiny; skip thumb save")
+            except Exception:
+                logger.warning("[layout] intro thumbnail save failed", exc_info=True)
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
@@ -1185,6 +1198,9 @@ def render_layout_video_from_scenes(
         _deep_merge(layout.setdefault("scenes", {}), tone_l.get("scenes", {}))
         layout["global"]["theme"] = "tone_l"
 
+    from ai_worker.renderer.thumbnail import get_intro_thumbnail_path
+
+    intro_thumb = get_intro_thumbnail_path(post.site_code, post.origin_id)
     return _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
@@ -1195,4 +1211,5 @@ def render_layout_video_from_scenes(
         meta=meta,
         narration_audio=Path(narration_audio) if narration_audio else None,
         comments_fade_enabled=_is_again_spring,
+        intro_thumb_path=intro_thumb,
     )

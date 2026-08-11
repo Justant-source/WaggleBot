@@ -90,6 +90,19 @@ public class ExternalJobController {
             artifacts.put("mp4Url", videoUrl); // ASM / Again Spring alias
         }
         if (content.getAudioPath() != null) artifacts.put("audioUrl", toMediaUrl(content.getAudioPath()));
+        // Intro/cover thumbnail for Shorts (upload_meta.thumbnail_path from ai_worker).
+        JsonNode uploadMeta = content.getUploadMeta();
+        if (uploadMeta != null && uploadMeta.hasNonNull("thumbnail_path")) {
+            String thumbPath = uploadMeta.get("thumbnail_path").asText("").trim();
+            if (!thumbPath.isEmpty()) {
+                java.nio.file.Path thumbFile = java.nio.file.Path.of(thumbPath);
+                if (java.nio.file.Files.isRegularFile(thumbFile)) {
+                    String thumbUrl = toMediaUrl(thumbPath);
+                    artifacts.put("thumbnailUrl", thumbUrl);
+                    artifacts.put("thumbUrl", thumbUrl);
+                }
+            }
+        }
         return artifacts;
     }
 

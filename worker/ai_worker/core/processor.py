@@ -299,11 +299,18 @@ class RobustProcessor:
                     raise ValueError(f"Post {_saved_post_id} 렌더링 완료 후 DB에서 사라짐 — 외부 삭제 가능성")
                 self._save_content(post, session, script, audio_path, video_path)
 
-                # ===== 썸네일 생성 =====
+                # ===== 썸네일 생성 (intro 프레임 우선 — Shorts thumbnails.set 소스) =====
                 try:
+                    from ai_worker.renderer.thumbnail import get_intro_thumbnail_path
+
                     images = post.images if isinstance(post.images, list) else []
-                    thumb_path = get_thumbnail_path(post.site_code, post.origin_id)
-                    generate_thumbnail(script.hook, images, thumb_path, style="waggle")
+                    intro_path = get_intro_thumbnail_path(post.site_code, post.origin_id)
+                    if intro_path.is_file() and intro_path.stat().st_size > 1000:
+                        thumb_path = intro_path
+                        logger.info("intro 썸네일 사용: %s", thumb_path)
+                    else:
+                        thumb_path = get_thumbnail_path(post.site_code, post.origin_id)
+                        generate_thumbnail(script.hook, images, thumb_path, style="waggle")
                     content = session.query(Content).filter(Content.post_id == post.id).first()
                     if content is not None:
                         upload_meta = dict(content.upload_meta or {})
@@ -1095,11 +1102,18 @@ class RobustProcessor:
             self._save_content(post, session, script, audio_path, video_path)
             logger.info("[Pipeline Render] ✓ 영상 완료: %s", video_path)
 
-            # 썸네일 생성
+            # 썸네일 생성 (intro 프레임 우선 — Shorts thumbnails.set 소스)
             try:
+                from ai_worker.renderer.thumbnail import get_intro_thumbnail_path
+
                 images = post.images if isinstance(post.images, list) else []
-                thumb_path = get_thumbnail_path(post.site_code, post.origin_id)
-                generate_thumbnail(script.hook, images, thumb_path, style="waggle")
+                intro_path = get_intro_thumbnail_path(post.site_code, post.origin_id)
+                if intro_path.is_file() and intro_path.stat().st_size > 1000:
+                    thumb_path = intro_path
+                    logger.info("intro 썸네일 사용: %s", thumb_path)
+                else:
+                    thumb_path = get_thumbnail_path(post.site_code, post.origin_id)
+                    generate_thumbnail(script.hook, images, thumb_path, style="waggle")
                 content = session.query(Content).filter_by(post_id=post_id).first()
                 if content is not None:
                     upload_meta = dict(content.upload_meta or {})
