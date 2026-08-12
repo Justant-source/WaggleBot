@@ -426,7 +426,7 @@
           "card": {
             "gap_top": 120,
             "radius": 28,
-            "pad": 44,
+            "pad": 48,
             "shadow": true
           },
           "quote": {
@@ -465,7 +465,7 @@
             "count_font_weight": 700,
             "count_color": "#5C4030",
             "label_color": "#A08670",
-            "label": "추천순 ▾",
+            "label": "추천순",
             "divider_color": "#E5DED2",
             "divider_thickness": 2
           },
@@ -477,7 +477,7 @@
             "border": "#E5DED2",
             "border_width": 1,
             "best_border": "#C9785A",
-            "pad_x": 24,
+            "pad_x": 28,
             "pad_y": 20,
             "max_items": 3
           },

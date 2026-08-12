@@ -36,8 +36,12 @@ try:
     from soynlp.normalizer import repeat_normalize as _soynlp_repeat_normalize
     _SOYNLP_AVAILABLE = True
     logger.debug("soynlp 로드 완료")
-except ImportError:
+except Exception as _exc:
+    # ImportError(미설치)뿐 아니라 numpy/scipy 버전 불일치 등으로 인한
+    # AttributeError 등도 폴백 대상 — 미설치와 동일하게 취급해야 프로세스가
+    # 안 죽는다(2026-08-09 numpy 1.26/scipy 1.18 비호환 크래시 실사고).
     _SOYNLP_AVAILABLE = False
+    logger.warning("soynlp 로드 실패, 내장 구현으로 폴백: %s", _exc)
 
 # ── 사전 경로 ──
 SLANG_MAP_PATH = Path(__file__).parent.parent.parent / "assets" / "slang_map.json"

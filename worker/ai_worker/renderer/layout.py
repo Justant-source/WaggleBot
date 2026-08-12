@@ -3,7 +3,7 @@
 씬 타입:
   intro     - 제목만 (title_only.svg)   → 베이스 프레임 그대로 사용
   image_text  - 이미지 + 텍스트 (image_text.svg)
-  text_only - 텍스트만, 등장(문장) 최대 3회 누적 후 clear (각 등장은 여러 시각 줄 가능)
+  text_only - 텍스트만, 3슬롯 고정 Y (text_only.svg)
   outro     - 이미지만 (image_only.svg)   → 이미지가 남을 때 마지막 1프레임
 
 핵심 설계:
@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from PIL import ImageFont
+from PIL import Image, ImageFont
 
 from config.settings import (
     ASSETS_DIR,
@@ -37,13 +37,13 @@ from config.settings import (
 from ai_worker.renderer._frames import (
     CANVAS_W, CANVAS_H, HEADER_H, HEADER_COLOR,
     _create_base_frame, _create_header_only_frame,
+    _create_breadcrumb_frame, _breadcrumb_bottom_y,
     _render_intro_frame, _render_image_text_frame,
     _render_text_only_frame, _render_image_only_frame,
     _render_outro_frame, _render_comments_frame,
     _render_video_text_overlay, _render_chat_frame, _wrap_korean, _draw_centered_text,
     _truncate, _fit_cover, _fit_contain, _paste_rounded, _load_image,
-    _title_block_bottom_y, _fmt_count, _relative_time, _body_font_file,
-    _create_breadcrumb_frame, _breadcrumb_bottom_y, _theme_name,
+    _title_block_bottom_y, _fmt_count, _relative_time, _theme_name,
 )
 from ai_worker.renderer._tts import (
     _tts_chunk_async, _generate_tts_chunks, _merge_chunks,
@@ -61,14 +61,8 @@ _LAYOUT_CONFIG: dict | None = None
 _STATIC_CONCAT_CFR_ARGS: list[str] = ["-vsync", "cfr", "-r", "30"]
 _STATIC_FINAL_FRAME_HOLD_FILTER: str = "tpad=stop_mode=clone:stop=-1"
 
-# Again Spring(Tone L) 댓글 씬 — 레이아웃·낭독 모두 최대 3개로 고정(잠금된 제품 결정).
-# 표시 상한은 config/layout.json의 themes.tone_l.scenes.comments.row.max_items에도
-# 동일하게 반영되어 있다 — 여기서는 TTS/문장 생성 단계의 상한을 맞춘다.
+# Again Spring(Tone L) 댓글 씬 — 레이아웃·낭독 모두 최대 3개로 고정.
 _AGAIN_SPRING_MAX_COMMENTS = 3
-# 댓글 점진 공개 시, 가장 최근 항목에 적용하는 페이드인 알파 단계(오름차순, 마지막 값
-# 이전까지만 별도 프레임 — 최종 프레임은 항상 fade_alpha=1.0의 기존 프레임을 재사용한다).
-_COMMENT_FADE_ALPHAS: tuple[float, ...] = (0.28, 0.58, 0.85)
-_COMMENT_FADE_MAX_BUDGET_SEC = 0.30
 
 
 # ---------------------------------------------------------------------------
@@ -89,11 +83,7 @@ def _load_layout() -> dict:
 # ---------------------------------------------------------------------------
 
 def _deep_merge(base: dict, overrides: dict) -> dict:
-    """overrides를 base에 재귀적으로 병합한다 (base를 in-place로 변경 후 반환).
-
-    사이트별 테마 오버레이(예: themes.tone_l)를 기본 layout 위에 얹을 때 사용 —
-    다른 사이트의 기본 global/scenes 딕셔너리는 건드리지 않는다(호출부에서 deepcopy 후 사용).
-    """
+    """overrides를 base에 재귀 병합 (base in-place). themes.tone_l 오버레이용."""
     for k, v in overrides.items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
             _deep_merge(base[k], v)
@@ -169,7 +159,7 @@ def _text_lead_for_transition(following: dict, duration: float) -> float:
     """Return the visual lead for the following spoken frame.
 
     Audio timings remain untouched.  The preceding visual frame simply yields
-    its last 100 ms to the next spoken line, so a viewer reads the line before
+    its last 150 ms to the next spoken line, so a viewer reads the line before
     its first syllable.  A silent decorative frame must not trigger a swap.
     """
     if following.get("sent_idx") is None or duration <= 0.001:
@@ -187,7 +177,6 @@ def _build_visual_timeline(
     frame_paths: list[Path],
     plan: list[dict],
     durations: list[float],
-    fade_frames: dict[int, list[Path]] | None = None,
 ) -> list[tuple[Path, float]]:
     """Build frame durations separately from the audio timeline.
 
@@ -195,15 +184,9 @@ def _build_visual_timeline(
     static filter's ``tpad`` holds the final still until the audio-capped mux
     ends, avoiding the ffconcat terminal-entry edge case.
 
-    fade_frames: optional {plan_index: [fade_step_path, ...]} — pre-rendered
-    partial-opacity frames for a plan entry (e.g. a newly-revealed comment
-    card fading in). Their combined duration is carved *out of* that entry's
-    own current_duration (never added), so total per-index duration — and
-    therefore audio/video sync — is unchanged. Used only by comments-scene
-    entries on Again Spring (Tone L); everything else passes fade_frames=None
-    and behaves exactly as before.
+    Sibom punch scenes prepend ~1.2s pop frames, then hold the final still
+    for the remainder of the beat duration.
     """
-    fade_frames = fade_frames or {}
     visual: list[tuple[Path, float]] = []
     for index, (frame_path, duration) in enumerate(zip(frame_paths, durations)):
         lead = 0.0
@@ -211,17 +194,20 @@ def _build_visual_timeline(
             lead = _text_lead_for_transition(plan[index + 1], duration)
         current_duration = duration - lead
 
-        steps = fade_frames.get(index)
-        if steps and current_duration > 0:
-            budget = min(_COMMENT_FADE_MAX_BUDGET_SEC, current_duration * 0.5)
-            step_dur = budget / len(steps)
-            if step_dur >= 0.02:
-                for step_path in steps:
-                    visual.append((step_path, step_dur))
-                current_duration -= budget
+        punch_raw = plan[index].get("sibom_punch_paths") if index < len(plan) else None
+        punch_paths = [Path(p) for p in punch_raw] if punch_raw else []
 
-        if current_duration > 0:
+        if punch_paths and current_duration > 0:
+            punch_budget = min(_SIBOM_PUNCH_SEC, current_duration)
+            per = punch_budget / len(punch_paths)
+            for pp in punch_paths:
+                visual.append((pp, per))
+            hold = current_duration - punch_budget
+            if hold > 0.001:
+                visual.append((punch_paths[-1], hold))
+        elif current_duration > 0:
             visual.append((frame_path, current_duration))
+
         if lead > 0:
             visual.append((frame_paths[index + 1], lead))
     return visual
@@ -233,12 +219,7 @@ def _append_text_only_line(
     block_type: str,
     max_slots: int,
 ) -> list[dict]:
-    """Append one spoken *appearance* (sentence), resetting after max_slots appearances.
-
-    ``lines`` may contain multiple visual wrap lines for a single long sentence.
-    ``max_slots`` counts appearances (문장 추가 횟수), not visual line count —
-    a page may therefore show more than ``max_slots`` visual lines when sentences wrap.
-    """
+    """Append one spoken line, resetting only after the third visible line."""
     if len(history) >= max_slots:
         history = []
     return [*history, {"lines": lines, "block_type": block_type}]
@@ -327,6 +308,100 @@ def _plan_sequence(
 # SceneDecision 변환 유틸리티
 # ---------------------------------------------------------------------------
 
+def _attach_sibom_plan_fields(entry: dict, scene) -> None:
+    """Copy again_spring sibom metadata onto a plan entry (if present)."""
+    role = getattr(scene, "sibom_role", None)
+    if not role:
+        return
+    entry["sibom_role"] = role
+    entry["sibom_size"] = getattr(scene, "sibom_size", None) or "large"
+    entry["sibom_dwell"] = getattr(scene, "sibom_dwell", None) or "hold"
+    entry["sibom_image_id"] = getattr(scene, "sibom_image_id", None)
+    entry["sibom_shake"] = bool(getattr(scene, "sibom_shake", False))
+
+
+def _compose_sibom_onto_base(
+    base: Image.Image,
+    sibom_pil: Image.Image,
+    size: str,
+    *,
+    scale: float = 1.0,
+    alpha: float = 1.0,
+) -> Image.Image:
+    """Paste captioned sibom onto a base frame with optional scale/alpha (punch pop)."""
+    from ai_worker.renderer.sibom_composite import (
+        LARGE_SCALE,
+        LARGE_XY,
+        SMALL_MARGIN_XY,
+        SMALL_SCALE,
+        paste_on_frame,
+    )
+
+    if size == "small" and scale == 1.0 and alpha >= 0.999:
+        return paste_on_frame(base, sibom_pil, size="small")
+    if size == "large" and scale == 1.0 and alpha >= 0.999:
+        return paste_on_frame(base, sibom_pil, size="large")
+
+    frame = base.convert("RGBA").copy()
+    if size == "small":
+        target_w = max(1, int(sibom_pil.width * SMALL_SCALE * scale))
+        target_h = max(1, int(sibom_pil.height * SMALL_SCALE * scale))
+        ov = sibom_pil.convert("RGBA").resize((target_w, target_h), Image.Resampling.LANCZOS)
+        if alpha < 1.0:
+            a = ov.split()[3]
+            a = a.point(lambda p: int(p * max(0.0, min(1.0, alpha))))
+            ov.putalpha(a)
+        mx, my = SMALL_MARGIN_XY
+        xy = (frame.width - ov.width - mx, frame.height - ov.height - my)
+        frame.alpha_composite(ov, xy)
+        return frame
+
+    target_w = max(1, int(sibom_pil.width * LARGE_SCALE * scale))
+    target_h = max(1, int(sibom_pil.height * LARGE_SCALE * scale))
+    ov = sibom_pil.convert("RGBA").resize((target_w, target_h), Image.Resampling.LANCZOS)
+    if alpha < 1.0:
+        a = ov.split()[3]
+        a = a.point(lambda p: int(p * max(0.0, min(1.0, alpha))))
+        ov.putalpha(a)
+    lx, ly = LARGE_XY
+    full_w = max(1, int(sibom_pil.width * LARGE_SCALE))
+    full_h = max(1, int(sibom_pil.height * LARGE_SCALE))
+    cx = lx + full_w // 2
+    cy = ly + full_h // 2
+    xy = (cx - ov.width // 2, cy - ov.height // 2)
+    frame.alpha_composite(ov, xy)
+    return frame
+
+
+_SIBOM_PUNCH_POP_FRAMES = 8
+_SIBOM_PUNCH_SEC = 1.2
+
+
+def _write_sibom_punch_frames(
+    base: Image.Image,
+    sibom_pil: Image.Image,
+    size: str,
+    tmp_dir: Path,
+    frame_idx: int,
+    shake: bool = False,
+) -> list[Path]:
+    """Pop scale 92→100 + fade over ~1.2s. Shake ids: TODO hook (flag only)."""
+    if shake:
+        # TODO(sibom): light bounce/shake for indignant/stunned/burst-crying/two-argue
+        pass
+    paths: list[Path] = []
+    n = _SIBOM_PUNCH_POP_FRAMES
+    for i in range(n):
+        t = i / max(1, n - 1)
+        scale = 0.92 + 0.08 * t
+        alpha = min(1.0, 0.35 + 0.65 * t)
+        composed = _compose_sibom_onto_base(base, sibom_pil, size, scale=scale, alpha=alpha)
+        out = tmp_dir / f"frame_{frame_idx:03d}_punch_{i:02d}.png"
+        composed.convert("RGB").save(str(out), "PNG")
+        paths.append(out)
+    return paths
+
+
 def _scenes_to_plan_and_sentences(
     scenes: list,
     max_comment_items: int | None = None,
@@ -334,8 +409,6 @@ def _scenes_to_plan_and_sentences(
     """SceneDecision 목록을 내부 렌더러 형식 (sentences, plan, images)으로 변환한다.
 
     max_comment_items: comments 씬에서 사용할 최대 댓글 개수(낭독 TTS 포함 상한).
-        None이면 상한 없음(기존 동작 유지, 와글 기본). Again Spring Tone L은
-        레이아웃·낭독 모두 최대 3개로 고정한다(``_render_pipeline`` 호출부 참조).
     """
     sentences: list[dict] = []
     plan: list[dict] = []
@@ -354,6 +427,7 @@ def _scenes_to_plan_and_sentences(
                               "voice_override": getattr(scene, "voice_override", None),
                               "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "intro", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
+            _attach_sibom_plan_fields(plan[-1], scene)
 
         elif scene.type == "image_text":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
@@ -370,6 +444,7 @@ def _scenes_to_plan_and_sentences(
                 sent_dict["lines"] = psl
             sentences.append(sent_dict)
             plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
+            _attach_sibom_plan_fields(plan[-1], scene)
 
         elif scene.type == "video_text":
             # Pre-split editor lines are individual narration/display entries:
@@ -538,16 +613,9 @@ def _render_pipeline(
     meta: dict | None = None,
     narration_audio: Path | None = None,
     comments_fade_enabled: bool = False,
-    intro_thumb_path: Path | None = None,
 ) -> Path:
-    """sentences / plan / images 를 받아 mp4를 생성한다.
-
-    comments_fade_enabled: True면 comments 씬의 각 신규 공개 항목에 짧은 페이드인
-        서브프레임을 추가로 렌더한다(Again Spring Tone L 전용). 정적 concat 경로
-        (비디오 클립이 섞이지 않은 일반적인 경우)에서만 적용되고, has_video_scenes
-        하이브리드 경로에서는 기존처럼 즉시 표시된다(비디오 세그먼트는 frame_idx가
-        plan/frame_paths와 1:1로 대응해야 하므로 서브프레임 확장을 적용하지 않음).
-    """
+    """sentences / plan / images 를 받아 mp4를 생성한다."""
+    _ = comments_fade_enabled  # reserved (Tone L comment fade; keep signature parity)
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -558,35 +626,29 @@ def _render_pipeline(
         base_frame = _create_base_frame(layout, title, font_dir, ASSETS_DIR, meta=meta)
         header_only_frame = _create_header_only_frame(layout, font_dir)
 
-        # Tone L: body(image_text/text_only)/comments 씬은 큰 제목블록 대신
-        # 가벼운 브레드크럼(칩+메타[+작은 제목]) 헤더를 쓴다 — content_top도 그만큼 짧다.
-        # 와글(기본) 사이트는 _create_breadcrumb_frame/_breadcrumb_bottom_y가
-        # 내부적으로 base_frame/content_top과 동일한 값을 반환하므로 동작 불변.
-        if _theme_name(layout) == "tone_l":
+        # tone_l 테마: 브레드크럼 프레임 생성 (image_text/text_only/comments용)
+        theme = _theme_name(layout)
+        if theme == "tone_l":
             content_top_body = _breadcrumb_bottom_y(layout, title, font_dir, show_title=True)
             content_top_comments = _breadcrumb_bottom_y(layout, title, font_dir, show_title=False)
             breadcrumb_frame = _create_breadcrumb_frame(layout, title, font_dir, meta=meta, show_title=True)
             breadcrumb_frame_no_title = _create_breadcrumb_frame(layout, title, font_dir, meta=meta, show_title=False)
         else:
+            # 다른 테마: 기본 프레임 사용
             content_top_body = content_top
             content_top_comments = content_top
             breadcrumb_frame = base_frame
             breadcrumb_frame_no_title = base_frame
-        logger.info("[layout] 베이스 프레임 생성 완료 (content_top=%d)", content_top)
+
+        logger.info("[layout] 베이스 프레임 생성 완료 (content_top=%d, theme=%s)", content_top, theme)
 
         # ── Step 4: 이미지 사전 다운로드 ──────────────────────
-        # Tone L 메타포 이미지는 투명 PNG — surface(크림톤) 배경 위에 합성해야
-        # 검정 배경 버그(알파 버림 시 투명영역 RGB가 그대로 검정으로 남는 문제)를 막는다.
-        _img_bg_color = (
-            layout.get("global", {}).get("palette", {}).get("surface", "#FFFFFF")
-            if _theme_name(layout) == "tone_l" else "#FFFFFF"
-        )
         image_cache: dict[int, Optional["Image.Image"]] = {}
         for entry in plan:
             img_idx = entry.get("img_idx")
             if img_idx is not None and img_idx not in image_cache:
                 url = images[img_idx] if img_idx < len(images) else None
-                image_cache[img_idx] = _load_image(url, tmp_dir, bg_color=_img_bg_color) if url else None
+                image_cache[img_idx] = _load_image(url, tmp_dir) if url else None
 
         # ── Steps 5~6: TTS 생성 또는 캐시 로드 ───────────────────
         merged_tts = tmp_dir / "merged_tts.wav"
@@ -652,26 +714,30 @@ def _render_pipeline(
         # ── Step 7: text_only용 줄바꿈 사전 계산 ──────────────
         sc_to = layout["scenes"]["text_only"]
         to_ta = sc_to["elements"]["text_area"]
-        # 실제 렌더 폰트와 동일 기준으로 줄바꿈 계산 (테마별 분기: 와글=Bold 산세리프 / Tone L=세리프)
-        to_font = _load_font(font_dir, _body_font_file(layout), to_ta["font_size"])
+        # Bold 폰트로 줄바꿈 계산 (v3: 자막이 Bold로 바뀜)
+        to_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", to_ta["font_size"])
         to_max_w = to_ta["max_width"]
         to_max_chars = sc_to.get("text_max_chars", 0)
+        keep_word_units = theme == "tone_l"
 
         for sent in sentences:
             if "lines" in sent:
                 expanded: list[str] = []
                 for line in sent["lines"]:
-                    expanded.extend(_wrap_korean(line, to_font, to_max_w))
+                    expanded.extend(
+                        _wrap_korean(line, to_font, to_max_w, keep_all=keep_word_units)
+                    )
                 sent["lines"] = expanded
                 continue
-            sent["lines"] = _wrap_korean(sent["text"], to_font, to_max_w)
+            sent["lines"] = _wrap_korean(
+                sent["text"], to_font, to_max_w, keep_all=keep_word_units,
+            )
 
         # ── Step 8: PIL 프레임 생성 ────────────────────────────
         logger.info("[layout] 프레임 생성 시작")
         t1 = time.time()
         frame_paths: list[Path] = []
         text_only_history: list[dict] = []
-        comment_fade_frames: dict[int, list[Path]] = {}
 
         for frame_idx, entry in enumerate(plan):
             scene_type = entry["type"]
@@ -685,6 +751,7 @@ def _render_pipeline(
             if scene_type == "intro":
                 img_pil = image_cache.get(img_idx) if img_idx is not None else None
                 hook_text = sentences[sent_idx]["text"] if sent_idx is not None else ""
+                # Sibomi/metaphor 모두 동일: Tone L intro 카드 미디어 슬롯에 이미지만 교체
                 _render_intro_frame(
                     base_frame, img_pil, hook_text,
                     layout, font_dir, frame_path, content_top, stage=1,
@@ -699,20 +766,23 @@ def _render_pipeline(
                     fallback_entry = {"lines": lines,
                                       "block_type": entry.get("block_type", "body")}
                     _render_text_only_frame(
-                        breadcrumb_frame, [fallback_entry], layout, font_dir, frame_path,
-                        content_top_body, stage=2,
+                        breadcrumb_frame, [fallback_entry], layout, font_dir, frame_path, content_top_body, stage=2,
                     )
                 else:
+                    # 시봄이도 기존 메타포와 같이 image_text 카드 슬롯에만 넣는다
                     _render_image_text_frame(
-                        breadcrumb_frame, img_pil, text, layout, font_dir, frame_path,
-                        content_top_body, stage=2,
+                        breadcrumb_frame, img_pil, text, layout, font_dir, frame_path, content_top_body, stage=2,
                     )
 
             elif scene_type == "text_only":
                 # v3: 이전 슬롯 흐림(greying) 제거 — 전 슬롯 동일 검정
                 new_lines = sentences[sent_idx]["lines"] if sent_idx is not None else []
 
-                # new_lines는 한 등장(문장)의 시각 wrap 줄 — max_slots와 무관하게 허용
+                if len(text_only_history) >= max_slots:
+                    if len(new_lines) > max_slots:
+                        logger.warning("[layout] 프레임 %d: %d줄 초과 — 단독 표시",
+                                       frame_idx, len(new_lines))
+
                 sent_data = sentences[sent_idx] if sent_idx is not None else {}
                 text_only_history = _append_text_only_line(
                     text_only_history,
@@ -721,8 +791,7 @@ def _render_pipeline(
                     max_slots,
                 )
                 _render_text_only_frame(
-                    breadcrumb_frame, text_only_history, layout, font_dir, frame_path,
-                    content_top_body, stage=2,
+                    breadcrumb_frame, text_only_history, layout, font_dir, frame_path, content_top_body, stage=2,
                 )
 
             elif scene_type == "image_only":
@@ -743,27 +812,10 @@ def _render_pipeline(
                 scene = _get_scene_for_entry(entry, sentences, scenes_list)
                 items = getattr(scene, "comment_items", None) if scene else None
                 reveal = entry.get("item_idx")
-                reveal_count = (reveal + 1) if reveal is not None else None
                 _render_comments_frame(
-                    breadcrumb_frame_no_title, items or [], layout, font_dir, frame_path,
-                    content_top_comments,
-                    reveal_count=reveal_count, stage=3,
+                    breadcrumb_frame_no_title, items or [], layout, font_dir, frame_path, content_top_comments,
+                    reveal_count=(reveal + 1) if reveal is not None else None, stage=3,
                 )
-                # Tone L: 새로 드러난 카드가 즉시 나타나지 않고 짧게 페이드인하도록
-                # 낮은 alpha의 서브프레임을 미리 렌더한다 (정적 concat 경로 전용 —
-                # _build_visual_timeline이 이 프레임들의 지속시간을 본 프레임의
-                # current_duration에서 그대로 떼어 쓰므로 오디오 타이밍은 불변).
-                if comments_fade_enabled and reveal_count is not None:
-                    fade_paths: list[Path] = []
-                    for step_i, alpha in enumerate(_COMMENT_FADE_ALPHAS):
-                        fade_path = tmp_dir / f"frame_{frame_idx:03d}_cfade{step_i}.png"
-                        _render_comments_frame(
-                            breadcrumb_frame_no_title, items or [], layout, font_dir, fade_path,
-                            content_top_comments,
-                            reveal_count=reveal_count, fade_alpha=alpha, stage=3,
-                        )
-                        fade_paths.append(fade_path)
-                    comment_fade_frames[frame_idx] = fade_paths
 
             elif scene_type == "chat":
                 # 채팅 버블 씬: SceneDecision에서 chat_messages 추출, reveal_count로 누적 공개
@@ -912,10 +964,8 @@ def _render_pipeline(
             # ── Step 9 (기존): 정적 PNG concat ─────────────────────
             concat_file = tmp_dir / "concat_list.txt"
             # Audio durations and frame durations are independent: each next
-            # spoken line borrows its first 100 ms from the preceding visual.
-            visual_timeline = _build_visual_timeline(
-                frame_paths, plan, durations, fade_frames=comment_fade_frames,
-            )
+            # spoken line borrows its first 150 ms from the preceding visual.
+            visual_timeline = _build_visual_timeline(frame_paths, plan, durations)
             concat_file.write_text(
                 _build_static_concat_manifest(visual_timeline), encoding="utf-8",
             )
@@ -1028,18 +1078,6 @@ def _render_pipeline(
         return output_path
 
     finally:
-        # Persist intro (frame_000) before tmp cleanup — Shorts thumbnail source.
-        if intro_thumb_path is not None:
-            intro_src = tmp_dir / "frame_000.png"
-            try:
-                if intro_src.is_file() and intro_src.stat().st_size > 1000:
-                    intro_thumb_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(intro_src, intro_thumb_path)
-                    logger.info("[layout] intro thumbnail saved: %s", intro_thumb_path)
-                else:
-                    logger.warning("[layout] intro frame missing/tiny; skip thumb save")
-            except Exception:
-                logger.warning("[layout] intro thumbnail save failed", exc_info=True)
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
@@ -1165,31 +1203,17 @@ def render_layout_video_from_scenes(
                 )
             break
 
-    # ── 메타 정보 빌드 (제목블록/브레드크럼 메타줄 표시용) ──────────────────
+    # ── 메타 정보 빌드 (제목블록 메타줄 표시용) ──────────────────────────
     _stats: dict = post.stats if isinstance(post.stats, dict) else {}
     _author_raw: str = getattr(post, "author", None) or ""
-    # SceneDirector가 모든 씬에 동일하게 세팅한 category/view_count(variant_config 유래) —
-    # again_spring 전용 필드. 없으면 None → meta.get(...) 쪽에서 자연히 생략됨.
-    _scene_category = next(
-        (getattr(sc, "category", None) for sc in scenes if getattr(sc, "category", None)), None,
-    )
-    _scene_view_count = next(
-        (getattr(sc, "view_count", None) for sc in scenes if getattr(sc, "view_count", None) is not None),
-        None,
-    )
     meta: dict = {
         "author": _author_raw or None,          # None이면 config author_fallback 사용
         "time": _relative_time(getattr(post, "created_at", None)),
-        "views": _fmt_count(_scene_view_count) if _scene_view_count is not None else _fmt_count(_stats.get("views")),
+        "views": _fmt_count(_stats.get("views")),
         "comments": _stats.get("comments_count") or 0,
-        "category": _scene_category,
     }
 
-    # Again Spring 외부 잡: 웹 사연 상세(Tone L) 크롬으로 재도색.
-    # 브랜드명·author_fallback은 layout.json themes.tone_l(=deep_merge 결과)이 SSOT —
-    # 여기서 다시 덮어쓰지 않는다(과거 "다시봄" 하드코딩 오버라이드 제거, 새 디자인의
-    # "다시봄 광장" 채널명 / "익명" author_fallback이 그대로 적용되도록).
-    # 다른 사이트(와글 기본 옐로우 브랜드)는 이 블록을 타지 않으므로 영향 없음.
+    # Again Spring: Tone L(광장 크롬) 오버레이 + 브랜드. 시봄이는 이미지 슬롯만 교체.
     if _is_again_spring:
         import copy
         layout = copy.deepcopy(layout)
@@ -1197,10 +1221,13 @@ def render_layout_video_from_scenes(
         _deep_merge(layout.setdefault("global", {}), tone_l.get("global", {}))
         _deep_merge(layout.setdefault("scenes", {}), tone_l.get("scenes", {}))
         layout["global"]["theme"] = "tone_l"
+        layout.setdefault("global", {}).setdefault("header", {})["channel_name"] = "다시봄"
+        layout.setdefault("global", {}).setdefault("title_block", {}).setdefault("meta", {})[
+            "author_fallback"
+        ] = "다시봄"
+        if not meta.get("author"):
+            meta["author"] = "다시봄"
 
-    from ai_worker.renderer.thumbnail import get_intro_thumbnail_path
-
-    intro_thumb = get_intro_thumbnail_path(post.site_code, post.origin_id)
     return _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
@@ -1211,5 +1238,4 @@ def render_layout_video_from_scenes(
         meta=meta,
         narration_audio=Path(narration_audio) if narration_audio else None,
         comments_fade_enabled=_is_again_spring,
-        intro_thumb_path=intro_thumb,
     )

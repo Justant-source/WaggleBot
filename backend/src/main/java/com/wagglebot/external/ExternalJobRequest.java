@@ -1,6 +1,8 @@
 package com.wagglebot.external;
 
-import java.time.Instant;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.util.List;
 
 /**
@@ -15,36 +17,33 @@ public record ExternalJobRequest(
     String body,
     List<CommentInput> comments,
     Boolean paired,
-    OptionsInput options,
-    String category,
-    Integer viewCount
+    OptionsInput options
 ) {
-    /**
-     * 댓글 씬(Again Spring Shorts)용 입력. 화면 최대 3개까지만 사용된다
-     * ({@link com.wagglebot.external.ExternalIngestService} 참고).
-     *
-     * @param author    표시용 닉네임 (구버전 호환 — nickname 미지정 시 이 값을 그대로 사용)
-     * @param nickname  표시용 닉네임 명시 필드. 지정되면 author보다 우선한다.
-     * @param authorId  원본/해시 사용자 ID — 분석용 보관만, 화면 표시에는 절대 쓰지 않는다.
-     * @param body      댓글 본문
-     * @param likeCount 추천수
-     * @param createdAt 댓글 작성 시각 (없으면 ingest 시각으로 대체)
-     * @param side      "author" | "partner" | "neutral" — 진영색 스타일용. 미지정/무효값 → "neutral"
-     */
-    public record CommentInput(
-        String author,
-        String nickname,
-        String authorId,
-        String body,
-        Integer likeCount,
-        Instant createdAt,
-        String side
-    ) {
-        /** 화면에 표시할 닉네임. nickname이 있으면 우선, 없으면 author. authorId는 절대 표시하지 않는다. */
-        public String displayAuthor() {
-            return (nickname != null && !nickname.isBlank()) ? nickname : author;
-        }
-    }
+    public record CommentInput(String author, String body, Integer likeCount) {}
 
-    public record OptionsInput(Boolean videoGen, Boolean autoHdRender, String ttsVoice, String metaphorId, List<String> metaphorIds, String commentVoices) {}
+    public record OptionsInput(
+        Boolean videoGen,
+        Boolean autoHdRender,
+        String ttsVoice,
+        /**
+         * Deprecated for video path — ignored at ingest (metaphor PNG unplugged).
+         * Kept for backward-compatible JSON deserialization.
+         */
+        String metaphorId,
+        String commentVoices,
+        /** Again Spring hook_emotion mapped mood (scene_policy key). */
+        String mood,
+        /** Fish Speech / OpenAudio tts_emotion marker key for intro. */
+        String ttsEmotion,
+        /** Soft video length target seconds (Reels 30 / Shorts 45). */
+        Integer maxDurationSec,
+        /** Layout profile hint: reels_compact | shorts_standard. */
+        String platformLayout,
+        /**
+         * Channel-specific Sibomi insertion plan (role/image_id/caption/beat_index/size/dwell).
+         * Accepts camelCase {@code sibomPlan} or snake_case {@code sibom_plan}.
+         */
+        @JsonAlias("sibom_plan")
+        JsonNode sibomPlan
+    ) {}
 }

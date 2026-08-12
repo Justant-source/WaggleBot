@@ -203,13 +203,16 @@ def _resolve_references(voice_key: str) -> dict:
             audio_b64 = base64.b64encode(flat.read_bytes()).decode()
             return {"references": [{"audio": audio_b64, "text": ref_text}]}
 
-    # 3. 폴백
-    logger.warning(
-        "참조 음성 없음 — voice=%s (폴더 '%s', 평면파일 '%s' 모두 부재). 기본 음색으로 합성됨. "
+    # 3. 참조 음성 부재: 명시적 실패
+    logger.error(
+        "참조 음성 없음 — voice=%s (폴더 '%s', 평면파일 '%s' 모두 부재). "
         "worker/tools/prepare_voice.py 로 음성을 등록하세요.",
         voice_key, ref_dir, file,
     )
-    return {"references": []}
+    raise ValueError(
+        f"음성 참조를 해석할 수 없음 (voice_key='{voice_key}'). "
+        f"폴더 경로 '{VOICES_DIR / (ref_dir or '')}' 및 평면 파일 '{VOICES_DIR / (file or '')}' 모두 부재."
+    )
 
 
 def _voice_params(voice_key: str) -> dict:
@@ -714,8 +717,13 @@ async def _warmup_model() -> None:
         if age_h <= _WARMUP_SENTINEL_MAX_AGE_HOURS and sentinel.get("url") == FISH_SPEECH_URL:
             sentinel_valid = True
 
-    default_params = _voice_params(VOICE_DEFAULT)
-    default_base = _base_payload(_resolve_references(VOICE_DEFAULT), default_params)
+    try:
+        default_params = _voice_params(VOICE_DEFAULT)
+        default_base = _base_payload(_resolve_references(VOICE_DEFAULT), default_params)
+    except Exception as exc:
+        logger.warning("Fish Speech 웜업 스킵 — 기본 음성 참조 해석 실패(무시): %s", exc)
+        _warmup_done = True
+        return
 
     async with _fish_speech_request_lock():
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:

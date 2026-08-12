@@ -682,7 +682,11 @@ class RobustProcessor:
             sum(1 for s in scenes if getattr(s, "video_prompt", None)),
         )
 
-        # VRAM 정리 (LLM 해제 후 LTX 로드 준비)
+        # ★ VRAM 정리: fish-speech 컨테이너 실제 정지 (2026-08-10, S2-pro 대응)
+        #   S1-mini는 유휴 VRAM이 작아(~3-5GB) 로컬 캐시 정리+소프트 체크만으로
+        #   충분했으나, S2-pro는 유휴 상태에서도 ~20GB를 점유해 컨테이너를
+        #   실제로 내리지 않으면 ComfyUI GGUF UNet(~12.7GB) 로드가 OOM된다.
+        #   (경위: .result/tts/failures-2026-08-09.md 실패 9)
         try:
             import torch
             torch.cuda.empty_cache()
@@ -690,151 +694,171 @@ class RobustProcessor:
             pass
         gc.collect()
 
-        # VRAM 잔여량 확인
+        from ai_worker.core.container_control import start_fish_speech, stop_fish_speech
+        from ai_worker.core.gpu_manager import GPUMemoryManager
+
+        stopped = await stop_fish_speech()
+        if not stopped:
+            logger.warning(
+                "[video] fish-speech 정지 실패 — VRAM이 해제되지 않았을 수 있음",
+            )
+
         _gm = self.gpu_manager
         _video_vram = _gm.MODEL_VRAM_REQUIREMENTS.get(ModelType.VIDEO, 12.0)
-        _available = _gm.get_available_vram()
-        if _available < _video_vram * 0.5:
+        _available = GPUMemoryManager.get_system_available_vram()
+        if _available > 0 and _available < _video_vram:
             logger.warning(
                 "[video] Phase 7: VRAM 부족 (available=%.1fGB < %.1fGB) — 긴급 정리",
-                _available, _video_vram * 0.5,
+                _available, _video_vram,
             )
             _gm.emergency_cleanup()
+        else:
+            logger.info("[video] Phase 7 진입 VRAM 확인: %.1fGB 여유", _available)
 
-        # Phase 7: video clip 생성 (ComfyUI 경유)
-        from ai_worker.video.comfy_client import ComfyUIClient
-        from ai_worker.video.manager import VideoCheckpoint, VideoManager
-        from config.settings import (
-            VIDEO_GEN_TIMEOUT,
-            VIDEO_GEN_TIMEOUT_DISTILLED,
-            VIDEO_MAX_CLIPS_PER_POST,
-            VIDEO_MAX_RETRY,
-            VIDEO_NUM_FRAMES,
-            VIDEO_NUM_FRAMES_FALLBACK,
-            VIDEO_NUM_FRAMES_MAX,
-            VIDEO_RESOLUTION,
-            VIDEO_RESOLUTION_FALLBACK,
-            VIDEO_STEPS,
-            VIDEO_STEPS_DISTILLED,
-            VIDEO_CFG,
-            VIDEO_CFG_DISTILLED,
-            VIDEO_FPS,
-            VIDEO_WORKFLOW_MODE,
-            get_comfyui_url,
-        )
+        try:
+            # Phase 7: video clip 생성 (ComfyUI 경유)
+            from ai_worker.video.comfy_client import ComfyUIClient
+            from ai_worker.video.manager import VideoCheckpoint, VideoManager
+            from config.settings import (
+                VIDEO_GEN_TIMEOUT,
+                VIDEO_GEN_TIMEOUT_DISTILLED,
+                VIDEO_MAX_CLIPS_PER_POST,
+                VIDEO_MAX_RETRY,
+                VIDEO_NUM_FRAMES,
+                VIDEO_NUM_FRAMES_FALLBACK,
+                VIDEO_NUM_FRAMES_MAX,
+                VIDEO_RESOLUTION,
+                VIDEO_RESOLUTION_FALLBACK,
+                VIDEO_STEPS,
+                VIDEO_STEPS_DISTILLED,
+                VIDEO_CFG,
+                VIDEO_CFG_DISTILLED,
+                VIDEO_FPS,
+                VIDEO_WORKFLOW_MODE,
+                get_comfyui_url,
+            )
 
-        logger.info("[video] Phase 7: 비디오 클립 생성 시작 (mode=%s)", VIDEO_WORKFLOW_MODE)
+            logger.info("[video] Phase 7: 비디오 클립 생성 시작 (mode=%s)", VIDEO_WORKFLOW_MODE)
 
-        comfy = ComfyUIClient(base_url=get_comfyui_url())
-        video_config = {
-            "VIDEO_RESOLUTION": VIDEO_RESOLUTION,
-            "VIDEO_RESOLUTION_FALLBACK": VIDEO_RESOLUTION_FALLBACK,
-            "VIDEO_NUM_FRAMES": VIDEO_NUM_FRAMES,
-            "VIDEO_NUM_FRAMES_FALLBACK": VIDEO_NUM_FRAMES_FALLBACK,
-            "VIDEO_NUM_FRAMES_MAX": VIDEO_NUM_FRAMES_MAX,
-            "VIDEO_GEN_TIMEOUT": VIDEO_GEN_TIMEOUT,
-            "VIDEO_GEN_TIMEOUT_DISTILLED": VIDEO_GEN_TIMEOUT_DISTILLED,
-            "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
-            "VIDEO_MAX_RETRY": VIDEO_MAX_RETRY,
-            "VIDEO_STEPS": VIDEO_STEPS,
-            "VIDEO_STEPS_DISTILLED": VIDEO_STEPS_DISTILLED,
-            "VIDEO_CFG": VIDEO_CFG,
-            "VIDEO_CFG_DISTILLED": VIDEO_CFG_DISTILLED,
-            "VIDEO_FPS": VIDEO_FPS,
-            "VIDEO_WORKFLOW_MODE": VIDEO_WORKFLOW_MODE,
-        }
+            comfy = ComfyUIClient(base_url=get_comfyui_url())
+            video_config = {
+                "VIDEO_RESOLUTION": VIDEO_RESOLUTION,
+                "VIDEO_RESOLUTION_FALLBACK": VIDEO_RESOLUTION_FALLBACK,
+                "VIDEO_NUM_FRAMES": VIDEO_NUM_FRAMES,
+                "VIDEO_NUM_FRAMES_FALLBACK": VIDEO_NUM_FRAMES_FALLBACK,
+                "VIDEO_NUM_FRAMES_MAX": VIDEO_NUM_FRAMES_MAX,
+                "VIDEO_GEN_TIMEOUT": VIDEO_GEN_TIMEOUT,
+                "VIDEO_GEN_TIMEOUT_DISTILLED": VIDEO_GEN_TIMEOUT_DISTILLED,
+                "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
+                "VIDEO_MAX_RETRY": VIDEO_MAX_RETRY,
+                "VIDEO_STEPS": VIDEO_STEPS,
+                "VIDEO_STEPS_DISTILLED": VIDEO_STEPS_DISTILLED,
+                "VIDEO_CFG": VIDEO_CFG,
+                "VIDEO_CFG_DISTILLED": VIDEO_CFG_DISTILLED,
+                "VIDEO_FPS": VIDEO_FPS,
+                "VIDEO_WORKFLOW_MODE": VIDEO_WORKFLOW_MODE,
+            }
 
-        manager = VideoManager(
-            comfy_client=comfy,
-            prompt_engine=prompt_engine,
-            config=video_config,
-        )
+            manager = VideoManager(
+                comfy_client=comfy,
+                prompt_engine=prompt_engine,
+                config=video_config,
+            )
 
-        # 체크포인트 로드
-        checkpoint: VideoCheckpoint | None = None
-        with SessionLocal() as ckpt_sess:
-            _content = ckpt_sess.query(Content).filter_by(post_id=post_id).first()
-            if _content and _content.pipeline_state:
+            # 체크포인트 로드
+            checkpoint: VideoCheckpoint | None = None
+            with SessionLocal() as ckpt_sess:
+                _content = ckpt_sess.query(Content).filter_by(post_id=post_id).first()
+                if _content and _content.pipeline_state:
+                    try:
+                        checkpoint = VideoCheckpoint.from_dict(_content.pipeline_state)
+                        logger.info(
+                            "[video] 체크포인트 로드: post=%d, 완료=%d/%d씬",
+                            post_id,
+                            len(checkpoint.video_scenes_done),
+                            checkpoint.total_scenes,
+                        )
+                    except Exception:
+                        logger.warning("[video] 체크포인트 파싱 실패 — 처음부터 시작", exc_info=True)
+                        checkpoint = None
+
+            # 씬 완료 콜백: DB에 즉시 체크포인트 커밋
+            _done_scenes: list[int] = list(checkpoint.video_scenes_done) if checkpoint else []
+            _done_clips: dict[str, str] = dict(checkpoint.video_clips) if checkpoint else {}
+
+            stamp_progress(post_id, 7, "비디오 클립", scenes_done=0, total_scenes=len(scenes))
+
+            def _on_scene_complete(scene_idx: int, clip_path: str) -> None:
+                _done_scenes.append(scene_idx)
+                _done_clips[str(scene_idx)] = clip_path
                 try:
-                    checkpoint = VideoCheckpoint.from_dict(_content.pipeline_state)
-                    logger.info(
-                        "[video] 체크포인트 로드: post=%d, 완료=%d/%d씬",
-                        post_id,
-                        len(checkpoint.video_scenes_done),
-                        checkpoint.total_scenes,
-                    )
+                    with SessionLocal() as cb_sess:
+                        ct = cb_sess.query(Content).filter_by(post_id=post_id).first()
+                        if ct is not None:
+                            # 기존 state 읽기 (progress 보존)
+                            state: dict = dict(ct.pipeline_state or {})
+                            # 체크포인트 키 갱신
+                            checkpoint_dict = VideoCheckpoint(
+                                phase=7,
+                                video_scenes_done=list(_done_scenes),
+                                video_clips=dict(_done_clips),
+                                total_scenes=len(scenes),
+                            ).to_dict()
+                            state.update(checkpoint_dict)
+                            # 진행 스탬프 갱신 (단일 쓰기)
+                            from datetime import datetime, timezone
+                            now = datetime.now(timezone.utc).isoformat()
+                            prev_p = state.get("progress") or {}
+                            state["progress"] = {
+                                "current_phase": 7,
+                                "phase_name": "비디오 클립",
+                                "phase_started_at": prev_p.get("phase_started_at", now) if prev_p.get("current_phase") == 7 else now,
+                                "scenes_done": len(_done_scenes),
+                                "total_scenes": len(scenes),
+                                "updated_at": now,
+                                "done": False,
+                            }
+                            ct.pipeline_state = state
+                            cb_sess.commit()
                 except Exception:
-                    logger.warning("[video] 체크포인트 파싱 실패 — 처음부터 시작", exc_info=True)
-                    checkpoint = None
+                    logger.warning("[video] 체크포인트 저장 실패 (비치명적)", exc_info=True)
 
-        # 씬 완료 콜백: DB에 즉시 체크포인트 커밋
-        _done_scenes: list[int] = list(checkpoint.video_scenes_done) if checkpoint else []
-        _done_clips: dict[str, str] = dict(checkpoint.video_clips) if checkpoint else {}
+            scenes = await manager.generate_all_clips(
+                scenes=scenes,
+                mood=script.mood,
+                post_id=post_id,
+                title=post_title,
+                body_summary=body_summary,
+                checkpoint=checkpoint,
+                on_scene_complete=_on_scene_complete,
+            )
 
-        stamp_progress(post_id, 7, "비디오 클립", scenes_done=0, total_scenes=len(scenes))
-
-        def _on_scene_complete(scene_idx: int, clip_path: str) -> None:
-            _done_scenes.append(scene_idx)
-            _done_clips[str(scene_idx)] = clip_path
+            # Phase 7 정상 완료 → 체크포인트 클리어 (progress 보존)
             try:
-                with SessionLocal() as cb_sess:
-                    ct = cb_sess.query(Content).filter_by(post_id=post_id).first()
-                    if ct is not None:
-                        # 기존 state 읽기 (progress 보존)
-                        state: dict = dict(ct.pipeline_state or {})
-                        # 체크포인트 키 갱신
-                        checkpoint_dict = VideoCheckpoint(
-                            phase=7,
-                            video_scenes_done=list(_done_scenes),
-                            video_clips=dict(_done_clips),
-                            total_scenes=len(scenes),
-                        ).to_dict()
-                        state.update(checkpoint_dict)
-                        # 진행 스탬프 갱신 (단일 쓰기)
-                        from datetime import datetime, timezone
-                        now = datetime.now(timezone.utc).isoformat()
-                        prev_p = state.get("progress") or {}
-                        state["progress"] = {
-                            "current_phase": 7,
-                            "phase_name": "비디오 클립",
-                            "phase_started_at": prev_p.get("phase_started_at", now) if prev_p.get("current_phase") == 7 else now,
-                            "scenes_done": len(_done_scenes),
-                            "total_scenes": len(scenes),
-                            "updated_at": now,
-                            "done": False,
-                        }
-                        ct.pipeline_state = state
-                        cb_sess.commit()
+                clear_checkpoint_keep_progress(post_id)
             except Exception:
-                logger.warning("[video] 체크포인트 저장 실패 (비치명적)", exc_info=True)
+                logger.warning("[video] 체크포인트 클리어 실패 (비치명적)", exc_info=True)
 
-        scenes = await manager.generate_all_clips(
-            scenes=scenes,
-            mood=script.mood,
-            post_id=post_id,
-            title=post_title,
-            body_summary=body_summary,
-            checkpoint=checkpoint,
-            on_scene_complete=_on_scene_complete,
-        )
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            gc.collect()
 
-        # Phase 7 정상 완료 → 체크포인트 클리어 (progress 보존)
-        try:
-            clear_checkpoint_keep_progress(post_id)
-        except Exception:
-            logger.warning("[video] 체크포인트 클리어 실패 (비치명적)", exc_info=True)
+            video_ok = sum(1 for s in scenes if getattr(s, "video_clip_path", None))
+            logger.info("[video] Phase 7 완료: 성공=%d, 최종 씬=%d", video_ok, len(scenes))
 
-        try:
-            import torch
-            torch.cuda.empty_cache()
-        except Exception:
-            pass
-        gc.collect()
-
-        video_ok = sum(1 for s in scenes if getattr(s, "video_clip_path", None))
-        logger.info("[video] Phase 7 완료: 성공=%d, 최종 씬=%d", video_ok, len(scenes))
-
-        return scenes
+            return scenes
+        finally:
+            # ★ fish-speech 재기동 — Phase 7 성공/실패와 무관하게 항상 복구 시도
+            #   (다음 LLM+TTS 요청이 이 컨테이너에 의존함)
+            restarted = await start_fish_speech()
+            if not restarted:
+                logger.error(
+                    "[video] fish-speech 재기동 실패 — 다음 TTS 요청이 실패할 수 있음. "
+                    "수동 확인 필요: post_id=%d", post_id,
+                )
 
     def _generate_video_clips_sync(
         self,

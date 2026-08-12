@@ -198,8 +198,50 @@ def _load_image(
         return None
 
 
+
+def _sanitize_comment_display_text(value: object) -> str:
+    """댓글 표시용 텍스트를 정규화한다.
+
+    수집 단계의 이스케이프가 남아 있어도 ``\\n``은 실제 줄바꿈으로 보이고,
+    그 밖의 잔여 백슬래시는 화면에 노출하지 않는다.
+    """
+    text = str(value or "")
+    text = text.replace("\\r\\n", "\n").replace("\\n", "\n")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return text.replace("\\", "").strip()
+
+
+def _draw_down_chevron(
+    draw: ImageDraw.ImageDraw,
+    center_x: int,
+    center_y: int,
+    size: int,
+    color: str,
+    width: int = 3,
+) -> None:
+    """폰트 글리프 대신 PIL 선으로 아래쪽 셰브론을 그린다."""
+    half = max(2, size // 2)
+    draw.line(
+        [(center_x - half, center_y - half // 2),
+         (center_x, center_y + half // 2),
+         (center_x + half, center_y - half // 2)],
+        fill=color,
+        width=width,
+    )
+
+
+
+def _flatten_rgba(img: Image.Image, bg: str = "#FFF8F0") -> Image.Image:
+    """RGBA(투명) → RGB. 투명 영역을 크림으로 채워 검정 배경 오염을 막는다."""
+    if img.mode == "RGBA":
+        base = Image.new("RGB", img.size, bg)
+        base.paste(img, mask=img.split()[3])
+        return base
+    return img.convert("RGB") if img.mode != "RGB" else img
+
 def _fit_cover(img: Image.Image, w: int, h: int) -> Image.Image:
     """Cover 모드: 비율 유지 + 중앙 크롭."""
+    img = _flatten_rgba(img)
     iw, ih = img.size
     scale = max(w / iw, h / ih)
     nw, nh = int(iw * scale), int(ih * scale)
@@ -211,6 +253,7 @@ def _fit_cover(img: Image.Image, w: int, h: int) -> Image.Image:
 
 def _fit_contain(img: Image.Image, max_w: int, max_h: int) -> Image.Image:
     """Contain 모드: 비율 유지, 최대 크기 이하로 리사이즈 (크롭 없음, 흰여백)."""
+    img = _flatten_rgba(img)
     iw, ih = img.size
     if iw == 0 or ih == 0:
         return img
@@ -398,12 +441,30 @@ def _truncate(text: str, max_chars: int) -> str:
     return text[: max_chars - 2] + ".."
 
 
+# getbbox로 잉크 폭을 맞추고, 측정 오차만 소량 보정한다.
+# (예전 4% slack + 16px는 한 줄이 너무 짧아지는 부작용이 있었음)
+_WRAP_WIDTH_SLACK = 1.01
+_WRAP_SAFETY_PX = 4
+
+
 def _font_w(font: ImageFont.FreeTypeFont, text: str) -> float:
-    """폰트 기준 텍스트 픽셀 너비 (PIL 버전 호환)."""
+    """폰트 기준 텍스트 픽셀 너비 (그리기 폭에 가깝게, 소량 여유 포함)."""
+    if not text:
+        return 0.0
     try:
-        return font.getlength(text)
-    except AttributeError:
-        return float(font.getbbox(text)[2])
+        bbox = font.getbbox(text)
+        w = float(bbox[2] - bbox[0])
+    except Exception:
+        try:
+            w = float(font.getlength(text))
+        except AttributeError:
+            w = float(font.getsize(text)[0])  # type: ignore[attr-defined]
+    return w * _WRAP_WIDTH_SLACK
+
+
+def _wrap_max_width(raw: int) -> int:
+    """줄바꿈 한도 — 카드/씬 pad가 오른쪽 여백; 여기선 측정 오차만 뺀다."""
+    return max(1, int(raw) - _WRAP_SAFETY_PX)
 
 
 def _wrap_korean(
@@ -424,8 +485,9 @@ def _wrap_korean(
         return [""]
     paragraphs = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     out: list[str] = []
+    safe_w = _wrap_max_width(max_width)
     for para in paragraphs:
-        out.extend(_wrap_korean_paragraph(para, font, max_width, keep_all=keep_all))
+        out.extend(_wrap_korean_paragraph(para, font, safe_w, keep_all=keep_all))
     return out or [""]
 
 
@@ -1722,10 +1784,19 @@ def _render_comments_frame(
         count_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", sort_fs)
         draw.text((pad_x + prefix_w, y), str(len(items)), font=count_font,
                   fill=palette.get("peach", "#C9785A"))
-        label = sort_cfg.get("label", "추천순 ▾")
+        label = str(sort_cfg.get("label", "추천순")).replace("▾", "").replace("▼", "").strip() or "추천순"
+        label_color = sort_cfg.get("label_color", "#A08670")
+        chevron_size = max(10, sort_fs // 3)
         lbl_w = int(_font_w(label_font, label))
-        draw.text((cw - pad_x - lbl_w, y), label, font=label_font,
-                  fill=sort_cfg.get("label_color", "#A08670"))
+        label_x = cw - pad_x - lbl_w - chevron_size - 10
+        draw.text((label_x, y), label, font=label_font, fill=label_color)
+        _draw_down_chevron(
+            draw,
+            center_x=cw - pad_x - chevron_size // 2,
+            center_y=y + sort_fs // 2,
+            size=chevron_size,
+            color=label_color,
+        )
         y += int(sort_fs * 1.5)
         divider_color = sort_cfg.get("divider_color", "#E5DED2")
         draw.rectangle([(pad_x, y), (cw - pad_x, y + sort_cfg.get("divider_thickness", 2))],
@@ -1745,9 +1816,9 @@ def _render_comments_frame(
         card_w = cw - 2 * pad_x
 
         for item in visible:
-            author = (item.get("author") or "익명").strip() or "익명"
+            author = _sanitize_comment_display_text(item.get("author") or "익명") or "익명"
             side = (item.get("side") or "").strip().lower()
-            content = item.get("content", "") or ""
+            content = _sanitize_comment_display_text(item.get("content", "") or "")
             likes = item.get("likes", 0) or 0
             is_best = bool(item.get("is_best"))
 

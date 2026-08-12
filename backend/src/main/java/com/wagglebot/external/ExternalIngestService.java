@@ -18,11 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * 외부 서비스(Again Spring 등) 사연을 Post/Comment/Content로 적재한다.
@@ -38,10 +35,6 @@ public class ExternalIngestService {
 
     private static final String OUTRO_PAIRED = "상대방의 사연도 궁금하시죠? 댓글에서 확인해 보세요.";
     private static final String OUTRO_SOLO = "여러분은 어떻게 생각하세요? 댓글로 알려주세요.";
-
-    /** Again Spring Shorts 댓글 씬은 화면 슬롯 + TTS 낭독 모두 최대 3개 — ingest 단계에서부터 고정. */
-    private static final int MAX_INGESTED_COMMENTS = 3;
-    private static final Set<String> VALID_SIDES = Set.of("author", "partner", "neutral");
 
     private final PostRepository postRepo;
     private final CommentRepository commentRepo;
@@ -122,12 +115,18 @@ public class ExternalIngestService {
 
         upsertComments(post.getId(), req.comments());
         String ttsVoice = (options != null && options.ttsVoice() != null) ? options.ttsVoice().trim() : null;
-        String metaphorId = (options != null && options.metaphorId() != null) ? options.metaphorId().trim() : null;
-        List<String> metaphorIds = (options != null && options.metaphorIds() != null) ? options.metaphorIds() : null;
         String commentVoices = (options != null && options.commentVoices() != null) ? options.commentVoices().trim() : null;
-        String category = req.category() != null ? req.category().trim() : null;
-        Integer viewCount = req.viewCount();
-        upsertContent(post.getId(), now, req, videoGen, paired, outroText, autoHdRender, ttsVoice, metaphorId, metaphorIds, commentVoices, category, viewCount);
+        String mood = (options != null && options.mood() != null) ? options.mood().trim() : null;
+        String ttsEmotion = (options != null && options.ttsEmotion() != null) ? options.ttsEmotion().trim() : null;
+        Integer maxDurationSec = options != null ? options.maxDurationSec() : null;
+        String platformLayout = (options != null && options.platformLayout() != null)
+            ? options.platformLayout().trim() : null;
+        // Video path uses sibom_plan only — metaphorId is intentionally ignored (unplugged).
+        var sibomPlan = (options != null) ? options.sibomPlan() : null;
+        upsertContent(
+            post.getId(), now, req, videoGen, paired, outroText, autoHdRender,
+            ttsVoice, commentVoices, mood, ttsEmotion, maxDurationSec, platformLayout, sibomPlan
+        );
 
         log.info(
             "[external] ingest 완료: site={} originId={} postId={} paired={} videoGen={} autoHdRender={}",
@@ -146,51 +145,32 @@ public class ExternalIngestService {
 
     private void upsertComments(Long postId, List<ExternalJobRequest.CommentInput> comments) {
         if (comments == null || comments.isEmpty()) return;
-        // Again Spring Shorts: 재수집 시 이전 해시/닉 불일치 댓글을 남기지 않도록 전부 교체한다.
-        commentRepo.deleteByPostId(postId);
-        // 최대 3개까지만 적재 — 이미 적재된(중복) 댓글도 슬롯을 소비해 재시도 시 상한이 흔들리지 않게 한다.
-        int inserted = 0;
         for (ExternalJobRequest.CommentInput c : comments) {
-            if (inserted >= MAX_INGESTED_COMMENTS) break;
-            if (c == null || c.body() == null) continue;
-            String author = c.displayAuthor();  // nickname 우선 — authorId(해시)는 절대 표시하지 않음
-            if (isBlank(author)) continue;
-            String hash = sha256(author + ":" + c.body());
-            if (commentRepo.existsByPostIdAndAuthorAndContentHash(postId, author, hash)) {
-                inserted++; // 재시도 시 동일 댓글 중복 삽입 방지 (uq_post_comment)
-                continue;
+            if (c == null || isBlank(c.author()) || c.body() == null) continue;
+            String hash = sha256(c.author() + ":" + c.body());
+            if (commentRepo.existsByPostIdAndAuthorAndContentHash(postId, c.author(), hash)) {
+                continue; // 재시도 시 동일 댓글 중복 삽입 방지 (uq_post_comment)
             }
             Comment comment = new Comment();
             comment.setPostId(postId);
-            comment.setAuthor(author);
+            comment.setAuthor(c.author());
             comment.setContent(c.body());
             comment.setContentHash(hash);
             comment.setLikes(c.likeCount() != null ? c.likeCount() : 0);
-            comment.setCreatedAt(c.createdAt() != null
-                ? LocalDateTime.ofInstant(c.createdAt(), ZoneOffset.UTC)
-                : LocalDateTime.now());
-            comment.setSide(normalizeSide(c.side()));
             commentRepo.save(comment);
-            inserted++;
         }
-    }
-
-    /** "author" | "partner" | "neutral"만 허용 — 그 외/누락은 "neutral"로 정규화 (진영색 스타일 안전값). */
-    private static String normalizeSide(String side) {
-        if (side == null) return "neutral";
-        String s = side.trim().toLowerCase(Locale.ROOT);
-        return VALID_SIDES.contains(s) ? s : "neutral";
     }
 
     private void upsertContent(
         Long postId, LocalDateTime now, ExternalJobRequest req,
         boolean videoGen, boolean paired, String outroText, boolean autoHdRender,
         String ttsVoice,
-        String metaphorId,
-        List<String> metaphorIds,
         String commentVoices,
-        String category,
-        Integer viewCount
+        String mood,
+        String ttsEmotion,
+        Integer maxDurationSec,
+        String platformLayout,
+        com.fasterxml.jackson.databind.JsonNode sibomPlan
     ) {
         Content content = contentRepo.findByPostId(postId).orElseGet(() -> {
             Content c = new Content();
@@ -210,21 +190,25 @@ public class ExternalIngestService {
             variantConfig.put("tts_voice", ttsVoice);
             content.setTtsVoice(ttsVoice);
         }
-        if (metaphorId != null && !metaphorId.isBlank()) {
-            variantConfig.put("metaphor_id", metaphorId);
-        }
-        if (metaphorIds != null && !metaphorIds.isEmpty()) {
-            variantConfig.putPOJO("metaphor_ids", metaphorIds);
-        }
-        if (category != null && !category.isBlank()) {
-            variantConfig.put("category", category);
-        }
-        if (viewCount != null) {
-            variantConfig.put("view_count", viewCount);
-        }
+        // metaphor_id intentionally omitted — video path is sibom_plan only (cream+text if empty).
         if (commentVoices != null && !commentVoices.isBlank()) {
             // JSON array string preferred; comma-separated also accepted by Python resolver
             variantConfig.put("comment_voices", commentVoices);
+        }
+        if (mood != null && !mood.isBlank()) {
+            variantConfig.put("mood", mood);
+        }
+        if (ttsEmotion != null && !ttsEmotion.isBlank()) {
+            variantConfig.put("tts_emotion", ttsEmotion);
+        }
+        if (maxDurationSec != null && maxDurationSec > 0) {
+            variantConfig.put("max_duration_sec", maxDurationSec);
+        }
+        if (platformLayout != null && !platformLayout.isBlank()) {
+            variantConfig.put("platform_layout", platformLayout);
+        }
+        if (sibomPlan != null && sibomPlan.isArray()) {
+            variantConfig.set("sibom_plan", sibomPlan);
         }
         content.setVariantConfig(variantConfig);
 

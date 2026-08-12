@@ -18,8 +18,8 @@ LLM(Claude) JSON 모드로 구어체 대본을 분절 생성한다.
         ],
         "closer": "..."
     }
-    body 항목의 lines 요소는 각 40자 이내.
-    40자 초과 시(그리고 그 지점에서 문장이 안 끝났을 때만) 어절 단위로 분리해 line_count 2로 설정.
+    body 항목의 lines 요소는 각 20자 이내.
+    20자 초과 시 어절 단위로 분리해 line_count 2로 설정.
 """
 import json
 import logging
@@ -35,32 +35,6 @@ _STRATEGY_GUIDE: dict[str, str] = {
     "balanced":   "핵심 문장과 보조 문장을 구분해서 작성.",
     "text_heavy": "텍스트만으로 몰입되도록 자세히 작성.",
 }
-
-
-_MAX_LINE_CHARS = 40
-
-
-def _merge_short_split_lines(body: list) -> list:
-    """LLM이 프롬프트 지시와 무관하게 완결된 짧은 문장을 line_count=2(+)로
-
-    쪼개 놓는 경향이 있어(few-shot·rhythm 지시를 다 줘도 재현됨), 후처리에서
-    확정적으로 병합한다. line_count>=2인 항목의 lines를 공백으로 이어붙였을 때
-    _MAX_LINE_CHARS 이내면 line_count=1인 단일 lines로 합친다 — line_count=2는
-    애초에 "한 문장을 길이 때문에 어쩔 수 없이 나눈 것"이라는 뜻이므로, 합쳐서
-    40자 이내면 애초에 나눌 필요가 없었던 것이다(2026-08-10).
-    """
-    merged = []
-    for item in body:
-        if not isinstance(item, dict):
-            merged.append(item)
-            continue
-        lines = item.get("lines")
-        if isinstance(lines, list) and len(lines) > 1:
-            joined = " ".join(str(line_text) for line_text in lines)
-            if len(joined) <= _MAX_LINE_CHARS:
-                item = {**item, "lines": [joined], "line_count": 1}
-        merged.append(item)
-    return merged
 
 
 def build_chunking_system(*, extended: bool = False) -> str:
@@ -95,8 +69,10 @@ def build_chunking_system(*, extended: bool = False) -> str:
 
     return (
         # ── 페르소나 ──
-        "당신은 남의 사연을 친구에게 풀어주듯 찰지게 들려주는 '썰 전문 유튜브 쇼츠 내레이터'입니다.\n"
-        "항상 1인칭 구어체로, 카메라 앞에서 시청자에게 직접 말을 거는 톤으로 대본을 씁니다.\n"
+        "당신은 사연의 글쓴이 본인이 자기 이야기를 친구에게 풀어주듯 찰지게 들려주는 '썰 전문 유튜브 쇼츠 내레이터'입니다.\n"
+        "항상 글쓴이 본인의 1인칭 구어체로, 카메라 앞에서 시청자에게 직접 말을 거는 톤으로 대본을 씁니다.\n"
+        "남의 사연을 소개하는 진행자·제3자 화자가 되지 말고, 글쓴이를 제3자로 부르는 '남편분', '아내분', '그/그녀'식 내레이터 표현은 절대 쓰지 마세요.\n"
+        "관계 호칭은 글쓴이 시점의 '남편', '와이프', '우리 ○○'를 우선하고, 직접 1인칭 구어체로 말하세요.\n"
         "당신의 유일한 성공 지표는 시청자가 영상을 마지막 1초까지 보게 만드는 것입니다.\n"
         "반드시 JSON 형식으로만 응답하며, JSON 외의 텍스트는 절대 포함하지 마세요.\n\n"
 
@@ -104,14 +80,9 @@ def build_chunking_system(*, extended: bool = False) -> str:
         "## 0. 가장 중요 — 자연스러움 (AI가 쓴 티 제거)\n"
         "- 실제 사람이 친구한테 썰 풀듯 말하세요. 매끈한 '글'이 아니라 '말'을 쓰는 겁니다.\n"
         '- "진짜", "와", "아니 글쎄", "근데 있잖아요" 같은 추임새를 자연스럽게 섞으세요.\n'
-        "- body 항목 1개 = 화면에 '한 번 등장'하는 문장입니다. text_only는 이 등장을 최대 3번 쌓은 뒤"
-        " clear합니다. 화면을 꼭 3줄로 맞출 필요 없습니다 — 문장이 길면 그 등장 안에서 여러 시각 줄로"
-        " wrap하면 됩니다.\n"
-        "- 리듬은 '문장 자체의 길이'로 만드세요. 짧은 완결 문장을 억지로 여러 줄/여러 항목으로 쪼개지 마세요.\n"
-        '- (X) 짧고 완결된 문장을 리듬감 때문에 억지로 2줄로 쪼갬 — "32년을 딴짓 없이" / "열심히만 살았어요"\n'
-        '- (O) 40자 이내로 끝나면 1줄: "32년을 딴짓 없이 열심히만 살았어요"\n'
-        '- (O) 긴 문장은 한 항목 안에서 여러 줄: {"line_count":2,"lines":["다정하게 대해주긴 해, 근데 나랑",'
-        ' "있는 것보단 빨리 집 가고 싶어하는 게 보여"]}\n'
+        "- 문장 길이와 리듬을 변주하세요. 짧게 툭 끊고, 가끔은 길게 몰아치세요.\n"
+        '- (X) 모든 항목이 2줄×10자로 균일 — 기계적입니다.\n'
+        '- (O) 짧은 단문 한 줄("딱 봐도 바람이잖아요")로 툭 끊은 뒤, 다음 항목에서 2줄로 몰아치기 — 긴장과 이완을 반복하세요.\n'
         "- 번역투·뉴스 기사체·AI 요약체 금지. 정보 나열이 아니라 감정이 실린 '이야기'여야 합니다.\n"
         '  - (X) 뉴스체: "주유소들이 가격을 담합한 것으로 보입니다."\n'
         '  - (O) 구어체: "아니 이 인간들, 지들끼리 가격 짜고 친 거 우리가 모를 줄 알았나 봐요?"\n\n'
@@ -192,11 +163,9 @@ def build_chunking_system(*, extended: bool = False) -> str:
         # ── 3. 자막 분할 ──
         "## 3. 자막 분할 (호흡 단위)\n"
         "- 기계적으로 자르지 말고, 사람이 말하며 숨 쉬는 '호흡 단위'로 끊으세요.\n"
-        "- 한 줄(lines 요소)은 40자 이내. 한 body 항목(한 등장)은 문장이 길면 lines를 여러 개 가져도 됩니다.\n"
-        "- 문장이 40자 안에서 끝나면 1줄로 담으세요. 짧게 여러 항목으로 쪼개지 마세요.\n"
-        '  - (O) "정유사들은 다 똑같아" (한 등장·1줄)   (X) "정유사들은" / "다 똑같아" (불필요한 분할)\n'
-        "- 40자를 넘고 문장도 안 끝났을 때만 같은 항목의 lines에 어절 단위로 나눠 담고 line_count를 늘리세요.\n"
-        "- text_only 화면은 '등장 3회'가 기준이지 '시각 줄 3줄'이 아닙니다.\n\n"
+        "- 한 줄(lines 요소)은 20자 이내, 의미가 어색하게 끊기지 않게 하세요.\n"
+        '  - (O) "정유사들은" / "다 똑같아"   (X) "정유사들" / "은 다 똑같아"\n'
+        "- 20자를 넘으면 어절 단위로 나눠 같은 항목의 lines에 담고 line_count를 늘리세요.\n\n"
 
         # ── 4. 블록·댓글·팩트 ──
         "## 4. 블록·댓글·팩트 규칙\n"
@@ -208,7 +177,7 @@ def build_chunking_system(*, extended: bool = False) -> str:
         "  ② 본문에 없던 관점·정보를 보태는 댓글,\n"
         "  ③ 피식 웃기거나 여운을 남기는 댓글.\n"
         "  closer의 질문과 자연스럽게 이어지는 댓글을 마지막에 배치하면 시청자가 댓글창으로 넘어갈 확률이 올라갑니다.\n"
-        "- 댓글도 한 줄 40자 규칙 적용, 최대 3줄(총 120자 이내). 길면 핵심만 추려 요약하세요.\n"
+        "- 댓글도 한 줄 20자 규칙 적용, 최대 3줄(총 60자 이내). 길면 핵심만 추려 요약하세요.\n"
         "- 원문 내용을 끝까지 대본화하세요(생략·요약 금지).\n"
         "- 고유명사·팩트는 그대로 보존하고 환각·오역 금지. 한국어 문맥을 정확히 파악하세요.\n"
         '  - (예: "정유사는 다 틀린데"의 "틀리다"는 영어 "wrong"이 아니라 "다르다(different)"는 구어 표현)\n'
@@ -244,8 +213,8 @@ def build_chunking_system(*, extended: bool = False) -> str:
         "{\n"
         f'  "hook": "첫 3초 후킹 문장 (최대 {MAX_HOOK_CHARS}자)",\n'
         '  "body": [\n'
-        '    {"line_count": 2, "lines": ["40자 이내 줄 1 (문장 안 끝남)", "40자 이내 줄 2"]},\n'
-        '    {"line_count": 1, "lines": ["40자 이내로 문장이 끝나면 한 줄"]},\n'
+        '    {"line_count": 2, "lines": ["20자 이하 줄 1", "20자 이하 줄 2"]},\n'
+        '    {"line_count": 1, "lines": ["20자 이하 단일 줄"]},\n'
         '    {"line_count": 1, "lines": ["닉네임: 댓글 내용"], "type": "comment"},\n'
         '    {"line_count": 1, "lines": ["대사 내용"], "speaker": "character", "character_label": "등장인물명(예:남자친구)", "character_gender": "male|female", "character_age": "20s|30s|..."}\n'
         '  ],\n'
@@ -269,14 +238,15 @@ def build_chunking_system(*, extended: bool = False) -> str:
         "{\n"
         '  "hook": "1년 참은 주차 빌런, 결말이 소름이에요",\n'
         '  "body": [\n'
-    '    {"line_count": 1, "lines": ["옆집이 글쎄 맨날 내 자리에 주차를 해요"]},\n'
-    '    {"line_count": 1, "lines": ["처음엔 그냥 좋게 넘어갔거든요"]},\n'
-    '    {"line_count": 1, "lines": ["근데 경고장을 붙여도 그냥 쌩까더라고요"]},\n'
-    '    {"line_count": 1, "lines": ["빡쳐서 관리실에 신고했더니 돌아온 대답이 가관이었어요"]},\n'
-    '    {"line_count": 1, "lines": ["글쎄 그 집이 관리소장 친척이래요"]},\n'
-    '    {"line_count": 1, "lines": ["어쩔 수 없이 그냥 단지 밖에 차를 댔어요"]},\n'
-    '    {"line_count": 1, "lines": ["근데 어제 아침에 제 눈을 의심했어요"]},\n'
-    '    {"line_count": 1, "lines": ["그 집 차에 누가 락카로 낙서를 온통 칠해놨더라고요"]},\n'
+        '    {"line_count": 2, "lines": ["옆집이 글쎄", "맨날 내 자리에 주차해요"]},\n'
+        '    {"line_count": 2, "lines": ["처음엔 그냥", "좋게 넘어갔거든요"]},\n'
+        '    {"line_count": 2, "lines": ["근데 경고장을 붙여도", "그냥 쌩까더라고요"]},\n'
+        '    {"line_count": 2, "lines": ["빡쳐서 신고했더니", "돌아온 대답이 가관"]},\n'
+        '    {"line_count": 2, "lines": ["글쎄 그 집이", "관리소장 친척이래요"]},\n'
+        '    {"line_count": 2, "lines": ["어쩔 수 없이 그냥", "단지 밖에 댔어요"]},\n'
+        '    {"line_count": 2, "lines": ["근데 어제 아침", "내 눈을 의심했어요"]},\n'
+        '    {"line_count": 2, "lines": ["그 집 차에 누가", "락카로 낙서를"]},\n'
+        '    {"line_count": 1, "lines": ["온통 칠해놨더라고요"]},\n'
         '    {"line_count": 1, "lines": ["분노왕: 사이다네요 자업자득 ㅋㅋ"], "type": "comment"},\n'
         '    {"line_count": 1, "lines": ["정의구현: 관리소장도 책임져야죠"], "type": "comment"},\n'
         '    {"line_count": 1, "lines": ["웃참실패: 낙서범한테 표창 줘야 함"], "type": "comment"}\n'
@@ -289,7 +259,7 @@ def build_chunking_system(*, extended: bool = False) -> str:
         "## 출력 전 자가점검 (JSON 출력 직전 확인)\n"
         "① hook이 연 궁금증의 답이 body 마지막 1/3에 있는가? (초반에 결말 노출 금지)\n"
         '② "그리고"로 단순 나열한 블록이 없는가? ("근데/알고 보니"로 고조했는가)\n'
-        "③ hook은 40자 이내, 모든 lines·closer는 40자 이내인가? 40자 안에서 끝나는 문장을 불필요하게 2줄로 쪼개지 않았는가?\n"
+        "③ hook은 40자 이내, 모든 lines·closer는 20자 이내인가?\n"
         "확인 후 JSON만 출력하세요.\n\n"
 
         # ── 길이 제약 ──
@@ -471,7 +441,6 @@ async def chunk_with_llm(
 
     if not isinstance(result["body"], list):
         result["body"] = [str(result["body"])]
-    result["body"] = _merge_short_split_lines(result["body"])
 
     # 선택 필드 기본값 보정 (extended=True 시 전체, False 시 mood만 보장)
     result.setdefault("mood", "daily")

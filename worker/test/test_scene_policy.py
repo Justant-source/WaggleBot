@@ -231,6 +231,36 @@ def test_asset_structure() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test 7: again_spring sibom_plan (cream fallback, no metaphor)
+# ---------------------------------------------------------------------------
+def test_again_spring_sibom_cream_fallback() -> None:
+    print("[7] again_spring sibom_plan 빈 플랜 → 크림만")
+    from ai_worker.scene.analyzer import ResourceProfile
+    from ai_worker.scene.director import SceneDirector
+
+    script = {
+        "hook": "훅",
+        "body": [{"lines": ["본문"]}],
+        "closer": "끝",
+    }
+    profile = ResourceProfile(
+        image_count=0, text_length=10, estimated_sentences=1, ratio=0.0, strategy="balanced",
+    )
+    director = SceneDirector(
+        profile=profile,
+        images=[],
+        script=script,
+        mood="shock",
+        site_code="again_spring",
+        variant_config={"metaphor_id": "should-be-ignored", "sibom_plan": []},
+    )
+    scenes = director.direct()
+    assert scenes[0].type == "intro"
+    assert scenes[0].image_url is None
+    ok("again_spring 빈 sibom_plan → intro image_url=None (메타포 무시)")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -245,9 +275,11 @@ if __name__ == "__main__":
         test_distribute_images()
         test_scene_director_direct()
         test_asset_structure()
+        test_again_spring_sibom_cream_fallback()
 
         print("\n" + "=" * 60)
         print("🎉 모든 테스트 통과")
+
         print("=" * 60)
     except AssertionError as e:
         print(f"\n❌ 테스트 실패: {e}")

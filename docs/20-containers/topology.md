@@ -167,11 +167,13 @@ graph TD
   FISH_SPEECH_URL=http://fish-speech:8080
   COMFYUI_URL=http://comfyui:8188
   VIDEO_GEN_ENABLED=false   (기본값, true로 변경 시 Phase 4.5~7 활성화)
+  # comfyui는 compose profile `video-gen` — VIDEO_GEN=false면 기본 up에서 제외
+  # TTS는 S2-pro 단일 fish-speech만. S1-mini VRAM 로드·fish-speech-* 병렬 금지
   DATABASE_URL=...
   MEDIA_DIR=/app/media
   ```
 - **종료 유예:** `stop_grace_period: 120s` (진행 중인 파이프라인 보호)
-- **depends_on:** db, fish-speech, comfyui, llm-worker (모두 healthy 확인)
+- **depends_on:** db, fish-speech, llm-worker (healthy). comfyui는 `required: false`(profile video-gen)
 
 ---
 

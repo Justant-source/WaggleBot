@@ -268,10 +268,11 @@ def _outro_cache_path(voice_key: str, text: str) -> Path:
 
 
 def _loudnorm_inplace(wav_path: Path) -> None:
-    """짧은 클립(댓글/outro)도 본문과 같은 음량으로 맞춘다.
+    """짧은 클립(댓글/outro) 음량을 본문과 같은 타깃으로 맞춘다.
 
-    단일 패스 loudnorm은 1~2초 클립에서 I=-34처럼 측정이 붕괴되어
-    오히려 더 작아지거나 펌핑 노이즈가 난다 → 2-pass + 실패 시 peak gain.
+    단일 패스 loudnorm은 1~2초 클립에서 I 측정이 붕괴해 과소/과대 증폭이
+    난다. 2-pass 후에도 I가 타깃 밴드 밖이면 **양방향** volume gain
+    (키우기·줄이기) + true-peak 리미터로 수렴시킨다.
     """
     import json as _json
     try:
@@ -281,22 +282,127 @@ def _loudnorm_inplace(wav_path: Path) -> None:
     if not TTS_LOUDNORM_ENABLED or not wav_path.exists():
         return
 
-    # parse I=/TP=/LRA= from params string
     target_i, target_tp, target_lra = -16.0, -1.5, 11.0
     for part in (TTS_LOUDNORM_PARAMS or "").split(":"):
         if part.startswith("I="):
-            try: target_i = float(part[2:])
-            except ValueError: pass
+            try:
+                target_i = float(part[2:])
+            except ValueError:
+                pass
         elif part.startswith("TP="):
-            try: target_tp = float(part[3:])
-            except ValueError: pass
+            try:
+                target_tp = float(part[3:])
+            except ValueError:
+                pass
         elif part.startswith("LRA="):
-            try: target_lra = float(part[4:])
-            except ValueError: pass
+            try:
+                target_lra = float(part[4:])
+            except ValueError:
+                pass
 
-    tmp = wav_path.with_suffix(".ln.wav")
+    # Accept band around target (LUFS). Too-loud first comments were accepted
+    # under the old "out_i > target_i - 6" check (e.g. -10 still OK).
+    i_lo, i_hi = target_i - 3.0, target_i + 2.0
+
+    def _parse_loudnorm_json(stderr: str) -> dict:
+        jstart = (stderr or "").rfind("{")
+        jend = (stderr or "").rfind("}")
+        if jstart < 0 or jend <= jstart:
+            return {}
+        try:
+            return _json.loads(stderr[jstart:jend + 1])
+        except Exception:
+            return {}
+
+    def _measure_i(path: Path) -> float | None:
+        check = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", str(path),
+                "-af", f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json",
+                "-f", "null", "-",
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        raw = _parse_loudnorm_json(check.stderr or "").get("input_i")
+        if raw is None:
+            return None
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return None
+        # -inf / absurd short-clip collapses
+        if val < -70.0 or val > 0.0:
+            return None
+        return val
+
+    def _measure_peak_db(path: Path) -> float | None:
+        vd = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=30,
+        )
+        for line in (vd.stderr or "").splitlines():
+            if "max_volume:" in line:
+                try:
+                    return float(line.split("max_volume:")[1].strip().split()[0])
+                except Exception:
+                    return None
+        return None
+
+    def _apply_af(path: Path, af: str) -> bool:
+        tmp = path.with_suffix(".ln.wav")
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-i", str(path),
+                    "-af", af,
+                    "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le", str(tmp),
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0 and tmp.exists() and tmp.stat().st_size > 64:
+                tmp.replace(path)
+                return True
+        finally:
+            tmp.unlink(missing_ok=True)
+        return False
+
+    def _gain_toward_target(path: Path, measured_i: float | None) -> bool:
+        """Bidirectional LUFS gain + peak ceiling. Returns True if applied."""
+        gain = None
+        if measured_i is not None:
+            gain = target_i - measured_i
+        else:
+            peak = _measure_peak_db(path)
+            if peak is None:
+                return False
+            # Peak-only fallback: aim true peak ≈ target_tp - 0.5
+            gain = (target_tp - 0.5) - peak
+        # Allow cut as well as boost (was max(0) — left loud clips loud)
+        gain = max(-18.0, min(18.0, gain))
+        if abs(gain) < 0.4:
+            # Still enforce peak ceiling if hot
+            peak = _measure_peak_db(path)
+            if peak is not None and peak > target_tp:
+                cut = target_tp - peak
+                if abs(cut) >= 0.3:
+                    gain = cut
+                else:
+                    return False
+            else:
+                return False
+        # alimiter level ≈ linear for target_tp (-1.5 dBTP ≈ 0.84)
+        limit = max(0.5, min(0.99, 10 ** (target_tp / 20.0)))
+        af = f"volume={gain:.2f}dB,alimiter=limit={limit:.3f}:level=disabled"
+        ok = _apply_af(path, af)
+        if ok:
+            logger.info(
+                "[tts] I-gain %+.1fdB (+peak limit) applied to %s (from I≈%s)",
+                gain, path.name, f"{measured_i:.1f}" if measured_i is not None else "?",
+            )
+        return ok
+
     try:
-        # Pass 1 — measure
+        # Pass 1 — measure for linear loudnorm
         measure = subprocess.run(
             [
                 "ffmpeg", "-y", "-i", str(wav_path),
@@ -305,22 +411,12 @@ def _loudnorm_inplace(wav_path: Path) -> None:
             ],
             capture_output=True, text=True, timeout=60,
         )
-        stderr = measure.stderr or ""
-        # JSON is at the end of stderr
-        jstart = stderr.rfind("{")
-        jend = stderr.rfind("}")
-        measured = {}
-        if jstart >= 0 and jend > jstart:
-            try:
-                measured = _json.loads(stderr[jstart:jend + 1])
-            except Exception:
-                measured = {}
-
+        measured = _parse_loudnorm_json(measure.stderr or "")
         mi = measured.get("input_i")
         mtp = measured.get("input_tp")
         mlra = measured.get("input_lra")
         mth = measured.get("input_thresh")
-        # Pass 2 — apply with measured values (linear)
+
         if mi is not None and mtp is not None and mth is not None:
             af = (
                 f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}"
@@ -328,6 +424,7 @@ def _loudnorm_inplace(wav_path: Path) -> None:
                 f":measured_LRA={mlra if mlra is not None else 0}"
                 f":measured_thresh={mth}:linear=true:print_format=summary"
             )
+            tmp = wav_path.with_suffix(".ln.wav")
             result = subprocess.run(
                 [
                     "ffmpeg", "-y", "-i", str(wav_path),
@@ -337,67 +434,54 @@ def _loudnorm_inplace(wav_path: Path) -> None:
                 capture_output=True, text=True, timeout=60,
             )
             if result.returncode == 0 and tmp.exists() and tmp.stat().st_size > 64:
-                # Verify we actually got near target; short clips can still fail
-                check = subprocess.run(
-                    [
-                        "ffmpeg", "-y", "-i", str(tmp),
-                        "-af", f"loudnorm=I={target_i}:TP={target_tp}:LRA={target_lra}:print_format=json",
-                        "-f", "null", "-",
-                    ],
-                    capture_output=True, text=True, timeout=60,
-                )
-                cs = check.stderr or ""
-                c0, c1 = cs.rfind("{"), cs.rfind("}")
-                out_i = None
-                if c0 >= 0 and c1 > c0:
-                    try:
-                        out_i = float(_json.loads(cs[c0:c1 + 1]).get("input_i", "nan"))
-                    except Exception:
-                        out_i = None
-                if out_i is not None and out_i > target_i - 6:  # e.g. >= -22
+                out_i = _measure_i(tmp)
+                if out_i is not None and i_lo <= out_i <= i_hi:
                     tmp.replace(wav_path)
+                    peak = _measure_peak_db(wav_path)
+                    if peak is not None and peak > target_tp + 0.3:
+                        _gain_toward_target(wav_path, out_i)
                     logger.info("[tts] 2-pass loudnorm ok %s → I≈%.1f", wav_path.name, out_i)
                     return
                 logger.warning(
-                    "[tts] 2-pass loudnorm still quiet (I≈%s) — peak gain fallback %s",
-                    out_i, wav_path.name,
+                    "[tts] 2-pass loudnorm off-target (I≈%s, want %.1f..%.1f) — gain fallback %s",
+                    out_i, i_lo, i_hi, wav_path.name,
                 )
+                # Prefer the 2-pass output as the gain baseline when measurable;
+                # otherwise discard and gain from the original file.
+                if out_i is not None:
+                    tmp.replace(wav_path)
+                    if _gain_toward_target(wav_path, out_i):
+                        return
+                else:
+                    tmp.unlink(missing_ok=True)
+                    fallback_i = None
+                    try:
+                        if mi is not None:
+                            fallback_i = float(mi)
+                            if fallback_i < -70.0 or fallback_i > 0.0:
+                                fallback_i = None
+                    except (TypeError, ValueError):
+                        fallback_i = None
+                    if _gain_toward_target(wav_path, fallback_i):
+                        return
+            else:
                 tmp.unlink(missing_ok=True)
 
-        # Fallback: raise true peak toward target_tp (≈ -1.5 dBTP)
-        # Measure peak with volumedetect
-        vd = subprocess.run(
-            ["ffmpeg", "-y", "-i", str(wav_path), "-af", "volumedetect", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=30,
-        )
-        max_vol = None
-        for line in (vd.stderr or "").splitlines():
-            if "max_volume:" in line:
-                try:
-                    max_vol = float(line.split("max_volume:")[1].strip().split()[0])
-                except Exception:
-                    pass
-        if max_vol is None:
-            return
-        # Aim peak at about -1.5 dBTP
-        gain = (target_tp - 0.5) - max_vol  # e.g. -2 - (-19) = +17 dB
-        gain = max(0.0, min(gain, 24.0))
-        if gain < 0.5:
-            return
-        result = subprocess.run(
-            [
-                "ffmpeg", "-y", "-i", str(wav_path),
-                "-af", f"volume={gain:.2f}dB",
-                "-ar", "44100", "-ac", "1", "-c:a", "pcm_s16le", str(tmp),
-            ],
-            capture_output=True, check=True, timeout=30,
-        )
-        if tmp.exists() and tmp.stat().st_size > 64:
-            tmp.replace(wav_path)
-            logger.info("[tts] peak gain +%.1fdB applied to %s", gain, wav_path.name)
+        # No usable 2-pass path — gain from original measure / peak
+        src_i = None
+        try:
+            if mi is not None:
+                src_i = float(mi)
+                if src_i < -70.0 or src_i > 0.0:
+                    src_i = None
+        except (TypeError, ValueError):
+            src_i = None
+        if src_i is None:
+            src_i = _measure_i(wav_path)
+        _gain_toward_target(wav_path, src_i)
     except Exception:
         logger.warning("[tts] loudnorm failed for %s", wav_path.name, exc_info=True)
-        tmp.unlink(missing_ok=True)
+        wav_path.with_suffix(".ln.wav").unlink(missing_ok=True)
 
 
 
@@ -594,8 +678,9 @@ async def _generate_tts_chunks(
             )
             chunk_path = output_dir / f"chunk_{frame_idx:03d}.wav"
             if dur > 0 and chunk_path.exists():
-                # 댓글 등은 본문 통합 wav와 음량 맞춤 (outro는 캐시 단계에서 이미 loudnorm)
-                if scene_type in ("comments", "chat") and not pre_audio:
+                # 댓글/채팅: pre_audio(캐시)여도 보이스별 원음량 편차가 커서
+                # 항상 양방향 loudnorm으로 본문 I=-16 밴드에 맞춘다.
+                if scene_type in ("comments", "chat"):
                     _loudnorm_inplace(chunk_path)
                 dur = _get_audio_duration(chunk_path)
 
