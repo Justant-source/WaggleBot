@@ -662,6 +662,13 @@ async def _generate_tts_chunks(
                     tmp_pad.replace(chunk_path)
                     dur += _INTRO_PAUSE_SEC
                     durations[frame_idx] = dur
+            # Narration splits can include near-silent ASR mis-cuts; normalize
+            # every speech chunk so mid-video volume collapses cannot ship.
+            chunk_path = output_dir / f"chunk_{frame_idx:03d}.wav"
+            if chunk_path.exists() and chunk_path.stat().st_size > 64:
+                _loudnorm_inplace(chunk_path)
+                dur = _get_audio_duration(chunk_path)
+                durations[frame_idx] = dur
             logger.debug("[layout] TTS 프레임 %d: %.2fs (narration)", frame_idx, dur)
             continue
 
@@ -678,10 +685,10 @@ async def _generate_tts_chunks(
             )
             chunk_path = output_dir / f"chunk_{frame_idx:03d}.wav"
             if dur > 0 and chunk_path.exists():
-                # 댓글/채팅: pre_audio(캐시)여도 보이스별 원음량 편차가 커서
-                # 항상 양방향 loudnorm으로 본문 I=-16 밴드에 맞춘다.
-                if scene_type in ("comments", "chat"):
-                    _loudnorm_inplace(chunk_path)
+                # 본문/intro/댓글 모두 정규화.
+                # alignment 실패 → 장면별 TTS 폴백 시 본문만 loudnorm을 건너뛰면
+                # Fish 저음량 클립이 그대로 실려 중간 볼륨이 붕괴한다(job 10026251).
+                _loudnorm_inplace(chunk_path)
                 dur = _get_audio_duration(chunk_path)
 
             if scene_type == "intro" and dur > 0 and _INTRO_PAUSE_SEC > 0:

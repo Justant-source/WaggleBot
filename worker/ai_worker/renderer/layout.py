@@ -688,9 +688,14 @@ def _render_pipeline(
                         len(durations), total_dur, time.time() - t0)
 
             chunk_paths = [tmp_dir / f"chunk_{i:03d}.wav" for i in range(len(plan))]
+            # Speech chunks are already per-chunk loudnormed in _generate_tts_chunks
+            # (narration splits + body/comment per-scene). Do NOT run a second global
+            # pass: it used to be skipped only when narration_audio existed, so
+            # alignment-fallback body renders skipped BOTH per-chunk (body) and
+            # global loudnorm — quiet mid segments shipped as-is.
             _merge_chunks(
                 chunk_paths, merged_tts,
-                skip_global_loudnorm=(narration_audio is not None),
+                skip_global_loudnorm=True,
             )
 
             if save_tts_cache:
