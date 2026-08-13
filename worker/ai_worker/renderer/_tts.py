@@ -377,8 +377,10 @@ def _loudnorm_inplace(wav_path: Path) -> None:
                 return False
             # Peak-only fallback: aim true peak ≈ target_tp - 0.5
             gain = (target_tp - 0.5) - peak
-        # Allow cut as well as boost (was max(0) — left loud clips loud)
-        gain = max(-18.0, min(18.0, gain))
+        # Allow cut as well as boost (was max(0) — left loud clips loud).
+        # Near-silent ASR mis-cuts can sit at -45..-60 dBFS; +18 was not enough
+        # to reach the I=-16 band (job 10026251 scene "한 푼도 낸 적이 없어요").
+        gain = max(-18.0, min(48.0, gain))
         if abs(gain) < 0.4:
             # Still enforce peak ceiling if hot
             peak = _measure_peak_db(path)
@@ -400,6 +402,26 @@ def _loudnorm_inplace(wav_path: Path) -> None:
                 gain, path.name, f"{measured_i:.1f}" if measured_i is not None else "?",
             )
         return ok
+
+    def _ensure_min_peak(path: Path, min_peak_db: float = -8.0) -> None:
+        """Last-resort peak floor for near-silent speech after loudnorm/gain.
+
+        LUFS on 1s near-silent mis-cuts is unreliable; if the waveform still
+        peaks far below neighbors, lift to target_tp with a limiter.
+        """
+        peak = _measure_peak_db(path)
+        if peak is None or peak >= min_peak_db:
+            return
+        gain = (target_tp - 0.5) - peak
+        gain = max(0.0, min(48.0, gain))
+        if gain < 0.5:
+            return
+        limit = max(0.5, min(0.99, 10 ** (target_tp / 20.0)))
+        if _apply_af(path, f"volume={gain:.2f}dB,alimiter=limit={limit:.3f}:level=disabled"):
+            logger.info(
+                "[tts] peak-floor %+.1fdB applied to %s (was peak≈%.1f)",
+                gain, path.name, peak,
+            )
 
     try:
         # Pass 1 — measure for linear loudnorm
@@ -441,6 +463,7 @@ def _loudnorm_inplace(wav_path: Path) -> None:
                     if peak is not None and peak > target_tp + 0.3:
                         _gain_toward_target(wav_path, out_i)
                     logger.info("[tts] 2-pass loudnorm ok %s → I≈%.1f", wav_path.name, out_i)
+                    _ensure_min_peak(wav_path)
                     return
                 logger.warning(
                     "[tts] 2-pass loudnorm off-target (I≈%s, want %.1f..%.1f) — gain fallback %s",
@@ -451,6 +474,7 @@ def _loudnorm_inplace(wav_path: Path) -> None:
                 if out_i is not None:
                     tmp.replace(wav_path)
                     if _gain_toward_target(wav_path, out_i):
+                        _ensure_min_peak(wav_path)
                         return
                 else:
                     tmp.unlink(missing_ok=True)
@@ -463,6 +487,7 @@ def _loudnorm_inplace(wav_path: Path) -> None:
                     except (TypeError, ValueError):
                         fallback_i = None
                     if _gain_toward_target(wav_path, fallback_i):
+                        _ensure_min_peak(wav_path)
                         return
             else:
                 tmp.unlink(missing_ok=True)
@@ -479,6 +504,7 @@ def _loudnorm_inplace(wav_path: Path) -> None:
         if src_i is None:
             src_i = _measure_i(wav_path)
         _gain_toward_target(wav_path, src_i)
+        _ensure_min_peak(wav_path)
     except Exception:
         logger.warning("[tts] loudnorm failed for %s", wav_path.name, exc_info=True)
         wav_path.with_suffix(".ln.wav").unlink(missing_ok=True)
