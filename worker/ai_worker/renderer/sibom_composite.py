@@ -319,10 +319,11 @@ def composite_caption(
             _draw_caption_lines(draw, lines, font, preset["rect"], color)
             return img
 
-        # The PNG itself remains a 1:1 character region at the top.  The
-        # caption extension uses the same padding on left, right, above, and
-        # below, producing a readable rectangular composite for 2–3 lines.
-        # Use cream (not transparent) so later RGB conversion never goes black.
+        # The PNG itself remains a 1:1 character region at the top, pixel-for-
+        # pixel unchanged (including its transparent corners) — the extended
+        # canvas starts fully transparent and only the *new* band below the
+        # original gets cream-filled, so alpha-compositing the character on
+        # top never bleeds cream into its transparent background.
         measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
         _, caption_h, _ = _caption_metrics(measure, lines, font)
         caption_w = img.width - 2 * CAPTION_OUTER_PADDING
@@ -333,9 +334,12 @@ def composite_caption(
                 img.width,
                 img.height + CAPTION_OUTER_PADDING + caption_h + CAPTION_OUTER_PADDING,
             ),
-            cream,
+            (0, 0, 0, 0),
         )
-        extended.alpha_composite(img, (0, 0))
+        # Direct paste (no blend): copies RGBA verbatim, so the original square
+        # region — transparent corners included — stays byte-identical.
+        extended.paste(img, (0, 0))
+        extended.paste(cream, (0, img.height, img.width, extended.height))
         draw = ImageDraw.Draw(extended)
         _draw_caption_lines(
             draw,
