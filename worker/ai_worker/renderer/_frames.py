@@ -1114,14 +1114,9 @@ def _render_intro_frame(
     if theme == "tone_l":
         pad_x, media_y, media_w, media_h, media_radius = _tonel_intro_media_rect(layout, content_top)
         if img_pil is not None:
-            iw, ih = img_pil.size
-            if ih > iw:
-                fitted = _fit_contain(img_pil, media_w, media_h)
-                fx = pad_x + (media_w - fitted.width) // 2
-                fy = media_y + (media_h - fitted.height) // 2
-            else:
-                fitted = _fit_cover(img_pil, media_w, media_h)
-                fx, fy = pad_x, media_y
+            fitted = _fit_contain(img_pil, media_w, media_h)
+            fx = pad_x + (media_w - fitted.width) // 2
+            fy = media_y + (media_h - fitted.height) // 2
             img = _paste_rounded(img, fitted, fx, fy, media_radius)
 
         img = img.convert("RGB")
@@ -1264,14 +1259,9 @@ def _render_image_text_frame(
             ty += q_lh
 
         if img_pil is not None:
-            iw, ih = img_pil.size
-            if ih > iw:
-                fitted = _fit_contain(img_pil, geo["img_size"], geo["img_size"])
-                fx = geo["img_x"] + (geo["img_size"] - fitted.width) // 2
-                fy = geo["img_y"] + (geo["img_size"] - fitted.height) // 2
-            else:
-                fitted = _fit_cover(img_pil, geo["img_size"], geo["img_size"])
-                fx, fy = geo["img_x"], geo["img_y"]
+            fitted = _fit_contain(img_pil, geo["img_size"], geo["img_size"])
+            fx = geo["img_x"] + (geo["img_size"] - fitted.width) // 2
+            fy = geo["img_y"] + (geo["img_size"] - fitted.height) // 2
             img = _paste_rounded(img.convert("RGB"), fitted, fx, fy, geo["img_radius"])
 
         img = img.convert("RGB")

@@ -396,18 +396,6 @@ def _sibom_shake_offset(t: float, amp_px: int) -> tuple[int, int]:
     return int(dx), int(dy)
 
 
-def _sibom_small_rect(
-    base_rect: tuple[int, int, int, int], ratio: float = 0.40,
-) -> tuple[int, int, int, int]:
-    """sibom_size="small"(punch/soft_fill) — 기존 large 슬롯 우하단에
-    ratio만큼 축소된 코너 스티커 rect. 카드/텍스트 지오메트리는 그대로 두고
-    캐릭터 오버레이 rect만 바꾼다(계약 §6 "코너 스티커")."""
-    x, y, w, h = base_rect
-    sw = max(1, round(w * ratio))
-    sh = max(1, round(h * ratio))
-    return x + w - sw, y + h - sh, sw, sh
-
-
 def _compose_sibom_into_slot(
     plate: Image.Image,
     sibom_pil: Image.Image,
@@ -429,17 +417,13 @@ def _compose_sibom_into_slot(
     tile = plate.convert("RGB").crop((x, y, x + w, y + h))
     cw = max(1, round(w * scale))
     ch_ = max(1, round(h * scale))
-    iw, ih = sibom_pil.size
-    if ih > iw:
-        # 다줄 캡션으로 세로 확장된 스프라이트 — cover로 크롭하면 아래쪽
-        # 캡션 줄이 잘려나가므로 contain으로 전체 보존한다.
-        content = _fit_contain(sibom_pil, cw, ch_)
-        ox = (w - content.width) // 2 + dx
-        oy = (h - content.height) // 2 + dy
-    else:
-        content = _fit_cover(sibom_pil, cw, ch_)
-        ox = (w - cw) // 2 + dx
-        oy = (h - ch_) // 2 + dy
+    # 시봄이 스프라이트는 캡션(말풍선/밴드)이 820x820 캔버스 안 어디에나
+    # 걸쳐 있을 수 있다 — cover(중앙 크롭)는 슬롯 종횡비가 스프라이트와
+    # 다르면(특히 intro/peak의 세로로 긴 large 슬롯) 캡션 쪽을 잘라먹는다.
+    # 항상 contain으로 전체를 보존한다(정사각 슬롯이면 cover와 결과 동일).
+    content = _fit_contain(sibom_pil, cw, ch_)
+    ox = (w - content.width) // 2 + dx
+    oy = (h - content.height) // 2 + dy
     tile.paste(content, (ox, oy))
     mask = Image.new("L", (w, h), 0)
     ImageDraw.Draw(mask).rounded_rectangle([(0, 0), (w - 1, h - 1)], radius=radius, fill=255)
@@ -898,8 +882,6 @@ def _render_pipeline(
                 )
                 if entry.get("sibom_role") and theme == "tone_l" and img_pil is not None:
                     rx, ry, rw, rh, rrad = _tonel_intro_media_rect(layout, content_top)
-                    if entry.get("sibom_size") == "small":
-                        rx, ry, rw, rh = _sibom_small_rect((rx, ry, rw, rh))
                     plate_path = tmp_dir / f"frame_{frame_idx:03d}_plate.png"
                     _render_intro_frame(
                         base_frame, None, hook_text, layout, font_dir,
@@ -929,8 +911,6 @@ def _render_pipeline(
                     if entry.get("sibom_role") and theme == "tone_l":
                         geo = _tonel_image_text_geometry(text, layout, font_dir, content_top_body)
                         img_rect = (geo["img_x"], geo["img_y"], geo["img_size"], geo["img_size"])
-                        if entry.get("sibom_size") == "small":
-                            img_rect = _sibom_small_rect(img_rect)
                         plate_path = tmp_dir / f"frame_{frame_idx:03d}_plate.png"
                         _render_image_text_frame(
                             breadcrumb_frame, None, text, layout, font_dir,

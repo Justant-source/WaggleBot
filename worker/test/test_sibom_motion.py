@@ -281,26 +281,3 @@ def test_square_sprite_still_uses_cover_after_contain_fallback():
     expected.paste(expected_tile, (x, y))
 
     assert composed.tobytes() == expected.tobytes()
-
-
-# ── sibom_size(large/small) 코너 스티커(2026-08-14) ──────────────────────
-
-def test_small_rect_is_corner_anchored_and_smaller():
-    from ai_worker.renderer.layout import _sibom_small_rect
-
-    base = (138, 700, 804, 804)
-    x, y, w, h = _sibom_small_rect(base)
-
-    assert w == round(804 * 0.40) == h
-    # 우하단 코너: base의 오른쪽/아래쪽 끝에 맞춰 정렬
-    assert x + w == base[0] + base[2]
-    assert y + h == base[1] + base[3]
-    assert w < base[2] and h < base[3]
-
-
-def test_small_rect_custom_ratio():
-    from ai_worker.renderer.layout import _sibom_small_rect
-
-    base = (0, 0, 1000, 1000)
-    x, y, w, h = _sibom_small_rect(base, ratio=0.5)
-    assert (x, y, w, h) == (500, 500, 500, 500)
