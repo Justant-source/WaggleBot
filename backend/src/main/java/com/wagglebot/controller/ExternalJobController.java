@@ -69,6 +69,16 @@ public class ExternalJobController {
         body.put("status", post.getStatus().name());
         body.put("externalId", post.getOriginId());
         body.put("progress", content != null ? parseProgress(content.getPipelineState()) : null);
+        if (content != null && content.getVariantConfig() != null) {
+            JsonNode cfg = content.getVariantConfig();
+            body.put("priority", cfg.path("priority").asText("NORMAL"));
+            if (cfg.hasNonNull("deadline_at")) body.put("deadlineAt", cfg.get("deadline_at").asText());
+        }
+        if (content != null && content.getPipelineState() != null) {
+            JsonNode state = content.getPipelineState();
+            body.put("degraded", state.path("degraded").asBoolean(false));
+            if (state.has("degrade_reasons")) body.put("degradeReasons", state.get("degrade_reasons"));
+        }
 
         boolean rendered = post.getStatus() == PostStatus.PREVIEW_RENDERED || post.getStatus() == PostStatus.RENDERED;
         if (rendered && content != null) {

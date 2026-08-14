@@ -11,6 +11,8 @@ Fish Speech(~5GB)와 LTX-2(~12.7GB)는 RTX 3090 24GB에 동시 로드 불가.
 import asyncio
 import logging
 import signal
+from datetime import datetime, timezone
+from sqlalchemy import case
 
 from ai_worker.core.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
 from config.settings import AI_POLL_INTERVAL, CUDA_CONCURRENCY
@@ -98,7 +100,11 @@ def _get_gpu_stage_lock() -> asyncio.Lock:
 # 파이프라인 워커
 # ---------------------------------------------------------------------------
 
-async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
+def _post_priority(post: Post) -> int:
+    return 0 if post.site_code == "again_spring" else 1
+
+
+async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
     """APPROVED 게시글을 폴링해 LLM+TTS 처리 후 render_queue에 적재."""
     from ai_worker.core.processor import RobustProcessor
     processor = RobustProcessor()
@@ -112,7 +118,7 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
             post = (
                 session.query(Post)
                 .filter(Post.status == PostStatus.APPROVED)
-                .order_by(Post.created_at.asc())
+                .order_by(case((Post.site_code == "again_spring", 0), else_=1), Post.created_at.asc())
                 .first()
             )
             if post is not None:
@@ -151,14 +157,14 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
 
         # gpu_lock 해제 후 큐 적재 (데드락 방지: 큐 만석 시 render_worker가 lock 필요)
         if result is not None:
-            await render_queue.put(result)
+            await render_queue.put((_post_priority(post), datetime.now(timezone.utc).timestamp(), *result))
             logger.info("LLM+TTS 완료, 렌더 큐 적재: post_id=%d (큐 크기=%d)",
                         post_id, render_queue.qsize())
 
     logger.info("🛑 _llm_tts_worker 종료")
 
 
-async def _render_worker(render_queue: asyncio.Queue) -> None:
+async def _render_worker(render_queue: asyncio.PriorityQueue) -> None:
     """render_queue에서 꺼내 렌더링 (h264_nvenc GPU 인코딩).
 
     Phase 7(LTX-2 비디오 생성) 포함 시 gpu_lock으로 LLM+TTS와 직렬화.
@@ -169,7 +175,7 @@ async def _render_worker(render_queue: asyncio.Queue) -> None:
 
     while True:
         try:
-            post_id, script, audio_path = await asyncio.wait_for(
+            _priority, _queued_at, post_id, script, audio_path = await asyncio.wait_for(
                 render_queue.get(), timeout=2.0
             )
         except asyncio.TimeoutError:
@@ -270,12 +276,12 @@ async def _upload_loop() -> None:
 # 큐 드레인
 # ---------------------------------------------------------------------------
 
-def _drain_render_queue(render_queue: asyncio.Queue) -> None:
+def _drain_render_queue(render_queue: asyncio.PriorityQueue) -> None:
     """미처리 큐 항목의 포스트를 APPROVED로 복원한다."""
     drained = 0
     while not render_queue.empty():
         try:
-            post_id, _script, _audio = render_queue.get_nowait()
+            _priority, _queued_at, post_id, _script, _audio = render_queue.get_nowait()
             with SessionLocal() as session:
                 post = session.query(Post).filter_by(id=post_id).first()
                 if post is not None and post.status == PostStatus.PROCESSING:
@@ -304,7 +310,7 @@ async def _main_loop() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, request_shutdown)
 
-    render_queue: asyncio.Queue = asyncio.Queue(maxsize=4)
+    render_queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=4)
 
     try:
         await asyncio.gather(

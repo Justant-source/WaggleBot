@@ -18,6 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 
@@ -123,9 +125,15 @@ public class ExternalIngestService {
             ? options.platformLayout().trim() : null;
         // Video path uses sibom_plan only — metaphorId is intentionally ignored (unplugged).
         var sibomPlan = (options != null) ? options.sibomPlan() : null;
+        boolean marketingCritical = "again_spring".equals(siteCode) || (options != null && "MARKETING_CRITICAL".equalsIgnoreCase(options.priority()));
+        boolean preScripted = options != null && Boolean.TRUE.equals(options.preScripted());
+        String renderProfile = (options != null && options.renderProfile() != null) ? options.renderProfile().trim() : null;
+        OffsetDateTime deadlineAt = options != null ? options.deadlineAt() : null;
+        if (marketingCritical && deadlineAt == null) deadlineAt = OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(10);
         upsertContent(
             post.getId(), now, req, videoGen, paired, outroText, autoHdRender,
-            ttsVoice, commentVoices, mood, ttsEmotion, maxDurationSec, platformLayout, sibomPlan
+            ttsVoice, commentVoices, mood, ttsEmotion, maxDurationSec, platformLayout, sibomPlan,
+            marketingCritical, preScripted, renderProfile, deadlineAt
         );
 
         log.info(
@@ -170,7 +178,8 @@ public class ExternalIngestService {
         String ttsEmotion,
         Integer maxDurationSec,
         String platformLayout,
-        com.fasterxml.jackson.databind.JsonNode sibomPlan
+        com.fasterxml.jackson.databind.JsonNode sibomPlan,
+        boolean marketingCritical, boolean preScripted, String renderProfile, OffsetDateTime deadlineAt
     ) {
         Content content = contentRepo.findByPostId(postId).orElseGet(() -> {
             Content c = new Content();
@@ -186,6 +195,10 @@ public class ExternalIngestService {
         variantConfig.put("paired", paired);
         variantConfig.put("outro_text", outroText);
         variantConfig.put("auto_hd_render", autoHdRender);
+        variantConfig.put("priority", marketingCritical ? "MARKETING_CRITICAL" : "NORMAL");
+        variantConfig.put("pre_scripted", preScripted);
+        if (renderProfile != null && !renderProfile.isBlank()) variantConfig.put("render_profile", renderProfile);
+        if (deadlineAt != null) variantConfig.put("deadline_at", deadlineAt.toString());
         if (ttsVoice != null && !ttsVoice.isBlank()) {
             variantConfig.put("tts_voice", ttsVoice);
             content.setTtsVoice(ttsVoice);

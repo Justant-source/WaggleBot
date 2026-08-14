@@ -10,7 +10,7 @@ import logging
 import shutil
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -946,6 +946,16 @@ class RobustProcessor:
                     except Exception:
                         logger.debug("기존 summary 재사용 실패 — LLM 재생성", exc_info=True)
                         script = None
+                if script is None and post.site_code == "again_spring" and _resolve_post_variant_config(post_id).get("pre_scripted") is True:
+                    from ai_worker.scene.validator import smart_split_korean
+                    chunks = smart_split_korean(" ".join((post.content or "").split()), max_chars=80)
+                    script = ScriptData(
+                        hook=(post.title or (chunks.pop(0) if chunks else "사연을 들려드릴게요"))[:80],
+                        body=[{"line_count": 1, "lines": [chunk]} for chunk in chunks if chunk],
+                        closer="", title_suggestion=post.title or "", tags=[], mood="daily",
+                        narrator_voice=_narrator_voice,
+                    )
+                    logger.info("[Pipeline LLM+TTS] Again-Spring pre-scripted fast path post_id=%d", post_id)
                 if script is None:
                     # 활성 경로에도 제목·베스트 댓글·피드백 지시 전달 (레거시 경로와 동일)
                     _best = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
@@ -1085,6 +1095,26 @@ class RobustProcessor:
                 variant_config=_resolve_post_variant_config(post_id),
             )
             scenes = director.direct()
+            _cfg = _resolve_post_variant_config(post_id)
+            _deadline = _cfg.get("deadline_at")
+            if _cfg.get("priority") == "MARKETING_CRITICAL" and isinstance(_deadline, str):
+                try:
+                    _due = datetime.fromisoformat(_deadline.replace("Z", "+00:00"))
+                    _due = _due if _due.tzinfo else _due.replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) >= _due:
+                        for _scene in scenes:
+                            if getattr(_scene, "type", None) == "comments" and _scene.comment_items:
+                                _scene.comment_items = _scene.comment_items[:1]
+                        _content = session.query(Content).filter_by(post_id=post_id).first()
+                        if _content is not None:
+                            _state = dict(_content.pipeline_state or {})
+                            _state["degraded"] = True
+                            _state["degrade_reasons"] = ["marketing_deadline_comment_limit"]
+                            _content.pipeline_state = _state
+                            session.commit()
+                        logger.warning("[marketing] deadline degraded to one comment post_id=%d", post_id)
+                except ValueError:
+                    logger.warning("[marketing] invalid deadline_at post_id=%d", post_id)
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 
             # 본문·intro·outro만 어드민 본문 보이스로 고정. 댓글/채팅은 풀에서 배정된 목소리 유지.

@@ -313,3 +313,8 @@ GET  /system_stats      - GPU/VRAM 상태 (헬스체크)
 ```
 
 **워크플로우 파일 위치:** `worker/ai_worker/video/workflows/` (ComfyUI와 볼륨 공유)
+
+
+### Again-Spring marketing fast lane
+
+External jobs with source=again_spring are scheduled ahead of ordinary jobs. Callers may send options.priority=MARKETING_CRITICAL, deadlineAt, preScripted=true, and renderProfile=marketing_fast. A pre-scripted job skips general Claude chunking; after its deadline the renderer retains only the top comment and reports degraded in the job status.
