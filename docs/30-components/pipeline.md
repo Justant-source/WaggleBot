@@ -76,6 +76,7 @@ flowchart TD
 ### Phase 2 — chunk_with_llm
 - **모델**: `sonnet` (call_type: `chunk`), **temperature 0.7** (창의적 구어체), max_tokens는 api 백엔드에서 8192 보정
 - Post 원문을 의미 단위로 분할해 대본 초안 생성
+- Again-Spring은 후속 SceneDirector에서 본문을 20자 이하의 독립 화면 블록으로 다시 정규화한다. 범용 청커의 문장 병합 결과가 Tone L 본문 슬롯을 합치지 못하게 한다.
 - **입력 (user tail, 동적)**: 제목 + 본문(최대 4000자) + 베스트 댓글 5개("닉:내용") + 추가 지시(성과 피드백·A/B variant). 제목·댓글·피드백은 `processor.llm_tts_stage`(활성)와 `content_processor.process_content`에서 주입 — 댓글이 있어야 `type=comment` 인용 씬이 생성됨
   - 추가 지시는 `analytics.feedback.build_extra_instructions()`가 조립 (feedback_config.json의 extra_instructions + mood_weights>1.1 선호 힌트 + variant_config). chunk(활성)/generate_script(레거시) 양 경로 공통
 - **system 프롬프트 (정적 캐시 prefix)**: 페르소나 + §0 자연스러움 + §1 자극 수위(순화) + **§2 리텐션 설계(2-1 Hook 강화 ~ 2-7 Closer)** + §3 자막 분할 + §4 블록·댓글·팩트 + 출력형식 + few-shot + 자가점검 + `get_llm_constraints_prompt()`. 동적 요소는 절대 system에 넣지 않음(캐시 무효화 방지)
@@ -94,7 +95,7 @@ flowchart TD
 - **outro_text 오버라이드**: `SceneDirector(..., outro_text=...)`가 지정되면 mood `fixed_texts`의
   `random.choice()`를 건너뛰고 그 문구를 그대로 사용. 외부 ingest(`/api/external/jobs`)가
   `contents.variant_config.outro_text`에 심어둔 값을 `processor._resolve_post_outro_text(post_id)`가
-  읽어 전달한다 (예: Again Spring 짝글 여부에 따른 "상대방의 사연이 궁금하면..." 문구).
+  읽어 전달한다. 단, Again-Spring은 참여 유도 CTA를 붙이지 않으므로 outro 씬을 만들지 않는다.
 
 **Mood 9종:**
 | mood | 설명 |
@@ -171,8 +172,8 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 - 자막: ASS 형식 (`subtitle_font`: NanumGothic)
 - 썸네일 동시 생성
 - BGM 볼륨: `bgm_volume=0.15`
-- **아웃트로:** 구독유도 → 댓글 참여 유도 질문 + 마스코트 목업으로 교체 (layout.json `scenes.outro`)
-- **발화 싱크:** hook/body 통합 narrator WAV는 faster-whisper 단어 타임스탬프와 원문 줄을 정렬한다. 문자 수 비율·fade 추정은 쓰지 않는다. 첫 WAV는 PCM `-45 dBFS`/3-frame 기준 native lead를 측정해 150ms에 부족한 시간만 prepend하고, 이후 새 줄은 실제 해당 발화보다 150ms 먼저 표시된다. 화면은 최대 3줄까지 누적한 뒤 다음 묶음에서 초기화된다.
+- **아웃트로:** 기본 Waggle 채널은 댓글 참여 유도 질문 + 마스코트 목업을 사용한다. Again-Spring은 사연/댓글 뒤에 CTA 아웃트로를 추가하지 않는다.
+- **발화 싱크:** hook/body 통합 narrator WAV는 faster-whisper 단어 타임스탬프와 원문 줄을 정렬한다. 문자 수 비율·fade 추정은 쓰지 않는다. 첫 WAV는 PCM `-45 dBFS`/3-frame 기준 native lead를 측정해 150ms에 부족한 시간만 prepend하고, 이후 새 줄은 실제 해당 발화보다 150ms 먼저 표시된다. Again-Spring은 20자 이하 독립 블록을 화면당 최대 3개 누적한 뒤 다음 묶음에서 초기화된다.
 - **클로징 타임라인:** 마지막 댓글 발화 종료 후 기존 화면을 250ms 유지 → 클로징 텍스트 표시 → 실제 첫 음절까지 150ms. cached/generated outro WAV의 선행 무음을 PCM `-45 dBFS` threshold(3-frame debounce)로 측정해 부족한 시간만 prepend하며 음성은 trim하지 않는다. 발화 후 500ms 여백을 두고, 최종 mux는 오디오 총 길이로 cap해 concat의 마지막 정지 프레임이 늘어나지 않게 한다.
 - **정적 frame 길이:** ffconcat의 마지막 duration은 신뢰하지 않는다. terminal PNG를 중복하지 않고 static filter의 `tpad=stop_mode=clone:stop=-1`로 마지막 프레임을 유지한 뒤 최종 `-t`/`-shortest`로 cap한다. static/hybrid segment 출력은 CFR 30fps로 인코딩해 오디오와의 stream duration 차이를 최대 1 frame으로 제한한다.
 

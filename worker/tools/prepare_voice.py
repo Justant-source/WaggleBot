@@ -103,6 +103,17 @@ def _detect_silences(path: Path, noise_db: int = -30, min_dur: float = 0.3) -> l
     return list(zip(starts, ends))
 
 
+
+
+def _count_inner_silences(clip_start: float, clip_end: float, silences: list[tuple[float, float]]) -> int:
+    """클립 범위 내에 포함된 120ms 이상 지속 무음 개수."""
+    count = 0
+    for s_start, s_end in silences:
+        dur = s_end - s_start
+        if dur >= 0.12 and s_start < clip_end and s_end > clip_start:
+            count += 1
+    return count
+
 def _plan_segments(duration: float, silences: list[tuple[float, float]]) -> list[tuple[float, float]]:
     """무음 중점을 경계 후보로 8~15초 클립을 계획. 무음 정보 없으면 균등 분할."""
     if duration <= _MAX_CLIP_S:
@@ -141,21 +152,61 @@ def _plan_segments(duration: float, silences: list[tuple[float, float]]) -> list
 
 def _select_clips(
     clips: list[tuple[float, float]], max_refs: int, max_total_s: float,
+    silences: list[tuple[float, float]] | None = None,
 ) -> list[tuple[float, float]]:
-    """긴 클립 우선으로 max_refs개·합계 ≤ max_total_s 선별 (원래 시간순 유지)."""
-    ordered = sorted(clips, key=lambda c: -(c[1] - c[0]))
+    """길이 + 내부 무음 포함 여부를 기준으로 선별.
+    
+    내부 무음이 있는 클립을 우선하고, 동률이면 긴 클립 우선.
+    여러 개 선별 시 최소 1개는 내부 무음을 포함한 클립을 보장하도록 시도.
+    """
+    if not clips:
+        return []
+    
+    # 각 클립의 길이와 내부 무음 개수 계산
+    with_metadata = []
+    for c in clips:
+        length = c[1] - c[0]
+        silence_count = 0
+        if silences:
+            silence_count = _count_inner_silences(c[0], c[1], silences)
+        with_metadata.append((c, length, silence_count))
+    
+    # 정렬: 내부 무음 개수 내림차순 → 길이 내림차순
+    with_metadata.sort(key=lambda x: (-x[2], -x[1]))
+    
     picked: list[tuple[float, float]] = []
     total = 0.0
-    for c in ordered:
+    for (c, length, _silence_count) in with_metadata:
         if len(picked) >= max_refs:
             break
-        length = c[1] - c[0]
         if total + length > max_total_s and picked:
             continue
         picked.append(c)
         total += length
+    
+    # 최소 1개는 내부 무음을 포함한 클립 보장 (silences 제공 시)
+    if silences and len(picked) > 0:
+        has_silence = any(_count_inner_silences(c[0], c[1], silences) > 0 for c in picked)
+        if not has_silence:
+            # 무음이 있는 클립을 찾아서 추가 시도
+            for (c, length, silence_count) in with_metadata:
+                if silence_count > 0 and c not in picked and len(picked) < max_refs:
+                    # 가장 짧은 클립과 교체 (충분한 공간 있으면 추가)
+                    if total + length <= max_total_s:
+                        picked.append(c)
+                        total += length
+                    else:
+                        shortest_idx = min(range(len(picked)), key=lambda i: picked[i][1] - picked[i][0])
+                        shortest_len = picked[shortest_idx][1] - picked[shortest_idx][0]
+                        if length <= max_total_s - total + shortest_len:
+                            total -= shortest_len
+                            picked.pop(shortest_idx)
+                            picked.append(c)
+                            total += length
+                    break
+    
+    # 원본 시간순으로 정렬
     return sorted(picked, key=lambda c: c[0])
-
 
 def _extract_clip(src: Path, start: float, end: float, dst: Path) -> None:
     r = _run([
@@ -247,7 +298,7 @@ def prepare_voice(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory() as tmpd:
         tmp = Path(tmpd)
         # 1) 정제 + 세그먼트 계획 (여러 입력은 각각 처리 후 누적)
-        planned: list[tuple[Path, float, float]] = []  # (cleaned_src, start, end)
+        planned: list[tuple[Path, float, float, list[tuple[float, float]]]] = []  # (cleaned_src, start, end)
         for idx, inp in enumerate(inputs):
             cleaned = tmp / f"clean_{idx}.wav"
             logger.info("정제 중: %s", inp.name)
@@ -258,29 +309,29 @@ def prepare_voice(args: argparse.Namespace) -> int:
                 continue
             silences = _detect_silences(cleaned)
             for (s, e) in _plan_segments(dur, silences):
-                planned.append((cleaned, s, e))
+                planned.append((cleaned, s, e, silences))
 
         if not planned:
             logger.error("유효한 세그먼트 없음")
             return 1
 
-        # 2) 선별 (max_refs / max_total_secs)
-        # planned을 (길이 기준) 선별하되 원본 순서 유지
-        with_len = [(c, s, e, e - s) for (c, s, e) in planned]
-        with_len.sort(key=lambda x: -x[3])
-        picked: list[tuple[Path, float, float]] = []
-        total = 0.0
-        for (c, s, e, length) in with_len:
-            if len(picked) >= args.max_refs:
-                break
-            if total + length > args.max_total_secs and picked:
-                continue
-            picked.append((c, s, e))
-            total += length
+        # 2) 선별 (최소 1개는 내부 무음을 포함한 클립)
+        # silences 정보 수집 (각 planned 항목의 마지막 원소)
+        collected_silences: list[tuple[float, float]] = []
+        for (c, s, e, silences) in planned:
+            collected_silences.extend(silences)
+        collected_silences = list(set(collected_silences))  # 중복 제거
+        
+        picked = _select_clips(
+            [(c, s, e) for (c, s, e, _) in planned],
+            args.max_refs,
+            args.max_total_secs,
+            silences=collected_silences if collected_silences else None,
+        )
         if not picked:
             picked = [(planned[0][0], planned[0][1], planned[0][2])]
 
-        # 3) 클립 추출 + 전사 → 임시 기록
+                # 3) 클립 추출 + 전사 → 임시 기록
         results: list[tuple[Path, str]] = []
         for n, (c, s, e) in enumerate(picked, start=1):
             clip = tmp / f"{n:02d}.wav"

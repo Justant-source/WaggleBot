@@ -1326,6 +1326,7 @@ class SceneDirector:
         # ── Body ───────────────────────────────────────────────────────
         body_raw = list(self.script.get("body", []))
         body_items: list[tuple[str, str | None, str, str | None, list[str] | None]] = []
+        is_again_spring = self.site_code == "again_spring"
         for item in body_raw:
             if isinstance(item, dict):
                 lines_raw = item.get("lines", [])
@@ -1340,9 +1341,22 @@ class SceneDirector:
                     voice = self._assign_comment_voice(author or "")
                 else:
                     voice = self.narrator_voice  # None이면 TTS default 사용
-                body_items.append((text, voice, block_type, author, lines_raw if len(lines_raw) > 1 else None))
+                if is_again_spring and not is_comment:
+                    # Tone L 본문은 화면상 독립 텍스트 블록 3개가 누적되는 포맷이다.
+                    # 범용 청커가 합친 문장을 여기서 다시 블록 단위로 분리한다.
+                    from ai_worker.scene.validator import smart_split_korean
+                    for block in smart_split_korean(text, max_chars=20):
+                        body_items.append((block, voice, block_type, author, None))
+                else:
+                    body_items.append((text, voice, block_type, author, lines_raw if len(lines_raw) > 1 else None))
             else:
-                body_items.append((str(item), self.narrator_voice, "body", None, None))
+                text = str(item)
+                if is_again_spring:
+                    from ai_worker.scene.validator import smart_split_korean
+                    for block in smart_split_korean(text, max_chars=20):
+                        body_items.append((block, self.narrator_voice, "body", None, None))
+                else:
+                    body_items.append((text, self.narrator_voice, "body", None, None))
 
         # 모드 결정: LLM vs rule_based
         # again_spring + sibom: never uniform-distribute metaphor/crawl images —
@@ -1428,13 +1442,13 @@ class SceneDirector:
         if policy:
             comments_rule = policy.get("scene_rules", {}).get("comments", {})
             if comments_rule.get("enabled", True) and self._db_comments:
-                top_n: int = comments_rule.get("top_n", 5)
+                is_marketing_prescripted = self.site_code == "again_spring" and self.variant_config.get("pre_scripted") is True
+                top_n: int = 2 if is_marketing_prescripted else comments_rule.get("top_n", 5)
                 dwell: float = float(comments_rule.get("dwell_sec", 4.0))
                 # likes 내림차순 정렬
                 sorted_cmts = sorted(
                     self._db_comments,
-                    key=lambda c: getattr(c, "likes", 0) or 0,
-                    reverse=True,
+                    key=lambda c: (-(getattr(c, "likes", 0) or 0), getattr(c, "id", 0) or 0),
                 )[:top_n]
                 comment_items: list[dict] = [
                     {
@@ -1458,17 +1472,19 @@ class SceneDirector:
                 logger.debug("댓글 씬 추가: %d개 댓글 (dwell=%.1fs)", len(comment_items), dwell)
 
         # ── Outro ──────────────────────────────────────────────────────
-        outro_asset = _pick_asset("outro_image_dir")
-        outro_img = str(outro_asset) if outro_asset else None
-        outro_text = self.outro_text if self.outro_text else random.choice(fixed_texts)
-        scenes.append(SceneDecision(
-            type="outro",
-            text_lines=[outro_text],
-            image_url=outro_img,
-            mood=mood,
-            tts_emotion=tts_emotion,
-            voice_override=self.narrator_voice,
-        ))
+        # Again-Spring 숏폼은 사연/댓글 뒤에 참여 유도 CTA를 덧붙이지 않는다.
+        if not is_again_spring:
+            outro_asset = _pick_asset("outro_image_dir")
+            outro_img = str(outro_asset) if outro_asset else None
+            outro_text = self.outro_text if self.outro_text else random.choice(fixed_texts)
+            scenes.append(SceneDecision(
+                type="outro",
+                text_lines=[outro_text],
+                image_url=outro_img,
+                mood=mood,
+                tts_emotion=tts_emotion,
+                voice_override=self.narrator_voice,
+            ))
 
         logger.debug(
             "씬 배분: 총 %d개 (%s) [mood=%s, tts_emotion=%s, bgm=%s]",

@@ -125,18 +125,26 @@ def apply_sibom_plan_to_body(
     if not body_scenes or not plan:
         return body_scenes
 
+    # Split only at sentence boundaries and avoid overwriting an already applied beat.
+    from ai_worker.marketing.quality import expand_body_scenes_at_sentence_boundaries
+    required = sum(1 for item in plan if item.get("role") in _BODY_ROLES)
+    body_scenes[:] = expand_body_scenes_at_sentence_boundaries(body_scenes, required)
+    occupied: set[int] = set()
     for item in plan:
         role = item.get("role")
         if role not in _BODY_ROLES:
             continue
-        beat = int(item.get("beat_index") or 0)
-        if beat < 0 or beat >= len(body_scenes):
-            logger.debug(
-                "[sibom] beat_index=%d out of range (body=%d) — skip %s",
-                beat, len(body_scenes), item.get("image_id"),
-            )
+        if not body_scenes:
+            break
+        beat = max(0, min(int(item.get("beat_index") or 0), len(body_scenes) - 1))
+        available = [idx for idx in range(beat, len(body_scenes)) if idx not in occupied]
+        if not available:
+            available = [idx for idx in range(len(body_scenes)) if idx not in occupied]
+        if not available:
+            logger.warning("[sibom] no free body scene for %s", item.get("image_id"))
             continue
-        scene = body_scenes[beat]
+        scene_index = available[0]
+        scene = body_scenes[scene_index]
         # Never decorate comment blocks inside body
         if getattr(scene, "block_type", "body") == "comment":
             continue
@@ -162,6 +170,7 @@ def apply_sibom_plan_to_body(
             # TODO(sibom): light bounce/shake via ffmpeg once motion system exists
         else:
             scene.sibom_shake = False  # type: ignore[attr-defined]
+        occupied.add(scene_index)
 
     return body_scenes
 

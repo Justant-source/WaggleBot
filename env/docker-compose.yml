@@ -42,12 +42,26 @@ services:
     command: python main.py
 
   fish-speech:
-    # OpenAudio S1-mini — 공식 fishaudio/fish-speech S1 커밋(d3df50, 2026-01-08)에서
-    # 로컬 빌드한 이미지 (ADR-0005). 사전빌드 태그는 s1-mini 비호환:
-    #   server-cuda(rolling)=S2 AutoTokenizer→tiktoken 못읽음, v1.5.1=modded_dac 미지원.
-    # 재빌드: scripts/build_fish_speech_s1.sh 참조.
-    # 롤백: 이미지를 fishaudio/fish-speech:v1.5.1 로, 체크포인트/엔트리포인트 구 블록 복원.
-    image: wagglebot/fish-speech-s1:cuda
+    # Fish Audio S2-pro (5B, 네이티브·GRPO-RL 정렬 모델) — 2026-08-10 S1-mini에서 전환.
+    # 공식 사전빌드 이미지(fishaudio/fish-speech:server-cuda)를 그대로 사용 — S2 계열은
+    # 커스텀 빌드 불필요(S1-mini만 tiktoken 비호환으로 로컬 빌드가 필요했음, ADR-0005 참조).
+    # 근거: 제로샷 클로닝이 기존 S1-mini+atempo제거 조합(85%) 대비 명확히 우수함을
+    # 사용자 청취 판정으로 확인(.result/tts/session-summary-2026-08-09.md).
+    #
+    # ⚠ VRAM 핸드오프 필수 전제: S2-pro는 유휴 상태에서도 ~20GB 상주(S1-mini는 ~3-4GB).
+    # /v1/models/unload는 공식 이미지에 없음(404) — ai_worker가 Phase 7(ComfyUI) 진입 전
+    # 이 컨테이너를 실제로 stop, 완료 후 start 하는 방식으로 VRAM을 확보한다
+    # (worker/ai_worker/core/container_control.py + processor.py _generate_video_clips).
+    # 이 메커니즘 없이 이 이미지를 단독으로 못 씀 — 최초 시도(2026-08-09)는 이 전제 없이
+    # 배포했다가 OOM 위험 발견 후 즉시 롤백함(.result/tts/failures-2026-08-09.md 실패 9).
+    # 롤백 절차(비상시): image를 wagglebot/fish-speech-s1:cuda로, 체크포인트 마운트/env를
+    #   openaudio-s1-mini 경로로 되돌리면 즉시 원복(git 이력 참조).
+    #
+    # ⚠ 운영 절대 규칙 (2026-08-10 OOM/호스트 다운 교훈):
+    # - S1-mini를 VRAM에 올리지 말 것 (체크포인트 디스크 보관만).
+    # - fish-speech / fish-speech-s2 등 TTS 컨테이너 병렬 기동 금지.
+    #   교체·실험 시 반드시 기존 fish-speech를 stop한 뒤 단일 인스턴스만 기동.
+    image: fishaudio/fish-speech:server-cuda
     container_name: fish-speech
     restart: unless-stopped
     runtime: nvidia
@@ -55,16 +69,15 @@ services:
       - "8082:8080"
     volumes:
       # 서브디렉토리만 마운트 — ComfyUI 모델(checkpoints/*)을 컨테이너에 노출하지 않음
-      - ../checkpoints/openaudio-s1-mini:/app/checkpoints/openaudio-s1-mini
+      - ../checkpoints/s2-pro:/app/checkpoints/s2-pro
       # ⚠ assets/voices는 UID 1000 소유여야 함 (validate_env가 /app/references 쓰기 권한 요구)
       - ../assets/voices:/app/references
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - CUDA_VISIBLE_DEVICES=0
-      # 이미지 기본값은 s2-pro(4B, VRAM 초과) — S1-mini로 반드시 오버라이드
-      - LLAMA_CHECKPOINT_PATH=checkpoints/openaudio-s1-mini
-      - DECODER_CHECKPOINT_PATH=checkpoints/openaudio-s1-mini/codec.pth
+      - LLAMA_CHECKPOINT_PATH=checkpoints/s2-pro
+      - DECODER_CHECKPOINT_PATH=checkpoints/s2-pro/codec.pth
       - DECODER_CONFIG_NAME=modded_dac_vq
       # COMPILE=1  # torch.compile (시작 느림) — A3 RTF 측정 후 판단
     deploy:
@@ -83,6 +96,10 @@ services:
       start_period: 180s
 
   comfyui:
+    # VIDEO_GEN_ENABLED=false 동안 기본 스택에서 제외 (profile video-gen).
+    # S2-pro(~20GB VRAM)와 동시 상주 시 호스트 다운 위험 — 실패 10.
+    # 재활성: VIDEO_GEN_ENABLED=true 후 `docker compose --profile video-gen up -d comfyui`
+    profiles: ["video-gen"]
     build:
       context: ..
       dockerfile: env/Dockerfile.comfyui
@@ -138,6 +155,11 @@ services:
       dockerfile: worker/Dockerfile
     restart: unless-stopped
     user: "1000:1000"
+    # docker.sock GID(호스트 989)를 보조 그룹으로 추가 — /etc/group 항목 불필요,
+    # 커널은 GID 기준으로만 소켓 접근을 검사함. fish-speech stop/start 제어용
+    # (ai_worker/core/container_control.py, 2026-08-10 S2-pro VRAM 핸드오프)
+    group_add:
+      - "989"
     stop_grace_period: 120s
     volumes:
       - ../worker:/app
@@ -148,6 +170,8 @@ services:
       - /app/__pycache__
       # WSL2: libnvidia-encode.so.1 등 NVENC 라이브러리 마운트
       - /usr/lib/wsl/lib:/usr/lib/wsl/lib:ro
+      # fish-speech 컨테이너 stop/start 제어용 (container_control.py)
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       LLM_WORKER_URL: "http://llm-worker:8090"
       # LLM 백엔드 api 선택 시 사용. 비우면 config/credentials.json 의 키 사용
@@ -176,6 +200,7 @@ services:
         condition: service_healthy
       comfyui:
         condition: service_healthy
+        required: false  # profile video-gen — VIDEO_GEN=false면 미기동
       llm-worker:
         condition: service_healthy
     extra_hosts:

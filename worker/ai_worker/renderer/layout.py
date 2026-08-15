@@ -63,7 +63,7 @@ _STATIC_CONCAT_CFR_ARGS: list[str] = ["-vsync", "cfr", "-r", "30"]
 _STATIC_FINAL_FRAME_HOLD_FILTER: str = "tpad=stop_mode=clone:stop=-1"
 
 # Again Spring(Tone L) 댓글 씬 — 레이아웃·낭독 모두 최대 3개로 고정.
-_AGAIN_SPRING_MAX_COMMENTS = 3
+_AGAIN_SPRING_MAX_COMMENTS = 2
 
 
 # ---------------------------------------------------------------------------
