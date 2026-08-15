@@ -12,7 +12,11 @@
 3. 8-Phase 실행 (`content_processor.py`)
 4. 성공 → `PREVIEW_RENDERED` / `RENDERED`
 5. 실패 → `FAILED`, `retry_count++`, `MAX_RETRY_COUNT=3` 초과 시 영구 FAILED
-6. **하트비트**: 각 Phase 경계에서 `posts.updated_at` 갱신 — 15분 이상 미갱신 시 "응답 없음" 배지
+6. **하트비트**: 각 Phase 경계에서 `posts.updated_at`와 `content_runtime_state(progress)`를 갱신한다. progress·렌더 체크포인트·SLA·품질 진단은 키별 원자적 upsert라 서로 같은 `contents` JSON 행을 경쟁하지 않는다.
+
+`MARKETING_CRITICAL` 작업도 마감 시각이 지났다는 이유만으로 댓글 수를 줄이지 않는다. `pre_scripted` Again Spring 영상은 좋아요 상위 댓글 2개(동률은 댓글 ID)를 유지하며, 마감 시각은 관측·우선순위 용도로만 사용한다. 본문 narrator WAV만 플랫폼별 길이 게이트 대상이며 댓글·아웃트로 tail은 별도다. `generation_diagnostics`에는 본문/댓글/아웃트로/최종 MP4 길이를 남긴다.
+
+기존 `contents.pipeline_state`는 롤링 업그레이드 중 읽기 폴백만 유지한다.
 
 ## 게시글별 video_gen 오버라이드
 

@@ -59,6 +59,13 @@ erDiagram
         DATETIME created_at
     }
 
+    content_runtime_state {
+        BIGINT content_id PK, FK
+        VARCHAR(64) state_key PK
+        JSON state_value
+        DATETIME updated_at
+    }
+
     jobs {
         BIGINT id PK
         ENUM job_type
@@ -97,6 +104,7 @@ erDiagram
 
     posts ||--o{ comments : "has"
     posts ||--o| contents : "has"
+    contents ||--o{ content_runtime_state : "runtime namespaces"
     posts ||--o{ jobs : "has"
     posts ||--o{ llm_logs : "has"
 ```
@@ -149,7 +157,7 @@ erDiagram
 | `audio_path` | VARCHAR(255) | 최종 합성 오디오 경로 |
 | `video_path` | VARCHAR(255) | 최종 영상 경로 |
 | `upload_meta` | JSON | 업로드 플랫폼별 메타데이터 (YouTube 영상 ID 등) |
-| `pipeline_state` | JSON | 파이프라인 단계별 상태 스냅샷 |
+| `pipeline_state` | JSON | 레거시 읽기 폴백 전용 스냅샷. 신규 진행 상태는 `content_runtime_state`에 기록 |
 | `variant_group` | VARCHAR(64) | A/B 테스트 그룹 |
 | `variant_label` | VARCHAR(32) | A/B 테스트 레이블 |
 | `variant_config` | JSON | A/B 테스트 설정값 |
@@ -176,6 +184,19 @@ erDiagram
   "total_duration": 62.5
 }
 ```
+
+### content_runtime_state
+
+장시간 워커가 `contents` 한 행의 JSON을 read-modify-write 하며 충돌하는 것을 막는
+독립 런타임 상태 테이블이다. 복합 PK `(content_id, state_key)`를 원자적 upsert한다.
+
+| `state_key` | 값 |
+|---|---|
+| `progress` | 단계·하트비트 |
+| `render_checkpoint` | Phase 7 완료 씬/클립 체크포인트 |
+| `sla` | degraded 및 deadline 정보 |
+| `generation_diagnostics` | 프롬프트/LLM 원문 없는 길이·품질 사실 |
+| `failure` | code/stage/retryable/safe error summary |
 
 ### jobs
 `backend` → `dashboard_worker` 비동기 작업 큐.

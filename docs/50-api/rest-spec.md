@@ -1,6 +1,6 @@
 # WaggleBot — API 명세 (L5)
 
-> last-verified: 2026-08-08 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/`, `worker/ai_worker/tts/fish_client.py` · 2026-08-08 ClaudeService 재시도 로직 추가
+> last-verified: 2026-08-15 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/`, `worker/ai_worker/tts/fish_client.py`, `worker/ai_worker/core/main.py`, `worker/ai_worker/core/progress.py`
 > scope: llm-worker·backend·Fish Speech·ComfyUI API 엔드포인트 명세 — SSOT
 
 ## 서비스별 Base URL
@@ -216,7 +216,11 @@ Spring 프로퍼티 `app.external.api-key`). 누락·불일치 시 `401 {"error"
   "body": "...",
   "comments": [{"author": "a", "body": "b", "likeCount": 1}],
   "paired": false,
-  "options": {"videoGen": false, "autoHdRender": true}
+  "options": {
+    "videoGen": false, "autoHdRender": true,
+    "priority": "MARKETING_CRITICAL", "deadlineAt": "2026-08-14T12:00:00+09:00",
+    "preScripted": true, "renderProfile": "marketing_fast"
+  }
 }
 ```
 
@@ -237,6 +241,9 @@ Spring 프로퍼티 `app.external.api-key`). 누락·불일치 시 `401 {"error"
   - `video_gen`: `options.videoGen`(기본 `false`) — 게시글 단위로 전역 `VIDEO_GEN_ENABLED`를 오버라이드
   - `outro_text`: `paired=true`면 `"상대방의 사연도 궁금하시죠? 댓글에서 확인해 보세요."`, 아니면 `"여러분은 어떻게 생각하세요? 댓글로 알려주세요."` — `SceneDirector`가 mood 기본 문구의 `random.choice()`를 건너뛰고 이 값을 그대로 사용
   - `auto_hd_render`: `options.autoHdRender`(기본 `true`) — GET 폴링에서 `PREVIEW_RENDERED` 도달 시 자동 `HD_RENDER` 잡 큐잉 여부
+  - `priority`: `source=again_spring`은 요청값과 무관하게 `MARKETING_CRITICAL`로 저장되어 일반 잡보다 먼저 선택된다.
+  - `deadline_at`: 외부 SLA 시각. critical 요청에서 생략하면 ingest 시각부터 10분으로 설정한다. 지난 잡은 실패하지 않고 `degraded=true`로 계속 진행하며 댓글 낭독을 1건으로 줄인다.
+  - `pre_scripted=true`: Again Spring에서 원격 Claude 청킹 대신 본문을 결정적으로 분할해 즉시 TTS 단계로 보낸다.
 
 **POST 응답 (200):**
 ```json
@@ -250,12 +257,19 @@ Spring 프로퍼티 `app.external.api-key`). 누락·불일치 시 `401 {"error"
   "jobId": 123,
   "status": "PREVIEW_RENDERED",
   "externalId": "post_xxx",
-  "progress": { "currentPhase": 7, "phaseName": "비디오 클립", "scenesDone": 3, "totalScenes": 5 },
+  "priority": "MARKETING_CRITICAL",
+  "deadlineAt": "2026-08-14T12:00:00+09:00",
+  "degraded": false,
+  "progress": { "currentPhase": 7, "phaseName": "비디오 클립", "lastHeartbeatAt": "2026-08-14T03:00:00+00:00", "scenesDone": 3, "totalScenes": 5 },
+  "generationDiagnostics": { "story_duration_ms": 29800, "comment_duration_ms": 8200, "outro_duration_ms": 2400, "final_duration_ms": 40400, "comment_count": 2 },
   "artifacts": { "videoUrl": "/api/media/tmp/videos/....mp4", "audioUrl": "/api/media/audio/....wav", "thumbnailUrl": "/api/media/thumbnails/again_spring/post_xxx_intro.png" },
   "hdRenderJobId": 456
 }
 ```
-- `progress`: `contents.pipeline_state.progress`를 `ProgressController`와 동일한 규칙으로 snake_case→camelCase 변환. 없으면 `null`.
+- `progress`: `content_runtime_state(progress)`를 `ProgressController`와 동일한 규칙으로 snake_case→camelCase 변환한다. 롤링 업그레이드 중에는 `contents.pipeline_state.progress`를 읽기 폴백으로만 사용한다.
+- `generationDiagnostics`: 프롬프트·LLM 원문을 제외한 품질 사실이다. 본문/댓글/아웃트로/최종 길이와 댓글 수를 제공한다.
+- `status=FAILED`이면 항상 `failureCode`, `failureStage`, `retryable`, `errorSummary`를 추가한다. 예: DB 스냅샷 충돌은 `INFRA_DB_CONFLICT`; 품질/대본 오류는 해당 품질 코드다.
+- `priority`, `deadlineAt`, `degraded`, `degradeReasons`: 마케팅 큐/SLA 상태. `degraded`는 품질 축소 상태일 뿐 terminal 실패가 아니다.
 - `artifacts`: `status`가 `PREVIEW_RENDERED`/`RENDERED`일 때만 포함
 - `artifacts.thumbnailUrl`/`thumbUrl`: 인트로(메타포+제목) PNG. `upload_meta.thumbnail_path`가 있고 파일이 존재할 때만 포함. ASM이 YouTube `thumbnails.set`에 올린다 (Shorts oar 자동프레임 대체).
 , `MediaController`(`/api/media/**`) 기준 상대 경로.
@@ -314,7 +328,37 @@ GET  /system_stats      - GPU/VRAM 상태 (헬스체크)
 
 **워크플로우 파일 위치:** `worker/ai_worker/video/workflows/` (ComfyUI와 볼륨 공유)
 
+### 실패 코드·단계 분류 (2026-08-15, `worker/ai_worker/core/main.py::_classify_failure`)
 
-### Again-Spring marketing fast lane
+`failureStage`는 `phaseName`을 영문 상수로 매핑해 `WAGGLE:` 접두사를 붙인다(`progress.py::normalize_failure_stage`):
 
-External jobs with source=again_spring are scheduled ahead of ordinary jobs. Callers may send options.priority=MARKETING_CRITICAL, deadlineAt, preScripted=true, and renderProfile=marketing_fast. A pre-scripted job skips general Claude chunking; after its deadline the renderer retains only the top comment and reports degraded in the job status.
+| phaseName | failureStage |
+|---|---|
+| 자원 분석 | `WAGGLE:RESOURCE_ANALYSIS` |
+| 대본 생성 | `WAGGLE:SCRIPT_GENERATION` |
+| 씬 구성 | `WAGGLE:SCENE_COMPOSE` |
+| 비디오 프롬프트 | `WAGGLE:VIDEO_PROMPT` |
+| 비디오 클립 | `WAGGLE:VIDEO_CLIP` |
+| FFmpeg 렌더링 | `WAGGLE:FFMPEG_RENDER` |
+| TTS 합성 | `WAGGLE:TTS_SYNTHESIS` |
+
+매핑 안 되는 phaseName은 `WAGGLE:PHASE_UNKNOWN`으로 폴백한다(빈 값 대신).
+
+`failureCode` 분류(10종)와 `retryable` 여부:
+
+| failureCode | retryable | 의미 |
+|---|---|---|
+| `INFRA_DB_CONFLICT` | true | DB 동시성 충돌 |
+| `INFRA_TIMEOUT` | true | 페이즈 타임아웃 |
+| `INFRA_OOM` | true | 메모리 부족 |
+| `INFRA_GPU_UNAVAILABLE` | true | GPU 사용 불가 |
+| `RENDER_FFMPEG_ERROR` | true | FFmpeg 인코딩 실패 |
+| `RENDER_ASSET_MISSING` | **false** | 입력 자산 누락 (같은 입력=같은 결과) |
+| `RENDER_INVALID_INPUT` | **false** | 입력 데이터 자체가 잘못됨 |
+| `RENDER_UNKNOWN` | true | 미분류 렌더 오류 |
+| `TTS_GENERATION_FAILED` | true | TTS 합성 실패 |
+| `VARIANT_LLM_ERROR` | **false** | LLM 콘텐츠 거부 |
+
+`error`(예외 메시지 원문, 최대 500자)는 절대 비워두지 않는다. ASM `waggle_recovery.py`는
+`failureCode`/`failure_code`, `failureStage`/`failure_stage`, `error`/`error_summary`/`errorSummary`
+키를 모두 방어적으로 읽으므로 camelCase/snake_case 어느 쪽을 보내도 호환된다.

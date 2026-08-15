@@ -18,7 +18,10 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ai_worker.core.gpu_manager import get_gpu_manager, ModelType
-from ai_worker.core.progress import stamp_progress, clear_checkpoint_keep_progress
+from ai_worker.core.progress import (
+    stamp_progress, clear_checkpoint_keep_progress, load_render_checkpoint,
+    save_render_checkpoint, save_generation_diagnostics, get_runtime_state,
+)
 from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts.fish_client import synthesize as tts_synthesize
@@ -37,6 +40,12 @@ from db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
 _TTS_POST_PROCESS_CACHE_VERSION = "pp_v6"
+
+
+def _save_generation_diagnostics(session: Session, post_id: int, diagnostics: dict) -> None:
+    """Persist safe quality facts outside the shared contents JSON row."""
+    save_generation_diagnostics(post_id, diagnostics)
+
 
 
 def _tts_cache_key(voice_id: str, text: str) -> str:
@@ -767,20 +776,17 @@ class RobustProcessor:
 
             # 체크포인트 로드
             checkpoint: VideoCheckpoint | None = None
-            with SessionLocal() as ckpt_sess:
-                _content = ckpt_sess.query(Content).filter_by(post_id=post_id).first()
-                if _content and _content.pipeline_state:
-                    try:
-                        checkpoint = VideoCheckpoint.from_dict(_content.pipeline_state)
-                        logger.info(
-                            "[video] 체크포인트 로드: post=%d, 완료=%d/%d씬",
-                            post_id,
-                            len(checkpoint.video_scenes_done),
-                            checkpoint.total_scenes,
-                        )
-                    except Exception:
-                        logger.warning("[video] 체크포인트 파싱 실패 — 처음부터 시작", exc_info=True)
-                        checkpoint = None
+            _checkpoint_state = load_render_checkpoint(post_id)
+            if _checkpoint_state:
+                try:
+                    checkpoint = VideoCheckpoint.from_dict(_checkpoint_state)
+                    logger.info(
+                        "[video] 체크포인트 로드: post=%d, 완료=%d/%d씬",
+                        post_id, len(checkpoint.video_scenes_done), checkpoint.total_scenes,
+                    )
+                except Exception:
+                    logger.warning("[video] 체크포인트 파싱 실패 — 처음부터 시작", exc_info=True)
+                    checkpoint = None
 
             # 씬 완료 콜백: DB에 즉시 체크포인트 커밋
             _done_scenes: list[int] = list(checkpoint.video_scenes_done) if checkpoint else []
@@ -791,37 +797,12 @@ class RobustProcessor:
             def _on_scene_complete(scene_idx: int, clip_path: str) -> None:
                 _done_scenes.append(scene_idx)
                 _done_clips[str(scene_idx)] = clip_path
-                try:
-                    with SessionLocal() as cb_sess:
-                        ct = cb_sess.query(Content).filter_by(post_id=post_id).first()
-                        if ct is not None:
-                            # 기존 state 읽기 (progress 보존)
-                            state: dict = dict(ct.pipeline_state or {})
-                            # 체크포인트 키 갱신
-                            checkpoint_dict = VideoCheckpoint(
-                                phase=7,
-                                video_scenes_done=list(_done_scenes),
-                                video_clips=dict(_done_clips),
-                                total_scenes=len(scenes),
-                            ).to_dict()
-                            state.update(checkpoint_dict)
-                            # 진행 스탬프 갱신 (단일 쓰기)
-                            from datetime import datetime, timezone
-                            now = datetime.now(timezone.utc).isoformat()
-                            prev_p = state.get("progress") or {}
-                            state["progress"] = {
-                                "current_phase": 7,
-                                "phase_name": "비디오 클립",
-                                "phase_started_at": prev_p.get("phase_started_at", now) if prev_p.get("current_phase") == 7 else now,
-                                "scenes_done": len(_done_scenes),
-                                "total_scenes": len(scenes),
-                                "updated_at": now,
-                                "done": False,
-                            }
-                            ct.pipeline_state = state
-                            cb_sess.commit()
-                except Exception:
-                    logger.warning("[video] 체크포인트 저장 실패 (비치명적)", exc_info=True)
+                checkpoint_dict = VideoCheckpoint(
+                    phase=7, video_scenes_done=list(_done_scenes),
+                    video_clips=dict(_done_clips), total_scenes=len(scenes),
+                ).to_dict()
+                save_render_checkpoint(post_id, checkpoint_dict)
+                stamp_progress(post_id, 7, "비디오 클립", scenes_done=len(_done_scenes), total_scenes=len(scenes))
 
             scenes = await manager.generate_all_clips(
                 scenes=scenes,
@@ -1015,6 +996,34 @@ class RobustProcessor:
                     _narration, post_id, post.site_code, post.origin_id,
                     voice_override=_post_voice,
                 )
+            _quality_cfg = _resolve_post_variant_config(post_id)
+            from ai_worker.marketing.quality import MarketingQualityError, media_duration, requirements, shorten_script
+            _requirements = requirements(post.site_code, _quality_cfg)
+            _diagnostics: dict = {}
+            if _requirements is not None:
+                _initial_duration = media_duration(audio_path)
+                _diagnostics = {"platform": _requirements.platform, "target_duration_sec": _requirements.target_sec, "allowed_duration_sec": _requirements.allowed_sec, "initial_tts_duration_sec": round(_initial_duration, 3), "tts_regenerated": False}
+                if _initial_duration > _requirements.target_sec:
+                    script, _before_chars, _after_chars = shorten_script(script, _initial_duration, _requirements.target_sec)
+                    _narration = script.to_narration_text()
+                    with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
+                        audio_path = await self._safe_generate_tts(_narration, post_id, post.site_code, post.origin_id, voice_override=_post_voice)
+                    _final_tts_duration = media_duration(audio_path)
+                    _diagnostics.update({"tts_regenerated": True, "script_chars_before": _before_chars, "script_chars_after": _after_chars, "final_tts_duration_sec": round(_final_tts_duration, 3)})
+                    # TTS 중 별도 progress 세션이 contents를 갱신한다. 오래된 읽기
+                    # 스냅샷을 버린 뒤 품질 진단을 저장해야 MariaDB errno 1020을 피한다.
+                    session.rollback()
+                    if _final_tts_duration > _requirements.allowed_sec:
+                        _diagnostics["failure_code"] = "DURATION_TTS_EXCEEDED"
+                        _save_generation_diagnostics(session, post_id, _diagnostics)
+                        session.commit()
+                        raise MarketingQualityError("DURATION_TTS_EXCEEDED", "shortened TTS exceeds allowed duration")
+                else:
+                    _diagnostics["final_tts_duration_sec"] = round(_initial_duration, 3)
+                    # 위와 동일하게 장시간 TTS 뒤 최신 contents 스냅샷에서 저장한다.
+                    session.rollback()
+                _save_generation_diagnostics(session, post_id, _diagnostics)
+                session.commit()
             stamp_progress(post_id, 5, "TTS 합성", done=True)
             logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
 
@@ -1077,6 +1086,13 @@ class RobustProcessor:
 
             # Phase 4: 씬 배분
             stamp_progress(post_id, 4, "씬 구성")
+            # stamp_progress()는 별도 세션에서 Content.pipeline_state를 갱신한다.
+            # 기존 읽기 스냅샷을 끝내고 최신 행을 다시 읽어 deadline 상태 저장 시
+            # MariaDB errno 1020 충돌이 나지 않게 한다.
+            session.rollback()
+            post = session.query(Post).filter_by(id=post_id).first()
+            if post is None:
+                raise ValueError(f"Post {post_id} 없음")
             _db_cmts2 = sorted(
                 getattr(post, "comments", None) or [],
                 key=lambda c: getattr(c, "likes", 0) or 0,
@@ -1096,23 +1112,26 @@ class RobustProcessor:
             )
             scenes = director.direct()
             _cfg = _resolve_post_variant_config(post_id)
+            from ai_worker.marketing.quality import MarketingQualityError, media_duration, requirements
+            _requirements = requirements(post.site_code, _cfg)
+            if _requirements is not None:
+                _applied_sibom = sum(1 for scene in scenes if getattr(scene, "sibom_role", None) and getattr(scene, "image_url", None))
+                _diagnostics = dict(get_runtime_state(post_id, "generation_diagnostics") or {})
+                _diagnostics.update({"sibom_plan_count": len(_cfg.get("sibom_plan") or _cfg.get("sibomPlan") or []), "sibom_applied_count": _applied_sibom, "sibom_required_count": _requirements.min_sibom})
+                if _applied_sibom < _requirements.min_sibom:
+                    _diagnostics["failure_code"] = "SIBOM_SCENES_TOO_SHORT"
+                    _save_generation_diagnostics(session, post_id, _diagnostics)
+                    session.commit()
+                    raise MarketingQualityError("SIBOM_SCENES_TOO_SHORT", "not enough Sibomi images were applied")
+                _save_generation_diagnostics(session, post_id, _diagnostics)
+                session.commit()
             _deadline = _cfg.get("deadline_at")
             if _cfg.get("priority") == "MARKETING_CRITICAL" and isinstance(_deadline, str):
                 try:
                     _due = datetime.fromisoformat(_deadline.replace("Z", "+00:00"))
                     _due = _due if _due.tzinfo else _due.replace(tzinfo=timezone.utc)
                     if datetime.now(timezone.utc) >= _due:
-                        for _scene in scenes:
-                            if getattr(_scene, "type", None) == "comments" and _scene.comment_items:
-                                _scene.comment_items = _scene.comment_items[:1]
-                        _content = session.query(Content).filter_by(post_id=post_id).first()
-                        if _content is not None:
-                            _state = dict(_content.pipeline_state or {})
-                            _state["degraded"] = True
-                            _state["degrade_reasons"] = ["marketing_deadline_comment_limit"]
-                            _content.pipeline_state = _state
-                            session.commit()
-                        logger.warning("[marketing] deadline degraded to one comment post_id=%d", post_id)
+                        logger.info("[marketing] deadline reached; preserving configured comment count post_id=%d", post_id)
                 except ValueError:
                     logger.warning("[marketing] invalid deadline_at post_id=%d", post_id)
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
@@ -1153,6 +1172,27 @@ class RobustProcessor:
             session.rollback()
             post = session.query(Post).filter_by(id=post_id).first()
 
+            if _requirements is not None:
+                _mp4_duration = media_duration(video_path)
+                _diagnostics = dict(get_runtime_state(post_id, "generation_diagnostics") or {})
+                _story_sec = float(_diagnostics.get("final_tts_duration_sec") or 0.0)
+                _tail_sec = max(0.0, _mp4_duration - _story_sec)
+                _outro_text_sec = 0.0
+                from ai_worker.scene.analyzer import estimate_tts_duration
+                for _scene in scenes:
+                    if getattr(_scene, "type", None) == "outro":
+                        _outro_text_sec += estimate_tts_duration(" ".join(str(x) for x in (getattr(_scene, "text_lines", None) or [])))
+                _outro_sec = min(_tail_sec, _outro_text_sec)
+                _diagnostics.update({
+                    "story_duration_ms": round(_story_sec * 1000),
+                    "comment_duration_ms": round(max(0.0, _tail_sec - _outro_sec) * 1000),
+                    "outro_duration_ms": round(_outro_sec * 1000),
+                    "final_duration_ms": round(_mp4_duration * 1000),
+                    "final_mp4_duration_sec": round(_mp4_duration, 3),
+                    "duration_source": "story_tts_ffprobe; final_mp4_ffprobe",
+                })
+                _save_generation_diagnostics(session, post_id, _diagnostics)
+                session.commit()
             self._save_content(post, session, script, audio_path, video_path)
             logger.info("[Pipeline Render] ✓ 영상 완료: %s", video_path)
 

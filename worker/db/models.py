@@ -179,6 +179,16 @@ class Content(Base):
             )
 
 
+class ContentRuntimeState(Base):
+    """Independent mutable runtime namespaces; never share contents.pipeline_state."""
+    __tablename__ = "content_runtime_state"
+
+    content_id = Column(BigInteger, ForeignKey("contents.id", ondelete="CASCADE"), primary_key=True)
+    state_key = Column(String(64), primary_key=True)
+    state_value = Column(JSON, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=_utcnow, onupdate=_utcnow)
+
+
 class CrawlBlocklist(Base):
     """삭제된 게시글의 (site_code, origin_id)를 기록하여 재수집을 영구 차단."""
     __tablename__ = "crawl_blocklist"

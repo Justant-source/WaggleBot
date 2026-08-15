@@ -22,6 +22,65 @@ from db.session import SessionLocal, init_db
 logger = logging.getLogger(__name__)
 
 
+def _classify_failure(error: str) -> tuple[str, str, bool]:
+    """Classify failure into (code, stage, retryable).
+
+    Returns:
+        (failure_code, failure_stage, retryable)
+
+    Failure codes:
+      - INFRA_DB_CONFLICT: Database concurrency conflict (retry-able)
+      - INFRA_TIMEOUT: Phase timeout (retry-able)
+      - INFRA_OOM: Out of memory (retry-able)
+      - INFRA_GPU_UNAVAILABLE: GPU not available (retry-able)
+      - RENDER_FFMPEG_ERROR: FFmpeg encoding failed (retry-able)
+      - RENDER_ASSET_MISSING: Input asset missing (not retry-able)
+      - RENDER_INVALID_INPUT: Invalid input data (not retry-able)
+      - RENDER_UNKNOWN: Unclassified render error (retry-able)
+      - TTS_GENERATION_FAILED: TTS synthesis failed (retry-able)
+      - VARIANT_LLM_ERROR: LLM content refusal (not retry-able)
+    """
+    lower = error.lower()
+
+    # Infrastructure errors (retryable)
+    if "record has changed since last read" in lower or "(1020)" in lower:
+        return "INFRA_DB_CONFLICT", "runtime_state", True
+    if "timeout" in lower or "timed out" in lower:
+        return "INFRA_TIMEOUT", "render", True
+    if "out of memory" in lower or "oom" in lower or ("cuda" in lower and "memory" in lower):
+        return "INFRA_OOM", "render", True
+    if "gpu" in lower and ("unavailable" in lower or "not found" in lower):
+        return "INFRA_GPU_UNAVAILABLE", "render", True
+
+    # Render errors
+    if "ffmpeg" in lower:
+        if "not found" in lower or "missing" in lower:
+            return "RENDER_ASSET_MISSING", "ffmpeg_render", False
+        return "RENDER_FFMPEG_ERROR", "ffmpeg_render", True
+
+    # Audio/TTS errors (retryable — may recover with retry)
+    if "tts" in lower or "audio" in lower or "fish" in lower.replace("_", ""):
+        if "not found" in lower or "missing" in lower:
+            return "RENDER_ASSET_MISSING", "tts", False
+        return "TTS_GENERATION_FAILED", "tts", True
+
+    # LLM errors (non-retryable for refusals, retryable for API errors)
+    if "llm" in lower or "claude" in lower:
+        if "refused" in lower or "refuse" in lower or "content policy" in lower:
+            return "VARIANT_LLM_ERROR", "llm", False
+        # LLM API error — could be transient
+        return "RENDER_UNKNOWN", "llm", True
+
+    # Asset errors
+    if "not found" in lower or "missing" in lower or "filenotfound" in lower:
+        return "RENDER_ASSET_MISSING", "render", False
+    if "invalid" in lower or "malformed" in lower:
+        return "RENDER_INVALID_INPUT", "render", False
+
+    # Default: unknown but retryable
+    return "RENDER_UNKNOWN", "render", True
+
+
 def _mark_post_failed(post_id: int, error: str = "") -> None:
     """예외 발생 시 post를 FAILED로 안전하게 마킹하고 last_error를 기록한다."""
     try:
@@ -33,6 +92,10 @@ def _mark_post_failed(post_id: int, error: str = "") -> None:
                 post.status = PostStatus.FAILED
                 post.last_error = error[:1000] if error else None
                 session.commit()
+
+                code, stage, retryable = _classify_failure(error or "")
+                from ai_worker.core.progress import save_failure
+                save_failure(post_id, code=code, stage=stage, retryable=retryable, error_summary=error or "pipeline failed")
     except Exception:
         logger.exception("FAILED 마킹 실패: post_id=%d", post_id)
 
