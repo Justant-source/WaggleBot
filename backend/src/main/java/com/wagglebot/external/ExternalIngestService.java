@@ -49,6 +49,12 @@ public class ExternalIngestService {
     public IngestResult ingest(ExternalJobRequest req) {
         validate(req);
 
+        // Defense-in-depth normalization (2026-08-16) — ASM's StoryBrief validators already
+        // normalize this text before it reaches here in the normal AS → ASM → WaggleBot path;
+        // this catches any other caller of this endpoint the same way.
+        String normalizedTitle = ExternalTextNormalizer.normalize(req.title());
+        String normalizedBody = ExternalTextNormalizer.normalize(req.body());
+
         String siteCode = req.source();
         String originId = req.externalId();
 
@@ -90,8 +96,8 @@ public class ExternalIngestService {
         if (existing.isPresent()) {
             // FAILED 재시도 — 기존 Post를 되살려 재처리 큐로 되돌린다.
             post = existing.get();
-            post.setTitle(req.title());
-            post.setContent(req.body());
+            post.setTitle(normalizedTitle);
+            post.setContent(normalizedBody);
             post.setStatus(PostStatus.APPROVED);
             post.setRetryCount((post.getRetryCount() == null ? 0 : post.getRetryCount()) + 1);
             post.setLastError(null);
@@ -105,8 +111,8 @@ public class ExternalIngestService {
             post = new Post();
             post.setSiteCode(siteCode);
             post.setOriginId(originId);
-            post.setTitle(req.title());
-            post.setContent(req.body());
+            post.setTitle(normalizedTitle);
+            post.setContent(normalizedBody);
             post.setStatus(PostStatus.APPROVED);
             post.setEngagementScore(0.0);
             post.setRetryCount(0);
