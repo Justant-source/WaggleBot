@@ -334,6 +334,28 @@ def _plan_sequence(
 # SceneDecision 변환 유틸리티
 # ---------------------------------------------------------------------------
 
+def _tonel_text_only_sibom_rect(
+    layout: dict,
+    size: str,
+    content_top: int,
+) -> tuple[int, int, int, int, int]:
+    """Sibomi slot under the 3-line story block (text stays readable)."""
+    cw = int(layout["canvas"]["width"])
+    ch = int(layout["canvas"]["height"])
+    pad_x = int(layout["global"].get("title_block", {}).get("pad_x", 90))
+    radius = 20
+    if (size or "large") == "small":
+        w = h = max(1, int(820 * 0.40))
+        mx, my = 40, 40
+        return (cw - w - mx, ch - h - my, w, h, radius)
+    bul = layout.get("scenes", {}).get("text_only", {}).get("bullets", {})
+    y = content_top + int(bul.get("gap_top", 64)) + 3 * int(bul.get("line_height", 84)) + 24
+    y = min(max(y, content_top + 200), ch - 360)
+    w = cw - 2 * pad_x
+    h = max(280, ch - y - 140)
+    return (pad_x, y, w, h, radius)
+
+
 def _attach_sibom_plan_fields(entry: dict, scene) -> None:
     """Copy again_spring sibom metadata onto a plan entry (if present)."""
     role = getattr(scene, "sibom_role", None)
@@ -600,7 +622,8 @@ def _scenes_to_plan_and_sentences(
                     "tts_emotion": getattr(scene, "tts_emotion", ""),
                 }
                 sentences.append(sent_dict)
-                plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
+                plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
+                _attach_sibom_plan_fields(plan[-1], scene)
 
         elif scene.type == "image_only":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
@@ -943,6 +966,15 @@ def _render_pipeline(
                 _render_text_only_frame(
                     breadcrumb_frame, text_only_history, layout, font_dir, frame_path, content_top_body, stage=2,
                 )
+                img_pil = image_cache.get(img_idx) if img_idx is not None else None
+                if entry.get("sibom_role") and theme == "tone_l" and img_pil is not None:
+                    rx, ry, rw, rh, rrad = _tonel_text_only_sibom_rect(
+                        layout, entry.get("sibom_size") or "large", content_top_body,
+                    )
+                    plate = Image.open(frame_path)
+                    _attach_sibom_motion(
+                        entry, plate, img_pil, (rx, ry, rw, rh), rrad, tmp_dir, frame_idx,
+                    )
 
             elif scene_type == "image_only":
                 img_pil = image_cache.get(img_idx) if img_idx is not None else None

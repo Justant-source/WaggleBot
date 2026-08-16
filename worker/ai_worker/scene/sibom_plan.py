@@ -117,59 +117,51 @@ def apply_sibom_plan_to_body(
     plan: list[dict[str, Any]],
     cache_dir: Path,
 ) -> list:
-    """Insert Sibomi as dedicated visual cuts after story screens.
+    """Overlay Sibomi onto matching story screens without dropping narration.
 
-    Story narration stays on text_only screens (up to 3 sentence-lines).
-    Sibomi cuts carry the character + short situational caption only — they do
-    not reuse the story text as cramped overlay copy.
+    Story screens stay ``text_only`` so each sentence-line still has on-screen
+    text and TTS. Sibomi is the character (+ short PNG caption) on that same
+    beat — not a silent ``image_only`` cut and not a 20-char story wrap.
     Comments/outro are not in body_scenes. Intro is handled separately.
     Never assigns metaphor assets.
     """
     if not body_scenes or not plan:
         return body_scenes
 
-    from dataclasses import replace
-
-    by_scene: dict[int, list[dict[str, Any]]] = {}
     n_story = len(body_scenes)
+    occupied: set[int] = set()
     for item in plan:
         role = item.get("role")
         if role not in _BODY_ROLES:
             continue
         beat = max(0, min(int(item.get("beat_index") or 0), max(n_story - 1, 0)))
-        by_scene.setdefault(beat, []).append(item)
-
-    out: list = []
-    for index, scene in enumerate(body_scenes):
-        out.append(scene)
+        available = [idx for idx in range(beat, n_story) if idx not in occupied]
+        if not available:
+            available = [idx for idx in range(n_story) if idx not in occupied]
+        if not available:
+            logger.warning("[sibom] no free body scene for %s", item.get("image_id"))
+            continue
+        scene_index = available[0]
+        scene = body_scenes[scene_index]
         if getattr(scene, "block_type", "body") == "comment":
             continue
-        for item in by_scene.get(index, []):
-            path = materialize_sibom_image(
-                item["image_id"], item.get("caption") or "", cache_dir,
-            )
-            if not path:
-                continue
-            role = item.get("role")
-            dwell = item.get("dwell") or "punch"
-            visual = replace(
-                scene,
-                type="image_only",
-                text_lines=[],
-                pre_split_lines=None,
-                image_url=path,
-                video_mode="static",
-                sibom_role=role,
-                sibom_size=item.get("size") or "small",
-                sibom_dwell=dwell,
-                sibom_image_id=item["image_id"],
-                sibom_shake=item["image_id"] in SIBOM_SHAKE_IDS,
-                dwell_sec=SIBOM_PUNCH_SEC if dwell == "punch" else getattr(scene, "dwell_sec", 4.0),
-            )
-            out.append(visual)
+        path = materialize_sibom_image(
+            item["image_id"], item.get("caption") or "", cache_dir,
+        )
+        if not path:
+            continue
+        scene.type = "text_only"
+        scene.image_url = path
+        scene.video_mode = "static"
+        scene.sibom_role = role
+        scene.sibom_size = item.get("size") or "small"
+        scene.sibom_dwell = item.get("dwell") or "punch"
+        scene.sibom_image_id = item["image_id"]
+        scene.sibom_shake = item["image_id"] in SIBOM_SHAKE_IDS
+        occupied.add(scene_index)
 
-    body_scenes[:] = out
     return body_scenes
+
 
 
 def sibom_cache_dir(post_id: int | None = None) -> Path:
