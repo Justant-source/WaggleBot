@@ -1327,6 +1327,7 @@ class SceneDirector:
         body_raw = list(self.script.get("body", []))
         body_items: list[tuple[str, str | None, str, str | None, list[str] | None]] = []
         is_again_spring = self.site_code == "again_spring"
+        story_chunks: list[str] = []
         for item in body_raw:
             if isinstance(item, dict):
                 lines_raw = item.get("lines", [])
@@ -1339,24 +1340,28 @@ class SceneDirector:
                 # 댓글 전용 씬(comments)만 별도 목소리를 쓴다.
                 if is_comment:
                     voice = self._assign_comment_voice(author or "")
+                    body_items.append((text, voice, block_type, author, lines_raw if len(lines_raw) > 1 else None))
+                elif is_again_spring:
+                    story_chunks.append(text)
                 else:
-                    voice = self.narrator_voice  # None이면 TTS default 사용
-                if is_again_spring and not is_comment:
-                    # Tone L 본문은 화면상 독립 텍스트 블록 3개가 누적되는 포맷이다.
-                    # 범용 청커가 합친 문장을 여기서 다시 블록 단위로 분리한다.
-                    from ai_worker.scene.validator import smart_split_korean
-                    for block in smart_split_korean(text, max_chars=20):
-                        body_items.append((block, voice, block_type, author, None))
-                else:
+                    voice = self.narrator_voice
                     body_items.append((text, voice, block_type, author, lines_raw if len(lines_raw) > 1 else None))
             else:
                 text = str(item)
                 if is_again_spring:
-                    from ai_worker.scene.validator import smart_split_korean
-                    for block in smart_split_korean(text, max_chars=20):
-                        body_items.append((block, self.narrator_voice, "body", None, None))
+                    story_chunks.append(text)
                 else:
                     body_items.append((text, self.narrator_voice, "body", None, None))
+
+        if is_again_spring and story_chunks:
+            from ai_worker.scene.again_spring_text import pack_story_screens, split_story_lines
+            story_lines: list[str] = []
+            for chunk in story_chunks:
+                story_lines.extend(split_story_lines(chunk) or ([chunk] if chunk else []))
+            for screen in pack_story_screens(story_lines):
+                body_items.append(
+                    (" ".join(screen), self.narrator_voice, "body", None, screen)
+                )
 
         # 모드 결정: LLM vs rule_based
         # again_spring + sibom: never uniform-distribute metaphor/crawl images —

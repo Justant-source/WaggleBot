@@ -117,61 +117,58 @@ def apply_sibom_plan_to_body(
     plan: list[dict[str, Any]],
     cache_dir: Path,
 ) -> list:
-    """Attach sibom visuals onto body scenes by beat_index.
+    """Insert Sibomi as dedicated visual cuts after story screens.
 
+    Story narration stays on text_only screens (up to 3 sentence-lines).
+    Sibomi cuts carry the character + short situational caption only — they do
+    not reuse the story text as cramped overlay copy.
     Comments/outro are not in body_scenes. Intro is handled separately.
     Never assigns metaphor assets.
     """
     if not body_scenes or not plan:
         return body_scenes
 
-    # Split only at sentence boundaries and avoid overwriting an already applied beat.
-    from ai_worker.marketing.quality import expand_body_scenes_at_sentence_boundaries
-    required = sum(1 for item in plan if item.get("role") in _BODY_ROLES)
-    body_scenes[:] = expand_body_scenes_at_sentence_boundaries(body_scenes, required)
-    occupied: set[int] = set()
+    from dataclasses import replace
+
+    by_scene: dict[int, list[dict[str, Any]]] = {}
+    n_story = len(body_scenes)
     for item in plan:
         role = item.get("role")
         if role not in _BODY_ROLES:
             continue
-        if not body_scenes:
-            break
-        beat = max(0, min(int(item.get("beat_index") or 0), len(body_scenes) - 1))
-        available = [idx for idx in range(beat, len(body_scenes)) if idx not in occupied]
-        if not available:
-            available = [idx for idx in range(len(body_scenes)) if idx not in occupied]
-        if not available:
-            logger.warning("[sibom] no free body scene for %s", item.get("image_id"))
-            continue
-        scene_index = available[0]
-        scene = body_scenes[scene_index]
-        # Never decorate comment blocks inside body
+        beat = max(0, min(int(item.get("beat_index") or 0), max(n_story - 1, 0)))
+        by_scene.setdefault(beat, []).append(item)
+
+    out: list = []
+    for index, scene in enumerate(body_scenes):
+        out.append(scene)
         if getattr(scene, "block_type", "body") == "comment":
             continue
+        for item in by_scene.get(index, []):
+            path = materialize_sibom_image(
+                item["image_id"], item.get("caption") or "", cache_dir,
+            )
+            if not path:
+                continue
+            role = item.get("role")
+            dwell = item.get("dwell") or "punch"
+            visual = replace(
+                scene,
+                type="image_only",
+                text_lines=[],
+                pre_split_lines=None,
+                image_url=path,
+                video_mode="static",
+                sibom_role=role,
+                sibom_size=item.get("size") or "small",
+                sibom_dwell=dwell,
+                sibom_image_id=item["image_id"],
+                sibom_shake=item["image_id"] in SIBOM_SHAKE_IDS,
+                dwell_sec=SIBOM_PUNCH_SEC if dwell == "punch" else getattr(scene, "dwell_sec", 4.0),
+            )
+            out.append(visual)
 
-        path = materialize_sibom_image(
-            item["image_id"], item.get("caption") or "", cache_dir,
-        )
-        if not path:
-            continue
-
-        scene.type = "image_text"
-        scene.image_url = path
-        scene.video_mode = "static"
-        scene.sibom_role = role
-        scene.sibom_size = item.get("size") or "small"
-        scene.sibom_dwell = item.get("dwell") or "punch"
-        scene.sibom_image_id = item["image_id"]
-        if scene.sibom_dwell == "punch":
-            scene.dwell_sec = SIBOM_PUNCH_SEC
-        # Shake: hook point for future motion — ids listed in spec §9
-        if item["image_id"] in SIBOM_SHAKE_IDS:
-            scene.sibom_shake = True  # type: ignore[attr-defined]
-            # TODO(sibom): light bounce/shake via ffmpeg once motion system exists
-        else:
-            scene.sibom_shake = False  # type: ignore[attr-defined]
-        occupied.add(scene_index)
-
+    body_scenes[:] = out
     return body_scenes
 
 

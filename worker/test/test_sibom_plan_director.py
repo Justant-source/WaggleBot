@@ -157,14 +157,19 @@ def test_again_spring_plan_maps_intro_and_peak() -> None:
     assert intro.image_url and "waiting-reply" in intro.image_url
 
     body = [s for s in scenes if s.type not in ("intro", "outro", "comments", "chat")]
-    assert len(body) >= 3
-    assert body[1].sibom_role == "peak"
-    assert body[1].sibom_size == "large"
-    assert body[1].sibom_dwell == "hold"
-    assert body[2].sibom_role == "punch"
-    assert body[2].sibom_size == "small"
-    assert body[2].sibom_dwell == "punch"
-    assert body[2].sibom_shake is True  # stunned is shake id
+    story = [s for s in body if s.type == "text_only"]
+    visuals = [s for s in body if s.type == "image_only"]
+    assert story, "story text_only screens required"
+    assert story[0].pre_split_lines == ["비트0", "비트1", "비트2"]
+    assert {s.sibom_role for s in visuals} >= {"peak", "punch"}
+    punch = next(s for s in visuals if s.sibom_role == "punch")
+    peak = next(s for s in visuals if s.sibom_role == "peak")
+    assert peak.sibom_size == "large"
+    assert peak.sibom_dwell == "hold"
+    assert punch.sibom_size == "small"
+    assert punch.sibom_dwell == "punch"
+    assert punch.sibom_shake is True  # stunned is shake id
+    assert punch.text_lines == []
 
     for s in scenes:
         if s.type in ("comments", "outro", "chat"):
@@ -217,9 +222,13 @@ def test_apply_sibom_plan_to_body_unit() -> None:
             return_value=str(Path(td) / "drained.png"),
         ):
             apply_sibom_plan_to_body(scenes, plan, Path(td))
-    assert scenes[0].type == "image_text"
-    assert scenes[0].sibom_role == "punch"
-    assert scenes[1].sibom_role is None
+    assert scenes[0].type == "text_only"
+    assert scenes[0].sibom_role is None
+    assert scenes[1].type == "image_only"
+    assert scenes[1].sibom_role == "punch"
+    assert scenes[1].text_lines == []
+    assert scenes[2].type == "text_only"
+    assert scenes[2].sibom_role is None
     print("PASS: test_apply_sibom_plan_to_body_unit")
 
 

@@ -610,6 +610,9 @@ def _scenes_to_plan_and_sentences(
                 sentences.append({"text": text, "section": "body", "audio": audio, "voice_override": scene.voice_override,
                                   "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "image_only", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
+            _attach_sibom_plan_fields(plan[-1], scene)
+            if getattr(scene, "sibom_role", None) and not text:
+                plan[-1]["dwell_sec"] = float(getattr(scene, "dwell_sec", 4.0) or 4.0)
 
         elif scene.type == "outro":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
