@@ -1354,14 +1354,12 @@ class SceneDirector:
                     body_items.append((text, self.narrator_voice, "body", None, None))
 
         if is_again_spring and story_chunks:
-            from ai_worker.scene.again_spring_text import pack_story_screens, split_story_lines
+            from ai_worker.scene.again_spring_text import split_story_lines
             story_lines: list[str] = []
             for chunk in story_chunks:
                 story_lines.extend(split_story_lines(chunk) or ([chunk] if chunk else []))
-            for screen in pack_story_screens(story_lines):
-                body_items.append(
-                    (" ".join(screen), self.narrator_voice, "body", None, screen)
-                )
+            for line in story_lines:
+                body_items.append((line, self.narrator_voice, "body", None, [line]))
 
         # 모드 결정: LLM vs rule_based
         # again_spring + sibom: never uniform-distribute metaphor/crawl images —
@@ -1398,6 +1396,7 @@ class SceneDirector:
         if _use_sibom:
             from ai_worker.scene.sibom_plan import (
                 apply_sibom_plan_to_body,
+                pack_undecorated_story_screens,
                 parse_sibom_plan,
                 sibom_cache_dir,
             )
@@ -1406,6 +1405,7 @@ class SceneDirector:
                 parse_sibom_plan(self.variant_config),
                 sibom_cache_dir(self.post_id),
             )
+            pack_undecorated_story_screens(body_scenes)
 
         # _images에서 사용된 이미지 소모 추적
         used_img_count = sum(1 for s in body_scenes if s.image_url is not None)

@@ -117,13 +117,10 @@ def apply_sibom_plan_to_body(
     plan: list[dict[str, Any]],
     cache_dir: Path,
 ) -> list:
-    """Overlay Sibomi onto matching story screens without dropping narration.
+    """Put Sibomi on the matching one-clause story beat as ``image_text``.
 
-    Story screens stay ``text_only`` so each sentence-line still has on-screen
-    text and TTS. Sibomi is the character (+ short PNG caption) on that same
-    beat — not a silent ``image_only`` cut and not a 20-char story wrap.
-    Comments/outro are not in body_scenes. Intro is handled separately.
-    Never assigns metaphor assets.
+    The story line stays on screen with TTS. PNG caption is situational only.
+    Does not convert a 3-line text_only stack into a corner sticker.
     """
     if not body_scenes or not plan:
         return body_scenes
@@ -150,7 +147,7 @@ def apply_sibom_plan_to_body(
         )
         if not path:
             continue
-        scene.type = "text_only"
+        scene.type = "image_text"
         scene.image_url = path
         scene.video_mode = "static"
         scene.sibom_role = role
@@ -160,6 +157,61 @@ def apply_sibom_plan_to_body(
         scene.sibom_shake = item["image_id"] in SIBOM_SHAKE_IDS
         occupied.add(scene_index)
 
+    return body_scenes
+
+
+def pack_undecorated_story_screens(body_scenes: list, per_screen: int = 3) -> list:
+    """Pack adjacent story beats without Sibomi into screens of at most 3 lines."""
+    if not body_scenes:
+        return body_scenes
+    if per_screen < 1:
+        per_screen = 3
+
+    def _lines_of(scene) -> list[str]:
+        psl = getattr(scene, "pre_split_lines", None)
+        if psl:
+            return [str(x) for x in psl if str(x).strip()]
+        out: list[str] = []
+        for item in scene.text_lines or []:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+            else:
+                text = str(item).strip()
+            if text:
+                out.append(text)
+        return out
+
+    out: list = []
+    buf: list = []
+
+    def flush() -> None:
+        nonlocal buf
+        i = 0
+        while i < len(buf):
+            chunk = buf[i : i + per_screen]
+            i += len(chunk)
+            if len(chunk) == 1:
+                out.append(chunk[0])
+                continue
+            lines: list[str] = []
+            for scene in chunk:
+                lines.extend(_lines_of(scene))
+            first = chunk[0]
+            first.type = "text_only"
+            first.image_url = None
+            first.pre_split_lines = lines
+            first.text_lines = [" ".join(lines)] if lines else first.text_lines
+            out.append(first)
+        buf = []
+
+    for scene in body_scenes:
+        if getattr(scene, "sibom_role", None):
+            flush()
+            out.append(scene)
+        else:
+            buf.append(scene)
+    flush()
+    body_scenes[:] = out
     return body_scenes
 
 

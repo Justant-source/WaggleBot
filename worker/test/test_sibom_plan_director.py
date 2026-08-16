@@ -157,17 +157,13 @@ def test_again_spring_plan_maps_intro_and_peak() -> None:
     assert intro.image_url and "waiting-reply" in intro.image_url
 
     body = [s for s in scenes if s.type not in ("intro", "outro", "comments", "chat")]
-    story = [s for s in body if s.type == "text_only"]
-    assert story, "story text_only screens required"
-    assert story[0].pre_split_lines == ["비트0", "비트1", "비트2"]
-    assert any(s.text_lines for s in story), "story TTS/text must remain on Sibomi beats"
-    decorated = [s for s in story if getattr(s, "sibom_role", None)]
-    assert decorated, "Sibomi should overlay a story screen, not replace it"
-    assert all(s.type == "text_only" for s in decorated)
-    assert all(s.text_lines for s in decorated)
-    assert {s.sibom_role for s in decorated} <= {"peak", "punch", "soft_fill"}
-    punch = next((s for s in decorated if s.sibom_role == "punch"), decorated[-1])
-    assert punch.sibom_shake is True or punch.sibom_role == "peak"
+    cards = [s for s in body if s.type == "image_text" and getattr(s, "sibom_role", None)]
+    assert cards, "Sibomi beats must be one-clause image_text cards"
+    assert all(s.text_lines for s in cards)
+    assert {s.sibom_role for s in cards} >= {"peak", "punch"}
+    punch = next(s for s in cards if s.sibom_role == "punch")
+    assert punch.sibom_shake is True
+    assert punch.pre_split_lines == ["비트2"] or "비트2" in "".join(str(x) for x in punch.text_lines)
 
     for s in scenes:
         if s.type in ("comments", "outro", "chat"):
@@ -221,7 +217,7 @@ def test_apply_sibom_plan_to_body_unit() -> None:
         ):
             apply_sibom_plan_to_body(scenes, plan, Path(td))
     assert len(scenes) == 2
-    assert scenes[0].type == "text_only"
+    assert scenes[0].type == "image_text"
     assert scenes[0].sibom_role == "punch"
     assert scenes[0].text_lines == ["a"]
     assert scenes[1].type == "text_only"
