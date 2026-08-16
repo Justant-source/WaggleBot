@@ -41,6 +41,9 @@ def _classify_failure(error: str) -> tuple[str, str, bool]:
       - VARIANT_LLM_ERROR: LLM content refusal (not retry-able)
     """
     lower = error.lower()
+    prefix = (error or "").strip().split(":", 1)[0].strip().upper()
+    if prefix.startswith(("SIBOM_", "DURATION_", "VARIANT_", "LAYOUT_")) or prefix.startswith("SCRIPT_"):
+        return prefix, "QUALITY_GATE", False
 
     # Infrastructure errors (retryable)
     if "record has changed since last read" in lower or "(1020)" in lower:

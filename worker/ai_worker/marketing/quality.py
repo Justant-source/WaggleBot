@@ -30,7 +30,8 @@ def requirements(site_code: str | None, cfg: dict[str, Any]) -> MarketingRequire
     if layout == "reels_compact":
         return MarketingRequirements(30.0, 32.0, 4, "instagram_reels")
     if layout == "shorts_standard":
-        return MarketingRequirements(45.0, 47.0, 5, "youtube_shorts")
+        # Publish minimum is 4 for every channel; Shorts 5–7 is a soft target, not a hard fail.
+        return MarketingRequirements(45.0, 47.0, 4, "youtube_shorts")
     return None
 
 
