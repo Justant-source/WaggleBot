@@ -1,6 +1,6 @@
 # WaggleBot — 설정 레퍼런스
 
-> **last-verified:** 2026-08-05
+> **last-verified:** 2026-08-20
 > **scope:** settings.py 변수, pipeline.json, scene_policy.json, layout.json, .env — SSOT
 
 ## 설정 파일 구조
@@ -165,6 +165,17 @@ whispering→`(whispering)`, neutral→`""`, friendly→`(relaxed)`, surprised�
 
 > 점수 ≥ `TELEGRAM_CRAWL_ALERT_THRESHOLD` 이거나 자동승인 게시글이면 hook에 `notification` 이벤트 POST.
 > `TELEGRAM_CRAWL_ALERT=true`로 전환하고 `docker-compose.yml` crawler 서비스의 환경변수 3개 확인.
+
+### Telegram → ASM 마케팅 콜백 forwarder
+
+| 변수 | env 키 | 기본값 | 설명 |
+|------|--------|--------|------|
+| `config.asm.callbackUrl` | `ASM_TELEGRAM_CALLBACK_URL` | `http://100.115.252.61:8200/api/v1/telegram/callback` | ASM(Again-Spring-Marketing) 콜백 수신 엔드포인트 (Tailscale) |
+| `config.asm.bearerToken` | `ASM_BEARER_TOKEN` | (빈 문자열) | ASM 콜백 요청 인증 토큰 |
+
+> `redrive:`/`ignore:` 접두사 `callback_query`만 이 URL로 raw `data` 문자열째 전달(필드 수·형식 미해석).
+> ASM이 idempotency·만료·legacy(4-field) 거부·`answerCallbackQuery`·후속 메시지를 전부 소유 — telegram-bridge는 순수 forwarder.
+> ASM 연결 실패(non-2xx·타임아웃) 시에만 브리지가 폴백으로 `answerCallbackQuery` 응답(버튼 무한 로딩 방지).
 
 ---
 

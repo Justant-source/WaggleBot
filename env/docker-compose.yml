@@ -266,6 +266,11 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DAILY_BRIEF_ENABLED: ${DAILY_BRIEF_ENABLED:-false}
       DAILY_BRIEF_CRON: ${DAILY_BRIEF_CRON:-0 9 * * *}
+      # ASM(Again-Spring-Marketing) 마케팅 재구동/무시 버튼 forwarder.
+      # redrive:/ignore: callback_query만 이 URL로 전달 — ASM에는 이 봇
+      # 토큰의 getUpdates 폴러가 없음 (이 컨테이너가 단독 소비, 409 회피).
+      ASM_TELEGRAM_CALLBACK_URL: ${ASM_TELEGRAM_CALLBACK_URL:-http://100.115.252.61:8200/api/v1/telegram/callback}
+      ASM_BEARER_TOKEN: ${ASM_BEARER_TOKEN:-}
 
   llm-worker:
     build:

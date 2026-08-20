@@ -1,6 +1,6 @@
 # WaggleBot — 컨테이너 토폴로지 (L2)
 
-> last-verified: 2026-08-04 · code-ref: `env/docker-compose.yml`
+> last-verified: 2026-08-20 · code-ref: `env/docker-compose.yml`
 > scope: Docker 서비스 포트·볼륨·환경변수·의존성·GPU 배분 — SSOT
 
 ## 서비스 레이어 구조
@@ -305,7 +305,15 @@ graph TD
   ALLOWED_USER_IDS=...
   ANTHROPIC_API_KEY=...
   DAILY_BRIEF_ENABLED=false
+  ASM_TELEGRAM_CALLBACK_URL=http://100.115.252.61:8200/api/v1/telegram/callback
+  ASM_BEARER_TOKEN=...
   ```
+- **ASM(Again-Spring-Marketing) 콜백 forwarder:** `redrive:`/`ignore:` 접두사의
+  `callback_query`만 Tailscale 경유로 ASM(`100.115.252.61:8200`)에 그대로
+  전달(dumb pipe) — 필드 개수 등 payload 형태는 검증하지 않는다. idempotency·
+  만료·legacy 거부 등 정책은 ASM이 소유. ASM에는 이 봇 토큰의 `getUpdates`
+  poller가 없음(이 컨테이너가 단독 소비, 409 회피) — redrive/ignore 버튼도
+  ASM이 직접 Bot API로 전송하고, 클릭 결과만 이 브리지가 중계한다.
 
 ---
 
