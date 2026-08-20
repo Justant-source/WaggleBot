@@ -89,10 +89,18 @@ docker exec env-ai_worker-1 python3 /app/test/smoke_tonel.py
 docker exec env-ai_worker-1 python3 /app/test/smoke_sibom_motion.py
 ```
 
+> 🚨 **`worker/config` (root 소유 빈 디렉토리)를 지우거나 바꾸지 말 것.**
+> 컴포즈가 `worker → /app` 위에 `config → /app/config` 를 **중첩 마운트**하기 때문에,
+> Docker가 컨테이너 기동 시 마운트 지점으로 `worker/config` 를 root 권한으로 만든다.
+> 호스트에서는 비어 보이지만 **컨테이너에서 설정 파일이 보이려면 반드시 있어야 하는
+> 자리**다. 지우면 `/app/config` 가 통째로 사라진다(빈 디렉토리라 git에도 안 잡혀
+> 지운 흔적이 남지 않는다). 복구는 `docker restart env-ai_worker-1`.
+>
 > 🚨 **`worker/` 안에 `config` 심볼릭 링크를 만들지 말 것.**
 > `worker/`는 컨테이너에 `/app`으로 bind mount된다. 거기에 `config` 심볼릭 링크를
 > 만들면 별도 bind mount인 `/app/config`를 가려서 **컨테이너에서 설정 파일이
-> 통째로 사라진다**(2026-08-21 실제로 발생 — 컨테이너 재기동으로 복구). 
+> 통째로 사라진다**(2026-08-21 실제로 발생 — 마운트 지점을 링크로 덮었다가
+> 그 링크를 지우면서 마운트 지점까지 사라졌다. 컨테이너 재기동으로 복구). 
 > 같은 계열의 사고 전례가 또 있다(테스트용 심볼릭 링크 → 재시작 시 크래시루프).
 > 호스트에서 그 테스트들을 꼭 돌려야 한다면 심볼릭 링크 대신 **저장소 사본**에서 돌려라.
 >
