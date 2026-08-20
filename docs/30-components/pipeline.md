@@ -173,6 +173,7 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 - 썸네일 동시 생성
 - BGM 볼륨: `bgm_volume=0.15`
 - **아웃트로:** 기본 Waggle 채널은 댓글 참여 유도 질문 + 마스코트 목업을 사용한다. Again-Spring은 사연/댓글 뒤에 CTA 아웃트로를 추가하지 않는다.
+- **시봄이(Sibom) 모션**: `layout.py`에서 `_sibom_variant()` 및 `_wire_sibom_motion()`으로 캐릭터 등장 및 루프 모션 처리. 등장 punch(12프레임, ease-out scale 92→100 + 페이드) + dwell 루프(사인 기반 `sway`/`shake`/`sob`/`sink`/`pop`). 모션 종류는 `catalog.json` per-image `motion` 필드가 결정. `intro`/`image_text` 씬에서 호출되며 실패 시 정지 프레임으로 graceful degrade. 검증: `test_sibom_motion.py`(유닛 18개)·`smoke_sibom_motion.py`(픽셀 검증)
 - **발화 싱크:** hook/body 통합 narrator WAV는 faster-whisper 단어 타임스탬프와 원문 줄을 정렬한다. 문자 수 비율·fade 추정은 쓰지 않는다. 첫 WAV는 PCM `-45 dBFS`/3-frame 기준 native lead를 측정해 150ms에 부족한 시간만 prepend하고, 이후 새 줄은 실제 해당 발화보다 150ms 먼저 표시된다. Again-Spring은 20자 이하 독립 블록을 화면당 최대 3개 누적한 뒤 다음 묶음에서 초기화된다.
 - **클로징 타임라인:** 마지막 댓글 발화 종료 후 기존 화면을 250ms 유지 → 클로징 텍스트 표시 → 실제 첫 음절까지 150ms. cached/generated outro WAV의 선행 무음을 PCM `-45 dBFS` threshold(3-frame debounce)로 측정해 부족한 시간만 prepend하며 음성은 trim하지 않는다. 발화 후 500ms 여백을 두고, 최종 mux는 오디오 총 길이로 cap해 concat의 마지막 정지 프레임이 늘어나지 않게 한다.
 - **정적 frame 길이:** ffconcat의 마지막 duration은 신뢰하지 않는다. terminal PNG를 중복하지 않고 static filter의 `tpad=stop_mode=clone:stop=-1`로 마지막 프레임을 유지한 뒤 최종 `-t`/`-shortest`로 cap한다. static/hybrid segment 출력은 CFR 30fps로 인코딩해 오디오와의 stream duration 차이를 최대 1 frame으로 제한한다.

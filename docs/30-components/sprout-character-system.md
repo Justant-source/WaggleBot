@@ -1,8 +1,32 @@
 # 시봄이(Sibom) 캐릭터 일러스트 시스템 — 참조
 
-**상태**: 설계 진행중(1/2 배치, 30/60장). **런타임 미연동** — 아래 코드 경로는 아직 이 자산을 쓰지 않는다.
+**상태**: 구현 완료(2026-08-21). **런타임 연동** — 렌더 파이프라인 Phase 8(FFmpeg)에서 시봄이 캐릭터 모션 완전 동작중. 아래는 설계 아카이브 + 현재 구현 위치.
 **권위본**: Again-Spring 레포 `docs/frontend/design/specs/sprout-character-system/README.md`
 (결정 로그·캐릭터 바이블·슬롯 프리셋·`catalog.json` 스키마·Claude Design 프로젝트 정보 전부 그쪽에 있음. 여기는 포인터 + 이 레포에서 필요한 것만 요약)
+
+---
+
+## 현재 구현 상태 (2026-08-21)
+
+### 모션 시스템 (완전 동작)
+
+`worker/ai_worker/renderer/layout.py`에서 시봄이 모션을 완전 구현:
+
+- **`_sibom_variant(pil, scale, dx, dy, alpha)`** — 캐릭터를 자기 캔버스 안에서 변형(등장 punch + 루프). 미디어 박스 위치 가변성 처리로 `_frames.py` 수정 필수 없음.
+- **`_sibom_motion_sequences(...)`** — 등장 punch(12프레임, ease-out scale 92→100 + 페이드) + dwell 루프(사인 기반 모션)
+- **`_wire_sibom_motion(entry, render_frame, ...)`** — `intro`(start_alpha 0.60, 썸네일 후보) / `image_text`(0.35)에서 호출. 실패 시 정지 프레임으로 graceful degrade
+- **모션 종류** — `assets/sprouts/catalog.json`의 각 이미지 `motion` 필드가 결정: `sway`(숨쉬기 ±3%) · `shake`(잔떨림) · `sob`(세로 들썩임) · `sink`(처짐) · `pop`(크게 숨쉬기)
+- **루프 특성**: 사인 기반 → `i=0`·`i=n` 타일링 튐 방지. `sibom_dwell="punch"`는 루프 없이 등장만.
+- **미구현**: 눈 깜빡임 — 감은 눈 PNG 자산 부재로 scale/offset 모션만 적용
+- **검증**: `worker/test/test_sibom_motion.py`(유닛 18개) + `worker/test/smoke_sibom_motion.py`(실렌더 픽셀 검증, 컨테이너에서 `python3 /app/test/smoke_sibom_motion.py`)
+
+### 캐릭터 아트 리파인 (2026-08-20)
+
+- 눈 확대 + 하이라이트 추가
+- 진영색을 캐릭터 전용 밝은 값(`#E89A72` 작성자 / `#6FB08A` 상대방)으로 변경
+- 외곽선 7→9px, 팔다리 22→28px
+- 떡잎 `bristle`(곤두섬) 신규 추가
+- 자산: `assets/sprouts/`
 
 ---
 

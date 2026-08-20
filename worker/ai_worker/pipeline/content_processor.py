@@ -129,7 +129,11 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
 
     # ── Phase 4: 씬 배분 ──────────────────────────────────────────
     from config.settings import MEDIA_DIR
-    from ai_worker.core.processor import video_gen_enabled_for_post, _resolve_post_outro_text
+    from ai_worker.core.processor import (
+        video_gen_enabled_for_post,
+        _resolve_post_outro_text,
+        _resolve_post_variant_config,
+    )
 
     # 게시글별 오버라이드(contents.variant_config.video_gen) > 전역 VIDEO_GEN_ENABLED
     VIDEO_GEN_ENABLED = video_gen_enabled_for_post(post_id)
@@ -156,6 +160,12 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
         comments=_db_comments,
         chat_messages=_chat_messages,
         outro_text=_resolve_post_outro_text(post_id),
+        # 🚨 again_spring 시봄이 경로는 이 두 값이 있어야 동작한다.
+        #   director는 site_code == "again_spring"일 때만 sibom_plan을 읽는다.
+        #   빠지면 시봄이가 통째로 스킵되고 영상에 캐릭터가 아예 안 나온다
+        #   (core/processor.py의 SceneDirector 호출부와 동일하게 맞춤).
+        site_code=getattr(post, "site_code", None),
+        variant_config=_resolve_post_variant_config(post_id),
     )
     scenes: list[SceneDecision] = director.direct()
 

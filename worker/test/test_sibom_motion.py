@@ -281,3 +281,85 @@ def test_square_sprite_still_uses_cover_after_contain_fallback():
     expected.paste(expected_tile, (x, y))
 
     assert composed.tobytes() == expected.tobytes()
+
+# ── Phase 2 배선 (2026-08-21): 렌더 루프 → 모션 프레임 → 타임라인 ─────────
+# 프레임 렌더러를 건드리지 않고 캐릭터 캔버스 안에서 변형하는 방식이 실제로
+# entry에 경로를 심고, 타임라인이 그 경로를 소비하는지 계약을 고정한다.
+
+def _sibom_sprite(size=(120, 120)):
+    im = Image.new("RGBA", size, (0, 0, 0, 0))
+    ImageDraw.Draw(im).ellipse((10, 10, size[0] - 10, size[1] - 10), fill=(255, 248, 240, 255))
+    return im
+
+
+def test_variant_keeps_canvas_size_and_scales_content():
+    from ai_worker.renderer.layout import _sibom_variant
+    sprite = _sibom_sprite()
+    for scale in (0.92, 1.0, 1.03):
+        out = _sibom_variant(sprite, scale=scale)
+        assert out.size == sprite.size          # 캔버스 유지 = 미디어 박스 안정
+    faded = _sibom_variant(sprite, alpha=0.35)
+    assert faded.getchannel("A").getextrema()[1] < 255
+
+
+def test_wire_sibom_motion_populates_entry(tmp_path):
+    from ai_worker.renderer.layout import (
+        _wire_sibom_motion, _SIBOM_PUNCH_POP_FRAMES, _SIBOM_BREATHE_FRAMES,
+    )
+    rendered = []
+
+    def render_frame(img, out_path):
+        rendered.append(out_path)
+        img.convert("RGB").save(str(out_path), "PNG")
+
+    entry = {"sibom_role": "peak", "sibom_image_id": "waiting-reply", "sibom_dwell": "hold"}
+    _wire_sibom_motion(entry, render_frame, _sibom_sprite(), tmp_path, 3)
+
+    assert len(entry["sibom_punch_paths"]) == _SIBOM_PUNCH_POP_FRAMES
+    assert len(entry["sibom_loop_paths"]) == _SIBOM_BREATHE_FRAMES   # waiting-reply = sway
+    assert all(Path(p).exists() for p in entry["sibom_punch_paths"])
+    assert len(rendered) == _SIBOM_PUNCH_POP_FRAMES + _SIBOM_BREATHE_FRAMES
+
+
+def test_wire_skips_punch_dwell_loop_and_non_sibom(tmp_path):
+    from ai_worker.renderer.layout import _wire_sibom_motion
+
+    def render_frame(img, out_path):
+        img.convert("RGB").save(str(out_path), "PNG")
+
+    punch_entry = {"sibom_role": "punch", "sibom_image_id": "waiting-reply",
+                   "sibom_dwell": "punch"}
+    _wire_sibom_motion(punch_entry, render_frame, _sibom_sprite(), tmp_path, 1)
+    assert punch_entry["sibom_punch_paths"]
+    assert "sibom_loop_paths" not in punch_entry     # punch dwell엔 루프 없음
+
+    plain = {"type": "image_text"}
+    _wire_sibom_motion(plain, render_frame, _sibom_sprite(), tmp_path, 2)
+    assert plain == {"type": "image_text"}           # 시봄이 아니면 무동작
+
+
+def test_wired_entry_feeds_visual_timeline(tmp_path):
+    """배선 결과가 타임라인에 실제로 반영되는지 — Phase 2의 핵심 계약."""
+    from ai_worker.renderer.layout import (
+        _wire_sibom_motion, _build_visual_timeline, _SIBOM_PUNCH_SEC,
+    )
+
+    def render_frame(img, out_path):
+        img.convert("RGB").save(str(out_path), "PNG")
+
+    entry = {"type": "image_text", "sibom_role": "peak",
+             "sibom_image_id": "two-argue", "sibom_dwell": "hold"}   # shake
+    _wire_sibom_motion(entry, render_frame, _sibom_sprite(), tmp_path, 0)
+
+    base = tmp_path / "frame_000.png"
+    Image.new("RGB", (40, 40)).save(str(base), "PNG")
+    timeline = _build_visual_timeline([base], [entry], [6.0])
+
+    used = {p for p, _ in timeline}
+    assert Path(entry["sibom_punch_paths"][0]) in used
+    assert Path(entry["sibom_loop_paths"][0]) in used
+    assert base not in used                                  # 정지 프레임을 쓰지 않는다
+    assert sum(d for _, d in timeline) == pytest.approx(6.0)
+    punch_total = sum(d for p, d in timeline
+                      if str(p) in entry["sibom_punch_paths"])
+    assert punch_total == pytest.approx(_SIBOM_PUNCH_SEC)
