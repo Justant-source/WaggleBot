@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 
 from ai_worker.core.gpu_manager import get_gpu_manager, ModelType
 from ai_worker.core.progress import (
-    stamp_progress, clear_checkpoint_keep_progress, load_render_checkpoint,
-    save_render_checkpoint, save_generation_diagnostics, get_runtime_state,
+    stamp_progress, clear_checkpoint_keep_progress, mark_degraded,
+    load_render_checkpoint, save_render_checkpoint, save_generation_diagnostics, save_failure,
 )
 from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
@@ -40,12 +40,6 @@ from db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
 _TTS_POST_PROCESS_CACHE_VERSION = "pp_v6"
-
-
-def _save_generation_diagnostics(session: Session, post_id: int, diagnostics: dict) -> None:
-    """Persist safe quality facts outside the shared contents JSON row."""
-    save_generation_diagnostics(post_id, diagnostics)
-
 
 
 def _tts_cache_key(voice_id: str, text: str) -> str:
@@ -151,6 +145,99 @@ def _resolve_post_outro_text(post_id: int) -> str | None:
     """
     text = _resolve_post_variant_config(post_id).get("outro_text")
     return text if isinstance(text, str) and text.strip() else None
+
+
+def _is_marketing_critical(post_id: int) -> bool:
+    cfg = _resolve_post_variant_config(post_id)
+    return cfg.get("priority") == "MARKETING_CRITICAL" or cfg.get("source") == "again_spring"
+
+
+def _deadline_degraded(post_id: int) -> bool:
+    """Whether a critical job has spent its 10-minute quality budget."""
+    cfg = _resolve_post_variant_config(post_id)
+    if not _is_marketing_critical(post_id):
+        return False
+    raw = cfg.get("deadline_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        deadline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) >= deadline
+    except ValueError:
+        logger.warning("[marketing] invalid deadline_at post_id=%d: %r", post_id, raw)
+        return False
+
+
+def _persist_marketing_duration_diagnostics(
+    post_id: int, scenes: list, narration_audio: Path, video_path: Path,
+) -> None:
+    """Record final media facts without putting mutable diagnostics on contents."""
+    if not _is_marketing_critical(post_id):
+        return
+    from ai_worker.renderer._tts import _get_audio_duration
+    from ai_worker.scene.analyzer import estimate_tts_duration
+    from ai_worker.video.video_utils import get_video_duration
+
+    story_ms = round(_get_audio_duration(narration_audio) * 1000)
+    final_ms = round(get_video_duration(video_path) * 1000)
+    comment_estimate = 0.0
+    outro_estimate = 0.0
+    comment_count = 0
+    for scene in scenes:
+        if getattr(scene, "type", None) == "comments":
+            items = list(getattr(scene, "comment_items", []) or [])
+            comment_count += len(items)
+            comment_estimate += sum(estimate_tts_duration(str(item.get("content", ""))) for item in items)
+        elif getattr(scene, "type", None) == "outro":
+            outro_estimate += estimate_tts_duration(" ".join(getattr(scene, "text_lines", []) or []))
+    tail_ms = max(0, final_ms - story_ms)
+    estimate_total = comment_estimate + outro_estimate
+    outro_ms = round(tail_ms * outro_estimate / estimate_total) if estimate_total else 0
+    comment_ms = max(0, tail_ms - outro_ms)
+    save_generation_diagnostics(post_id, {
+        "story_duration_ms": story_ms,
+        "comment_duration_ms": comment_ms,
+        "outro_duration_ms": outro_ms,
+        "final_duration_ms": final_ms,
+        "comment_count": comment_count,
+        "duration_source": "ffprobe_story_and_final; tail_allocated_by_scene_estimate",
+    })
+
+
+def _deterministic_marketing_script(post: Post, narrator_voice: str) -> ScriptData:
+    """LLM-free safe path for pre-scripted Again Spring marketing jobs."""
+    from ai_worker.scene.again_spring_text import split_story_lines
+
+    source = " ".join((post.content or "").split())
+    lines = split_story_lines(source)
+    hook = (post.title or (lines.pop(0) if lines else "사연을 들려드릴게요")).strip()
+    body = [{"line_count": 1, "lines": [line], "type": "body"} for line in lines if line]
+    return ScriptData(
+        hook=hook[:80], body=body, closer="", title_suggestion=post.title or "",
+        tags=[], mood="daily", narrator_voice=narrator_voice,
+    )
+
+
+async def _with_phase_heartbeat(awaitable, post_id: int, phase: int, phase_name: str):
+    """Keep the external progress heartbeat fresh while a slow remote stage runs."""
+    import asyncio
+
+    async def beat() -> None:
+        while True:
+            await asyncio.sleep(30)
+            stamp_progress(post_id, phase, phase_name)
+
+    task = asyncio.create_task(beat())
+    try:
+        return await awaitable
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 # ===========================================================================
@@ -298,6 +385,7 @@ class RobustProcessor:
                     _scenes,
                     narration_audio=audio_path if audio_path and Path(audio_path).exists() else None,
                 )
+                _persist_marketing_duration_diagnostics(post.id, _scenes, audio_path, video_path)
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
 
                 # ===== Content 저장 (stale 객체 방지: 세션 갱신 후 re-fetch) =====
@@ -621,6 +709,24 @@ class RobustProcessor:
         post.status = PostStatus.FAILED
         post.last_error = str(last_error)[:1000] if last_error else None
         session.commit()
+        _failure = failure_type or FailureType.UNKNOWN_ERROR
+        _error_text = str(last_error or "").lower()
+        _code = {
+            FailureType.LLM_ERROR: "VARIANT_LLM_ERROR",
+            FailureType.TTS_ERROR: "TTS_GENERATION_FAILED",
+            FailureType.RENDER_ERROR: "RENDER_FAILED",
+            FailureType.NETWORK_ERROR: "NETWORK_ERROR",
+            FailureType.RESOURCE_ERROR: "RESOURCE_EXHAUSTED",
+            FailureType.UNKNOWN_ERROR: "PIPELINE_UNKNOWN_ERROR",
+        }[_failure]
+        if "record has changed since last read" in _error_text or "(1020)" in _error_text:
+            _code = "INFRA_DB_CONFLICT"
+        _stage = "llm" if _failure == FailureType.LLM_ERROR else "tts" if _failure == FailureType.TTS_ERROR else "render"
+        save_failure(
+            _post_id, code=_code, stage=_stage,
+            retryable=_failure != FailureType.LLM_ERROR,
+            error_summary=str(last_error or "pipeline failed"),
+        )
 
         logger.error(
             "⛔ 최종 실패 처리: post_id=%d → FAILED | "
@@ -858,7 +964,9 @@ class RobustProcessor:
     # 파이프라인 분리 스테이지 (병렬 처리용)
     # ===========================================================================
 
-    async def llm_tts_stage(self, post_id: int) -> tuple[ScriptData, Path]:
+    async def llm_tts_stage(
+        self, post_id: int, *, tts_lock: "asyncio.Lock | None" = None,
+    ) -> tuple[ScriptData, Path]:
         """LLM 대본 생성 + TTS 합성 (CUDA/GPU 단계).
 
         파이프라인 병렬화에서 독립적으로 호출되는 1단계.
@@ -927,16 +1035,12 @@ class RobustProcessor:
                     except Exception:
                         logger.debug("기존 summary 재사용 실패 — LLM 재생성", exc_info=True)
                         script = None
-                if script is None and post.site_code == "again_spring" and _resolve_post_variant_config(post_id).get("pre_scripted") is True:
-                    from ai_worker.scene.validator import smart_split_korean
-                    chunks = smart_split_korean(" ".join((post.content or "").split()), max_chars=80)
-                    script = ScriptData(
-                        hook=(post.title or (chunks.pop(0) if chunks else "사연을 들려드릴게요"))[:80],
-                        body=[{"line_count": 1, "lines": [chunk]} for chunk in chunks if chunk],
-                        closer="", title_suggestion=post.title or "", tags=[], mood="daily",
-                        narrator_voice=_narrator_voice,
-                    )
-                    logger.info("[Pipeline LLM+TTS] Again-Spring pre-scripted fast path post_id=%d", post_id)
+                if script is None:
+                    _variant = _resolve_post_variant_config(post_id)
+                    if post.site_code == "again_spring" and _variant.get("pre_scripted") is True:
+                        script = _deterministic_marketing_script(post, _narrator_voice)
+                        logger.info("[marketing_fast] deterministic pre-scripted path post_id=%d", post_id)
+
                 if script is None:
                     # 활성 경로에도 제목·베스트 댓글·피드백 지시 전달 (레거시 경로와 동일)
                     _best = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
@@ -990,40 +1094,27 @@ class RobustProcessor:
                 load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
             )
             stamp_progress(post_id, 5, "TTS 합성")
-            with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                # hook+body만 통합 합성 — render가 장면별 재합성 없이 이 wav를 분할 사용
-                audio_path = await self._safe_generate_tts(
-                    _narration, post_id, post.site_code, post.origin_id,
-                    voice_override=_post_voice,
-                )
-            _quality_cfg = _resolve_post_variant_config(post_id)
-            from ai_worker.marketing.quality import MarketingQualityError, media_duration, requirements, shorten_script
-            _requirements = requirements(post.site_code, _quality_cfg)
-            _diagnostics: dict = {}
-            if _requirements is not None:
-                _initial_duration = media_duration(audio_path)
-                _diagnostics = {"platform": _requirements.platform, "target_duration_sec": _requirements.target_sec, "allowed_duration_sec": _requirements.allowed_sec, "initial_tts_duration_sec": round(_initial_duration, 3), "tts_regenerated": False}
-                if _initial_duration > _requirements.target_sec:
-                    script, _before_chars, _after_chars = shorten_script(script, _initial_duration, _requirements.target_sec)
-                    _narration = script.to_narration_text()
+            # Remote Claude work above can proceed while a video job owns GPU.
+            # Only Fish Speech itself takes the shared GPU lock.
+            if tts_lock is not None and tts_lock.locked():
+                logger.info("[resource] video/TTS GPU lock 대기: post_id=%d", post_id)
+            if tts_lock is not None:
+                async with tts_lock:
                     with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                        audio_path = await self._safe_generate_tts(_narration, post_id, post.site_code, post.origin_id, voice_override=_post_voice)
-                    _final_tts_duration = media_duration(audio_path)
-                    _diagnostics.update({"tts_regenerated": True, "script_chars_before": _before_chars, "script_chars_after": _after_chars, "final_tts_duration_sec": round(_final_tts_duration, 3)})
-                    # TTS 중 별도 progress 세션이 contents를 갱신한다. 오래된 읽기
-                    # 스냅샷을 버린 뒤 품질 진단을 저장해야 MariaDB errno 1020을 피한다.
-                    session.rollback()
-                    if _final_tts_duration > _requirements.allowed_sec:
-                        _diagnostics["failure_code"] = "DURATION_TTS_EXCEEDED"
-                        _save_generation_diagnostics(session, post_id, _diagnostics)
-                        session.commit()
-                        raise MarketingQualityError("DURATION_TTS_EXCEEDED", "shortened TTS exceeds allowed duration")
-                else:
-                    _diagnostics["final_tts_duration_sec"] = round(_initial_duration, 3)
-                    # 위와 동일하게 장시간 TTS 뒤 최신 contents 스냅샷에서 저장한다.
-                    session.rollback()
-                _save_generation_diagnostics(session, post_id, _diagnostics)
-                session.commit()
+                        audio_path = await _with_phase_heartbeat(
+                            self._safe_generate_tts(
+                                _narration, post_id, post.site_code, post.origin_id,
+                                voice_override=_post_voice,
+                            ), post_id, 5, "TTS 합성",
+                        )
+            else:
+                with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
+                    audio_path = await _with_phase_heartbeat(
+                        self._safe_generate_tts(
+                            _narration, post_id, post.site_code, post.origin_id,
+                            voice_override=_post_voice,
+                        ), post_id, 5, "TTS 합성",
+                    )
             stamp_progress(post_id, 5, "TTS 합성", done=True)
             logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
 
@@ -1111,29 +1202,6 @@ class RobustProcessor:
                 variant_config=_resolve_post_variant_config(post_id),
             )
             scenes = director.direct()
-            _cfg = _resolve_post_variant_config(post_id)
-            from ai_worker.marketing.quality import MarketingQualityError, media_duration, requirements
-            _requirements = requirements(post.site_code, _cfg)
-            if _requirements is not None:
-                _applied_sibom = sum(1 for scene in scenes if getattr(scene, "sibom_role", None) and getattr(scene, "image_url", None))
-                _diagnostics = dict(get_runtime_state(post_id, "generation_diagnostics") or {})
-                _diagnostics.update({"sibom_plan_count": len(_cfg.get("sibom_plan") or _cfg.get("sibomPlan") or []), "sibom_applied_count": _applied_sibom, "sibom_required_count": _requirements.min_sibom})
-                if _applied_sibom < _requirements.min_sibom:
-                    _diagnostics["failure_code"] = "SIBOM_SCENES_TOO_SHORT"
-                    _save_generation_diagnostics(session, post_id, _diagnostics)
-                    session.commit()
-                    raise MarketingQualityError("SIBOM_SCENES_TOO_SHORT", "not enough Sibomi images were applied")
-                _save_generation_diagnostics(session, post_id, _diagnostics)
-                session.commit()
-            _deadline = _cfg.get("deadline_at")
-            if _cfg.get("priority") == "MARKETING_CRITICAL" and isinstance(_deadline, str):
-                try:
-                    _due = datetime.fromisoformat(_deadline.replace("Z", "+00:00"))
-                    _due = _due if _due.tzinfo else _due.replace(tzinfo=timezone.utc)
-                    if datetime.now(timezone.utc) >= _due:
-                        logger.info("[marketing] deadline reached; preserving configured comment count post_id=%d", post_id)
-                except ValueError:
-                    logger.warning("[marketing] invalid deadline_at post_id=%d", post_id)
             logger.info("[Pipeline Render] 씬=%d개", len(scenes))
 
             # 본문·intro·outro만 어드민 본문 보이스로 고정. 댓글/채팅은 풀에서 배정된 목소리 유지.
@@ -1164,6 +1232,7 @@ class RobustProcessor:
                 voice_key=_post_voice,
                 narration_audio=audio_path if audio_path and Path(audio_path).exists() else None,
             )
+            _persist_marketing_duration_diagnostics(post_id, scenes, audio_path, video_path)
 
             # 렌더링 후 트랜잭션 갱신 ─ 장시간 렌더링(15분+) 중 대시보드가
             # contents 레코드를 수정하면 REPEATABLE READ 스냅샷이 오래되어
@@ -1172,27 +1241,6 @@ class RobustProcessor:
             session.rollback()
             post = session.query(Post).filter_by(id=post_id).first()
 
-            if _requirements is not None:
-                _mp4_duration = media_duration(video_path)
-                _diagnostics = dict(get_runtime_state(post_id, "generation_diagnostics") or {})
-                _story_sec = float(_diagnostics.get("final_tts_duration_sec") or 0.0)
-                _tail_sec = max(0.0, _mp4_duration - _story_sec)
-                _outro_text_sec = 0.0
-                from ai_worker.scene.analyzer import estimate_tts_duration
-                for _scene in scenes:
-                    if getattr(_scene, "type", None) == "outro":
-                        _outro_text_sec += estimate_tts_duration(" ".join(str(x) for x in (getattr(_scene, "text_lines", None) or [])))
-                _outro_sec = min(_tail_sec, _outro_text_sec)
-                _diagnostics.update({
-                    "story_duration_ms": round(_story_sec * 1000),
-                    "comment_duration_ms": round(max(0.0, _tail_sec - _outro_sec) * 1000),
-                    "outro_duration_ms": round(_outro_sec * 1000),
-                    "final_duration_ms": round(_mp4_duration * 1000),
-                    "final_mp4_duration_sec": round(_mp4_duration, 3),
-                    "duration_source": "story_tts_ffprobe; final_mp4_ffprobe",
-                })
-                _save_generation_diagnostics(session, post_id, _diagnostics)
-                session.commit()
             self._save_content(post, session, script, audio_path, video_path)
             logger.info("[Pipeline Render] ✓ 영상 완료: %s", video_path)
 

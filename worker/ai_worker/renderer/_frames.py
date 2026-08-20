@@ -1063,29 +1063,6 @@ def _create_header_only_frame(
 # 씬 렌더러 (모두 base_frame.copy()에서 시작)
 # ---------------------------------------------------------------------------
 
-def _tonel_intro_media_rect(layout: dict, content_top: int) -> tuple[int, int, int, int, int]:
-    """Tone L intro 미디어 슬롯 (x, y, w, h, radius). 시봄이 모션 합성의 기준 좌표.
-
-    _render_intro_frame의 Tone L 분기(아래)와 동일한 계산 — 단일 소스.
-    """
-    sc = layout["scenes"]["intro"]
-    cw = layout["canvas"]["width"]
-    ch = layout["canvas"]["height"]
-    media_cfg = sc.get("media", {})
-    pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
-    media_radius = media_cfg.get("radius", 16)
-    media_gap = media_cfg.get("gap_top", 48)
-    step_cfg = layout.get("themes", {}).get("tone_l", {}).get("step_dots", {})
-    ribbon_h = layout.get("themes", {}).get("tone_l", {}).get("ribbon", {}).get("height", 22)
-    dots_reserve = step_cfg.get("gap_bottom", 80) + step_cfg.get("dot_size", 18) + 20
-
-    media_y = content_top + media_gap
-    media_bottom = ch - ribbon_h - dots_reserve
-    media_h = max(100, media_bottom - media_y)
-    media_w = cw - 2 * pad_x
-    return pad_x, media_y, media_w, media_h, media_radius
-
-
 def _render_intro_frame(
     base_frame: Image.Image,
     img_pil: Optional[Image.Image],
@@ -1112,12 +1089,21 @@ def _render_intro_frame(
     draw = ImageDraw.Draw(img)
 
     if theme == "tone_l":
-        pad_x, media_y, media_w, media_h, media_radius = _tonel_intro_media_rect(layout, content_top)
+        media_cfg = sc.get("media", {})
+        pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
+        media_radius = media_cfg.get("radius", 16)
+        media_gap = media_cfg.get("gap_top", 48)
+        step_cfg = layout.get("themes", {}).get("tone_l", {}).get("step_dots", {})
+        ribbon_h = layout.get("themes", {}).get("tone_l", {}).get("ribbon", {}).get("height", 22)
+        dots_reserve = step_cfg.get("gap_bottom", 80) + step_cfg.get("dot_size", 18) + 20
+
+        media_y = content_top + media_gap
+        media_bottom = ch - ribbon_h - dots_reserve
+        media_h = max(100, media_bottom - media_y)
+        media_w = cw - 2 * pad_x
         if img_pil is not None:
-            fitted = _fit_contain(img_pil, media_w, media_h)
-            fx = pad_x + (media_w - fitted.width) // 2
-            fy = media_y + (media_h - fitted.height) // 2
-            img = _paste_rounded(img, fitted, fx, fy, media_radius)
+            fitted = _fit_cover(img_pil, media_w, media_h)
+            img = _paste_rounded(img, fitted, pad_x, media_y, media_radius)
 
         img = img.convert("RGB")
         draw = ImageDraw.Draw(img)
@@ -1166,58 +1152,6 @@ def _render_intro_frame(
     return out_path
 
 
-def _tonel_image_text_geometry(
-    text: str, layout: dict, font_dir: Path, content_top: int,
-) -> dict:
-    """Tone L image_text 카드 기하 — 단일 소스.
-
-    _render_image_text_frame의 Tone L 분기(아래)와 동일한 계산.
-    반환 키: card_x, card_y, card_w, card_h, card_pad, card_radius,
-    q_font, q_lines, q_lh, quote_cfg, img_x, img_y, img_size, img_radius.
-    """
-    from ai_worker.renderer.layout import _load_font
-
-    sc = layout["scenes"]["image_text"]
-    cw = layout["canvas"]["width"]
-    ch = layout["canvas"]["height"]
-    pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
-    card_cfg = sc.get("card", {})
-    quote_cfg = sc.get("quote", {})
-    image_cfg = sc.get("image", {})
-
-    card_x = pad_x
-    card_w = cw - 2 * pad_x
-    card_pad = card_cfg.get("pad", 44)
-    card_radius = card_cfg.get("radius", 28)
-    card_y = content_top + card_cfg.get("gap_top", 36)
-
-    q_fs = quote_cfg.get("font_size", 54)
-    q_lh = quote_cfg.get("line_height", 68)
-    q_font = _load_font(font_dir, _body_font_file(layout), q_fs)
-    inner_w = card_w - 2 * card_pad
-    q_max_lines = int(quote_cfg.get("max_lines", 8))
-    q_lines = _wrap_korean(text, q_font, inner_w, keep_all=True)[:q_max_lines]
-
-    img_size = card_w - 2 * card_pad
-    img_gap = image_cfg.get("gap_top", 40)
-    card_h = card_pad + len(q_lines) * q_lh + img_gap + img_size + card_pad
-    max_card_h = ch - card_y - 140
-    if card_h > max_card_h:
-        card_h = max_card_h
-        img_size = max(200, card_h - card_pad - len(q_lines) * q_lh - img_gap - card_pad)
-
-    img_radius = image_cfg.get("radius", 20)
-    img_x = card_x + card_pad
-    img_y = card_y + card_pad + len(q_lines) * q_lh + img_gap
-
-    return dict(
-        card_x=card_x, card_y=card_y, card_w=card_w, card_h=card_h,
-        card_pad=card_pad, card_radius=card_radius,
-        q_font=q_font, q_lines=q_lines, q_lh=q_lh, quote_cfg=quote_cfg,
-        img_x=img_x, img_y=img_y, img_size=img_size, img_radius=img_radius,
-    )
-
-
 def _render_image_text_frame(
     base_frame: Image.Image,
     img_pil: Optional[Image.Image],
@@ -1227,6 +1161,7 @@ def _render_image_text_frame(
     out_path: Path,
     content_top: int,
     stage: int | None = None,
+    display_lines: list[str] | None = None,
 ) -> Path:
     """씬 image_text — 자막(위) + 자연비율 이미지(좌우 흰여백).
 
@@ -1242,11 +1177,35 @@ def _render_image_text_frame(
 
     if theme == "tone_l":
         palette = layout["global"].get("palette", {})
-        geo = _tonel_image_text_geometry(text, layout, font_dir, content_top)
-        card_x, card_y = geo["card_x"], geo["card_y"]
-        card_w, card_h = geo["card_w"], geo["card_h"]
-        card_pad, card_radius = geo["card_pad"], geo["card_radius"]
-        q_font, q_lines, q_lh, quote_cfg = geo["q_font"], geo["q_lines"], geo["q_lh"], geo["quote_cfg"]
+        pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
+        card_cfg = sc.get("card", {})
+        quote_cfg = sc.get("quote", {})
+        image_cfg = sc.get("image", {})
+
+        card_x = pad_x
+        card_w = cw - 2 * pad_x
+        card_pad = card_cfg.get("pad", 44)
+        card_radius = card_cfg.get("radius", 28)
+        card_y = content_top + card_cfg.get("gap_top", 36)
+
+        q_fs = quote_cfg.get("font_size", 54)
+        q_lh = quote_cfg.get("line_height", 68)
+        q_font = _load_font(font_dir, _body_font_file(layout), q_fs)
+        inner_w = card_w - 2 * card_pad
+        # max_lines: 문장 1회 등장당 시각 줄 수 상한(길면 wrap). 등장 횟수 제한이 아님.
+        q_max_lines = int(quote_cfg.get("max_lines", 8))
+        if display_lines:
+            q_lines = [line for line in display_lines if line.strip()][: min(q_max_lines, 3)]
+        else:
+            q_lines = _wrap_korean(text, q_font, inner_w, keep_all=True)[:q_max_lines]
+
+        img_size = card_w - 2 * card_pad
+        img_gap = image_cfg.get("gap_top", 40)
+        card_h = card_pad + len(q_lines) * q_lh + img_gap + img_size + card_pad
+        max_card_h = ch - card_y - 140
+        if card_h > max_card_h:
+            card_h = max_card_h
+            img_size = max(200, card_h - card_pad - len(q_lines) * q_lh - img_gap - card_pad)
 
         img = base_frame.copy()
         img = _draw_card(img, card_x, card_y, card_w, card_h, card_radius, palette)
@@ -1259,10 +1218,9 @@ def _render_image_text_frame(
             ty += q_lh
 
         if img_pil is not None:
-            fitted = _fit_contain(img_pil, geo["img_size"], geo["img_size"])
-            fx = geo["img_x"] + (geo["img_size"] - fitted.width) // 2
-            fy = geo["img_y"] + (geo["img_size"] - fitted.height) // 2
-            img = _paste_rounded(img.convert("RGB"), fitted, fx, fy, geo["img_radius"])
+            img_radius = image_cfg.get("radius", 20)
+            fitted = _fit_cover(img_pil, img_size, img_size)
+            img = _paste_rounded(img.convert("RGB"), fitted, card_x + card_pad, ty + img_gap, img_radius)
 
         img = img.convert("RGB")
         draw = ImageDraw.Draw(img)
