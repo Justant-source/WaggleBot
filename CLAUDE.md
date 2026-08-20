@@ -54,6 +54,7 @@
 - **볼륨 공유:** ComfyUI `/comfyui/output` ↔ ai_worker `media/tmp/videos` 동일 Docker 볼륨 (비디오 전달 경로).
 - **포트:** db 3306 · backend 8080 · frontend 3000 · llm-worker 8090 · fish-speech 8082→8080 · comfyui 8188 <!-- SSOT: docs/20-containers/topology.md -->
 - **실행/로그:** `docker compose -f env/docker-compose.yml up -d` · `docker compose logs --tail 50 ai_worker`
+- **테스트 (Python worker):** `cd worker && PYTHONPATH=$PWD/..:$PWD ../venv/bin/pytest test/ -m 'not requires_ffmpeg'` (약 283 통과. config·ffmpeg 의존 테스트는 컨테이너 전용 — **`worker/`에 config 심볼릭 링크 금지**: `/app/config` 마운트를 가려 컨테이너 설정이 사라진다. 정리에 `git checkout .` 금지. 상세: `docs/00-agent/development-playbook.md`)
 
 ## 모듈 맵
 
