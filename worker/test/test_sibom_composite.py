@@ -37,11 +37,11 @@ def _require_assets() -> None:
         pytest.skip("sprouts png assets missing")
 
 
-def test_catalog_loads_30_images():
+def test_catalog_loads_60_images():
     _require_assets()
     cat = sibom.load_catalog(str(_SPROUTS))
-    assert cat["images_in_batch"] == 30
-    assert len(cat["images"]) == 30
+    assert cat["images_in_batch"] == 60
+    assert len(cat["images"]) == 60
     assert "bottom" in cat["presets"]
     assert all(preset["maxChars"] == 10 for preset in cat["presets"].values())
     assert all(item["maxChars"] == 10 for item in cat["images"])
