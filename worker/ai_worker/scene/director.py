@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Literal
 
 from ai_worker.scene.analyzer import ResourceProfile, estimate_tts_duration
-from config.settings import EMOTION_TAGS, get_domain_setting
+from config.settings import EMOTION_TAGS, MEDIA_DIR, get_domain_setting
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,8 @@ class SceneDecision:
     dwell_sec: float = 4.0                   # 무음 체류 시간 (comments/chat 씬)
     # --- 채팅 씬 전용 필드 ---
     chat_messages: list[dict] | None = None  # [{"sender":str,"text":str,"is_mine":bool}]
+    # --- WS4-SFX: 효과음 마커 (d절) ---
+    sfx_events: list[str] | None = None   # [hook_in|turn|section_whoosh|bubble|vote_fill|logo]
     # --- again_spring 시봄이 (sibom_plan) ---
     sibom_role: str | None = None          # intro|peak|punch|soft_fill
     sibom_size: str | None = None          # large|small
@@ -1261,8 +1263,24 @@ class SceneDirector:
                 return result
 
             def _pick_bgm() -> _Path | None:
-                # BGM 폴더가 비어있으면 fallback 없이 None 반환 → BGM 미사용
-                return pick_random_file(preset.get("bgm_dir", ""), supported_bgm_ext)
+                # WS4.2: hook_emotion을 기반한 BGM 선택
+                hook_emotion = self.variant_config.get("hook_emotion") or self.variant_config.get("hookEmotion")
+                if not isinstance(hook_emotion, str) or not hook_emotion.strip():
+                    hook_emotion = "tension"
+                else:
+                    hook_emotion = hook_emotion.strip()
+
+                # BGM 디렉토리: MEDIA_DIR/bgm/<emotion>/ (컨테이너는 assets/media만 마운트됨)
+                bgm_dir = str(MEDIA_DIR / "bgm" / hook_emotion)
+                result = pick_random_file(bgm_dir, supported_bgm_ext)
+
+                # 파일 없으면 tension 폴백
+                if result is None and hook_emotion != "tension":
+                    result = pick_random_file(str(MEDIA_DIR / "bgm" / "tension"), supported_bgm_ext)
+
+                if result:
+                    logger.info("[bgm] emotion=%s file=%s", hook_emotion, result)
+                return result
         else:
             # policy 없을 때 fallback (기존 동작 유지)
             tts_emotion = ""
@@ -1315,6 +1333,7 @@ class SceneDirector:
             tts_emotion=tts_emotion,
             bgm_path=bgm_path,
             voice_override=self.narrator_voice,
+            sfx_events=["hook_in"],  # WS4-SFX: intro는 항상 hook_in
         )
         if intro_sibom_item:
             intro_scene.sibom_role = "intro"
@@ -1417,8 +1436,10 @@ class SceneDirector:
                 for _m in self._chat_messages:
                     _m.setdefault("voice", self._assign_chat_voice(
                         _m.get("sender") or "상대방", bool(_m.get("is_mine", False))))
-                for i in range(0, len(self._chat_messages), per_scene):
-                    batch = self._chat_messages[i : i + per_scene]
+                for i, scene_idx in enumerate(range(0, len(self._chat_messages), per_scene)):
+                    batch = self._chat_messages[scene_idx : scene_idx + per_scene]
+                    # WS4-SFX: 첫 chat 씬은 whoosh+bubble, 이후는 bubble만
+                    sfx_list = ["section_whoosh", "bubble"] if i == 0 else ["bubble"]
                     scenes.append(SceneDecision(
                         type="chat",
                         text_lines=[],
@@ -1427,6 +1448,7 @@ class SceneDirector:
                         tts_emotion="",
                         chat_messages=batch,
                         dwell_sec=chat_dwell,
+                        sfx_events=sfx_list,
                     ))
                 logger.debug(
                     "채팅 씬 추가: %d개 메시지 → %d씬 (dwell=%.1fs)",
@@ -1459,6 +1481,8 @@ class SceneDirector:
                     }
                     for i, c in enumerate(sorted_cmts)
                 ]
+                # WS3.3~3.4: 댓글 side 매핑 (추후 chat 씬으로 변환 고려)
+                # 현재는 AS 백엔드의 Comment.side 필드로부터 자동 매핑됨
                 scenes.append(SceneDecision(
                     type="comments",
                     text_lines=[],
@@ -1467,8 +1491,9 @@ class SceneDirector:
                     tts_emotion="",
                     comment_items=comment_items,
                     dwell_sec=dwell,
+                    sfx_events=["section_whoosh", "bubble"],  # WS4-SFX: 첫 댓글 장면은 whoosh+bubble
                 ))
-                logger.debug("댓글 씬 추가: %d개 댓글 (dwell=%.1fs)", len(comment_items), dwell)
+                logger.debug("댓글 씬 추가: %d개 댓글 (dwell=%.1fs, sfx=whoosh+bubble)", len(comment_items), dwell)
 
         # ── Outro ──────────────────────────────────────────────────────
         outro_asset = _pick_asset("outro_image_dir")
@@ -1481,6 +1506,7 @@ class SceneDirector:
             mood=mood,
             tts_emotion=tts_emotion,
             voice_override=self.narrator_voice,
+            sfx_events=["vote_fill", "logo"],  # WS4-SFX: outro는 투표바+로고
         ))
 
         if self.site_code == "again_spring" and (not scenes or scenes[-1].type != "outro"):

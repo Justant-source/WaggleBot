@@ -22,6 +22,7 @@ import logging
 import shutil
 import subprocess
 import time
+import yaml
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +33,16 @@ from config.settings import (
     MEDIA_DIR,
     TTS_TEXT_LEAD_SEC,
 )
+
+# resolve_render_profile 동적 임포트 (순환 참조 방지)
+def _resolve_render_profile(post_id: int) -> str:
+    """렌더 프로필 해석 (processor.py 위임)."""
+    try:
+        from ai_worker.core.processor import resolve_render_profile
+        return resolve_render_profile(post_id)
+    except Exception as e:
+        logger.warning("[layout] resolve_render_profile 실패 (post_id=%d): %s", post_id, e)
+        return "default"
 
 # ── 내부 모듈 re-import (기존 import 경로 호환) ──
 from ai_worker.renderer._frames import (
@@ -68,6 +79,26 @@ _OUTRO_MIN_DURATION_SEC = 2.5
 _PROTECTED_TAIL_SCENE_TYPES = frozenset({"outro", "comments"})
 
 
+def _bgm_allowed_for_profile(render_profile: str | None) -> bool:
+    """BGM/SFX는 marketing_v2에서만. 승인 전까지 운영 경로(marketing_fast)는 무음 유지.
+
+    director는 프로필과 무관하게 bgm_path를 채우므로, 소비 지점인 여기서 막지 않으면
+    현재 발행되는 영상에 BGM이 그대로 들어간다(Phase 1 게이트 미통과 상태).
+    """
+    return render_profile == "marketing_v2"
+
+
+def _sfx_config_for_profile(layout: dict, render_profile: str | None) -> dict:
+    """SFX 설정을 프로필별로 준다. marketing_v2가 아니면 빈 dict = 효과음 없음.
+
+    BGM과 같은 이유: director는 프로필과 무관하게 sfx_events 마커를 찍으므로,
+    소비 지점에서 막지 않으면 승인 전에 운영 영상으로 효과음이 나간다.
+    """
+    if render_profile != "marketing_v2":
+        return {}
+    return (layout.get("sfx") or {}).get("active") or {}
+
+
 # ---------------------------------------------------------------------------
 # 설정 로더
 # ---------------------------------------------------------------------------
@@ -92,6 +123,15 @@ def _load_sibom_catalog() -> dict:
         else:
             _SIBOM_CATALOG = {}
     return _SIBOM_CATALOG
+
+
+def _load_renderer_settings() -> dict:
+    """렌더러 설정 로드 (settings.yaml)."""
+    cfg_path = Path(__file__).resolve().parent / "settings.yaml"
+    if cfg_path.exists():
+        with open(cfg_path, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    return {}
 
 
 def _get_sibom_motion_for_image_id(image_id: str) -> str:
@@ -401,13 +441,13 @@ def _compose_sibom_onto_base(
     return frame
 
 
-_SIBOM_PUNCH_POP_FRAMES = 12          # 1.2s / 12 ≈ 0.10s per step
+_SIBOM_PUNCH_POP_FRAMES = 24          # fps 10→15로 업그레이드 (프레임 수 2배)
 _SIBOM_PUNCH_SEC = 1.2                # spec §9
 _SIBOM_PUNCH_START_SCALE = 0.92       # spec §6: scale 92 → 100
 _SIBOM_PUNCH_START_ALPHA = 0.35
 _SIBOM_INTRO_START_ALPHA = 0.60       # intro는 첫 프레임이 썸네일 후보라 더 밝게 시작
 
-_SIBOM_BREATHE_FRAMES = 16            # 2.0s / 16 = 0.125s per step
+_SIBOM_BREATHE_FRAMES = 24            # fps 10→15로 업그레이드 (프레임 수 2배)
 _SIBOM_BREATHE_CYCLE_SEC = 2.0        # 벤치마크 관찰: ~1.5–2.0s 주기
 _SIBOM_BREATHE_AMPLITUDE = 0.03       # ±3% scale
 
@@ -1014,11 +1054,21 @@ def _render_pipeline(
     meta: dict | None = None,
     narration_audio: Path | None = None,
     comments_fade_enabled: bool = False,
-) -> Path:
+    render_profile: str | None = None,
+) -> tuple[Path, dict]:
     """sentences / plan / images 를 받아 mp4를 생성한다."""
     _ = comments_fade_enabled  # reserved (Tone L comment fade; keep signature parity)
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── 진단 정보 수집 ────────────────────────────────────────
+    generation_diagnostics: dict = {
+        "story_duration_sec": 0.0,
+        "comment_duration_sec": 0.0,
+        "outro_duration_sec": 0.0,
+        "bgm": None,
+        "sfx_count": 0,
+    }
 
     try:
         # ── Step 2: 베이스 프레임 베이킹 ──────────────────────
@@ -1123,6 +1173,23 @@ def _render_pipeline(
                 plan, durations = [list(x) for x in zip(*_pairs)]
             else:
                 raise RuntimeError("모든 TTS 프레임 실패 — 렌더링 불가")
+
+        # ── 진단 정보 업데이트: 섹션별 듀레이션 계산 ────────────
+        for entry, dur in zip(plan, durations):
+            scene_type = entry.get("type")
+            if scene_type == "outro":
+                generation_diagnostics["outro_duration_sec"] += dur
+            elif scene_type == "comments":
+                generation_diagnostics["comment_duration_sec"] += dur
+            else:
+                generation_diagnostics["story_duration_sec"] += dur
+
+        logger.info(
+            "[layout] 진단 정보: story=%.1fs, comment=%.1fs, outro=%.1fs",
+            generation_diagnostics["story_duration_sec"],
+            generation_diagnostics["comment_duration_sec"],
+            generation_diagnostics["outro_duration_sec"],
+        )
 
         # ── Step 7: text_only용 줄바꿈 사전 계산 ──────────────
         sc_to = layout["scenes"]["text_only"]
@@ -1280,7 +1347,9 @@ def _render_pipeline(
                 for s in scenes_list
             )
 
-        if has_video_scenes:
+        # marketing_v2 프로필이거나 비디오 씬이 있으면 세그먼트 경로 실행
+        use_segments = render_profile == "marketing_v2" or has_video_scenes
+        if use_segments:
             # ── Step 8.5: 하이브리드 세그먼트 생성 ─────────────────
             logger.info("[layout] 하이브리드 렌더링: 비디오 씬 포함")
             segment_paths: list[Path] = []
@@ -1362,20 +1431,37 @@ def _render_pipeline(
             extra_inputs, sfx_filter = _build_layout_sfx_filter(
                 plan, timings, audio_dir, layout,
                 tts_input_idx=1, sfx_offset=sfx_offset,
+                sfx_config=_sfx_config_for_profile(layout, render_profile),
             )
 
+            # 진단: SFX 개수 (extra_inputs는 "-i", "path" 쌍으로 구성)
+            sfx_count = len([x for x in extra_inputs if x.startswith("-i")]) if extra_inputs else 0
+            generation_diagnostics["sfx_count"] = sfx_count
+            if sfx_count > 0:
+                logger.info("[layout] SFX 삽입: %d개", sfx_count)
+
             effective_bgm: Path | None = None
-            if bgm_path is not None and Path(bgm_path).exists():
+            _bgm_ok = _bgm_allowed_for_profile(render_profile)
+            if not _bgm_ok and bgm_path is not None:
+                logger.info("[layout] BGM 건너뜀 (profile=%s, v2에서만 사용)", render_profile)
+            if _bgm_ok and bgm_path is not None and Path(bgm_path).exists():
                 effective_bgm = Path(bgm_path)
                 logger.info("[layout] BGM 사용 (bgm_path): %s", effective_bgm.name)
-            elif bgm_path is not None:
+                generation_diagnostics["bgm"] = effective_bgm.name
+            elif _bgm_ok and bgm_path is not None:
                 logger.warning("[layout] bgm_path 파일 없음: %s — BGM 없이 인코딩", bgm_path)
+            else:
+                generation_diagnostics["bgm"] = "None"
 
             if effective_bgm is not None:
+                # BGM + TTS 혼싱 (동적 덕킹 + loudnorm)
+                # TTS와 BGM을 분리하여 처리하고, BGM에 sidechain 적용하여 음성이 있을 때 축소
                 bgm_audio_filter = (
-                    f"[1:a]anull[tts_pad];"
+                    f"[1:a]anull[tts];"
                     f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout]"
+                    f"[bgm_loop][tts]sidechaincompress=threshold=0.003:ratio=9:attack=50:release=400:makeup=no[bgm_ducked];"
+                    f"[tts][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                    f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                 )
                 cmd = [
                     "ffmpeg", "-y",
@@ -1421,7 +1507,15 @@ def _render_pipeline(
             extra_inputs, sfx_filter = _build_layout_sfx_filter(
                 plan, timings, audio_dir, layout,
                 tts_input_idx=1, sfx_offset=sfx_offset,
+                sfx_config=_sfx_config_for_profile(layout, render_profile),
             )
+
+            # 진단: SFX 개수 (extra_inputs는 "-i", "path" 쌍으로 구성)
+            if "sfx_count" not in generation_diagnostics or generation_diagnostics["sfx_count"] == 0:
+                sfx_count = len([x for x in extra_inputs if x.startswith("-i")]) if extra_inputs else 0
+                generation_diagnostics["sfx_count"] = sfx_count
+                if sfx_count > 0:
+                    logger.info("[layout] SFX 삽입: %d개", sfx_count)
 
             # ── Step 11: FFmpeg 인코딩 ─────────────────────────────
             codec = _resolve_codec()
@@ -1433,26 +1527,37 @@ def _render_pipeline(
             )
 
             effective_bgm = None
-            if bgm_path is not None and Path(bgm_path).exists():
+            _bgm_ok = _bgm_allowed_for_profile(render_profile)
+            if not _bgm_ok and bgm_path is not None:
+                logger.info("[layout] BGM 건너뜀 (profile=%s, v2에서만 사용)", render_profile)
+            if _bgm_ok and bgm_path is not None and Path(bgm_path).exists():
                 effective_bgm = Path(bgm_path)
                 logger.info("[layout] BGM 사용 (bgm_path): %s", effective_bgm.name)
-            elif bgm_path is not None:
+                generation_diagnostics["bgm"] = effective_bgm.name
+            elif _bgm_ok and bgm_path is not None:
                 logger.warning("[layout] bgm_path 파일 없음: %s — BGM 없이 인코딩", bgm_path)
+            else:
+                generation_diagnostics["bgm"] = "None"
 
             if effective_bgm is not None:
                 bgm_sfx_extra, bgm_sfx_filter = _build_layout_sfx_filter(
                     plan, timings, audio_dir, layout,
                     tts_input_idx=1, sfx_offset=sfx_offset,
+                    sfx_config=_sfx_config_for_profile(layout, render_profile),
                 )
+                # BGM + TTS 혼싱 (동적 덕킹 + loudnorm)
                 bgm_audio_filter = (
-                    f"[1:a]anull[tts_pad];"
+                    f"[1:a]anull[tts];"
                     f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout_premix]"
+                    f"[bgm_loop][tts]sidechaincompress=threshold=0.003:ratio=9:attack=50:release=400:makeup=no[bgm_ducked];"
+                    f"[tts][bgm_ducked]amix=inputs=2:duration=first:normalize=0[aout_premix_mixed];"
+                    f"[aout_premix_mixed]loudnorm=I=-14:TP=-1:LRA=7[aout_premix]"
                 )
                 if bgm_sfx_extra:
                     bgm_extra_sfx, bgm_sfx_str = _build_layout_sfx_filter(
                         plan, timings, audio_dir, layout,
                         tts_input_idx=1, sfx_offset=sfx_offset,
+                        sfx_config=_sfx_config_for_profile(layout, render_profile),
                     )
                     bgm_sfx_str_patched = bgm_sfx_str.replace(
                         f"[1:a]acopy[aout]", "[aout_premix]acopy[aout]"
@@ -1514,8 +1619,11 @@ def _render_pipeline(
                 ffmpeg_result.returncode, cmd, ffmpeg_result.stdout, ffmpeg_result.stderr
             )
 
-        logger.info("[layout] 완료: %s (총 %.1fs)", output_path.name, total_dur)
-        return output_path
+        logger.info("[layout] 완료: %s (총 %.1fs, 진단: bgm=%s, sfx=%d)",
+                    output_path.name, total_dur,
+                    generation_diagnostics.get("bgm", "None"),
+                    generation_diagnostics.get("sfx_count", 0))
+        return output_path, generation_diagnostics
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1585,11 +1693,16 @@ def render_layout_video(
     plan = _plan_sequence(sentences, images, layout)
     logger.info("[layout] 씬 계획: %s", [p["type"] for p in plan])
 
-    return _render_pipeline(
+    render_profile = _resolve_render_profile(post.id)
+    output_path_result, diagnostics = _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
         narration_audio=Path(narration_audio) if narration_audio else None,
+        render_profile=render_profile,
     )
+    # TODO: diagnostics를 processor.py가 저장할 수 있도록 연결
+    logger.debug("[layout] 생성 진단: %s", diagnostics)
+    return output_path_result
 
 
 def render_layout_video_from_scenes(
@@ -1671,7 +1784,8 @@ def render_layout_video_from_scenes(
     if _is_again_spring and not any(entry.get("type") == "outro" for entry in plan):
         raise RuntimeError("LAYOUT_OUTRO_MISSING: Again Spring plan must include an outro frame")
 
-    return _render_pipeline(
+    render_profile = _resolve_render_profile(post.id)
+    output_path_result, diagnostics = _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
         save_tts_cache=save_tts_cache,
@@ -1681,4 +1795,8 @@ def render_layout_video_from_scenes(
         meta=meta,
         narration_audio=Path(narration_audio) if narration_audio else None,
         comments_fade_enabled=_is_again_spring,
+        render_profile=render_profile,
     )
+    # TODO: diagnostics를 processor.py가 저장할 수 있도록 연결
+    logger.debug("[layout:scenes] 생성 진단: %s", diagnostics)
+    return output_path_result

@@ -13,6 +13,39 @@ fps: 30
 audio:
   bitrate: 192k
   bgm_volume: 0.15
+  bgm_fade_in: 1.5      # BGM 인트로 페이드인 (초)
+  bgm_fade_out: 1.0     # BGM 아웃트로 페이드아웃 (초)
+
+# ── SFX 팔레트 (이벤트 → 파일 경로, 볼륨, 오프셋) ──
+sfx:
+  active:
+    hook_in:
+      file: hook_in.wav
+      volume: 0.45
+      offset: 0.0       # 훅 텍스트 등장 순간
+    turn:
+      file: turn.wav
+      volume: 0.40
+      offset: 0.0       # 반전/결정적 한마디 씬 진입
+    section_whoosh:
+      file: section_whoosh.wav
+      volume: 0.35
+      offset: 0.0       # story→comment 전환
+    bubble:
+      file: bubble.wav
+      volume: 0.40
+      offset: 0.0       # 댓글 말풍선 등장 (각 1회)
+    vote_fill:
+      file: vote_fill.wav
+      volume: 0.35
+      offset: 0.0       # 아웃트로 투표 바 채워지는 동안
+    logo:
+      file: logo.wav
+      volume: 0.30
+      offset: 1.4       # 로고 노출 시점 오프셋
+  max_per_video: 6      # 영상당 최대 SFX 개수
+  min_gap_sec: 2.5      # 연속 SFX 간격 하한 (bubble 연속 제외)
+  bubble_consecutive_gap_sec: 1.0  # bubble 연속 특례
 
 # ── 썸네일 ──
 thumbnail:
