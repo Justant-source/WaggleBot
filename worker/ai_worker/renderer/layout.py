@@ -1029,6 +1029,24 @@ def _get_scene_for_entry(
     return None
 
 
+def _attach_sfx_events(plan: list[dict], sentences: list[dict], scenes_list: list | None) -> int:
+    """SceneDecision.sfx_events를 plan 항목으로 복사한다.
+
+    plan은 sentence 단위 dict라 director의 씬 메타를 그대로 갖고 있지 않다.
+    이 다리가 없으면 _build_layout_sfx_filter가 마커를 못 읽어 효과음이 0개가 된다.
+    """
+    if not scenes_list:
+        return 0
+    attached = 0
+    for entry in plan:
+        scene = _get_scene_for_entry(entry, sentences, scenes_list)
+        events = getattr(scene, "sfx_events", None) if scene is not None else None
+        if events:
+            entry["sfx_events"] = list(events)
+            attached += len(events)
+    return attached
+
+
 # ---------------------------------------------------------------------------
 # 공통 렌더링 파이프라인 (Steps 2 / 4 – 11)
 # ---------------------------------------------------------------------------
@@ -1428,6 +1446,9 @@ def _render_pipeline(
                 timings.append(acc)
                 acc += dur
 
+            _sfx_attached = _attach_sfx_events(plan, sentences, scenes_list)
+            if _sfx_attached:
+                logger.info("[sfx] 마커 부착: %d개", _sfx_attached)
             extra_inputs, sfx_filter = _build_layout_sfx_filter(
                 plan, timings, audio_dir, layout,
                 tts_input_idx=1, sfx_offset=sfx_offset,
