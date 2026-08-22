@@ -123,6 +123,20 @@ def _resolve_post_variant_config(post_id: int) -> dict:
     return {}
 
 
+def resolve_render_profile(post_id: int) -> str:
+    """게시글의 렌더 프로필 (variant_config.render_profile).
+
+    AS가 잡 생성 시 options.render_profile로 실어 보낸 값이 ASM options_json을
+    거쳐 variant_config에 들어온다. 값이 없으면 기존 경로(marketing_fast).
+    Phase 0에서 marketing_v2는 fast와 동일하게 동작하는 플레이스홀더이며,
+    Phase 1~2에서 이 분기 안에 새 렌더 로직(BGM·전환·댓글 반응 장면)이 들어간다.
+    """
+    profile = _resolve_post_variant_config(post_id).get("render_profile")
+    if profile in ("marketing_fast", "marketing_v2"):
+        return profile
+    return "marketing_fast"
+
+
 def video_gen_enabled_for_post(post_id: int) -> bool:
     """게시글별 비디오 생성 활성화 여부.
 
@@ -203,6 +217,7 @@ def _persist_marketing_duration_diagnostics(
         "final_duration_ms": final_ms,
         "comment_count": comment_count,
         "duration_source": "ffprobe_story_and_final; tail_allocated_by_scene_estimate",
+        "render_profile": resolve_render_profile(post_id),
     })
 
 
@@ -1039,7 +1054,9 @@ class RobustProcessor:
                     _variant = _resolve_post_variant_config(post_id)
                     if post.site_code == "again_spring" and _variant.get("pre_scripted") is True:
                         script = _deterministic_marketing_script(post, _narrator_voice)
-                        logger.info("[marketing_fast] deterministic pre-scripted path post_id=%d", post_id)
+                        _profile_tag = resolve_render_profile(post_id)
+                        logger.info("[%s] deterministic pre-scripted path post_id=%d",
+                                    _profile_tag, post_id)
 
                 if script is None:
                     # 활성 경로에도 제목·베스트 댓글·피드백 지시 전달 (레거시 경로와 동일)
