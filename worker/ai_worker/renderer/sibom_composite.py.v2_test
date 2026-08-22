@@ -35,15 +35,10 @@ SIBOM_CANVAS = 820
 FRAME_W = 1080
 FRAME_H = 1920
 LARGE_XY = (90, 550)
-
-# 기본값 (fast용, layout.py 호환성)
-LARGE_SCALE = 1.0
-SMALL_SCALE = 0.40
-
-# v2 전용 상수
+LARGE_SCALE_FAST = 1.0
 LARGE_SCALE_V2 = 0.60
+SMALL_SCALE_FAST = 0.40
 SMALL_SCALE_V2 = 0.35
-
 SMALL_MARGIN_XY = (40, 40)  # bottom-right inset from frame edges
 DEFAULT_INK = "#5C4030"
 DEFAULT_FONT_SIZE = 80
@@ -487,8 +482,8 @@ def paste_on_frame(
         large_scale = LARGE_SCALE_V2
         small_scale = SMALL_SCALE_V2
     else:
-        large_scale = LARGE_SCALE
-        small_scale = SMALL_SCALE
+        large_scale = LARGE_SCALE_FAST
+        small_scale = SMALL_SCALE_FAST
 
     if size == "large":
         scale = large_scale

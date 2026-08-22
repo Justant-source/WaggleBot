@@ -1477,23 +1477,31 @@ class SceneDirector:
                         "content": getattr(c, "content", "") or "",
                         "likes": getattr(c, "likes", 0) or 0,
                         "is_best": (i == 0),  # 추천 1위 → BEST
-                        "voice": self._assign_comment_voice(getattr(c, "author", None) or "익명"),
+                        "side": getattr(c, "side", "neutral"),  # WS3.4: AS 백엔드에서 받은 side 필드
+                        "voice": self._assign_comment_voice(
+                            getattr(c, "author", None) or "익명",
+                            side=getattr(c, "side", None),  # WS3.4: side 기반 고정 매핑 시도
+                        ),
                     }
                     for i, c in enumerate(sorted_cmts)
                 ]
-                # WS3.3~3.4: 댓글 side 매핑 (추후 chat 씬으로 변환 고려)
-                # 현재는 AS 백엔드의 Comment.side 필드로부터 자동 매핑됨
+                # WS3.3~3.4: v2 프로필 분기 - chat 씬 연결
+                render_profile = self.variant_config.get("render_profile") if isinstance(self.variant_config, dict) else None
+                scene_type = "chat" if render_profile == "marketing_v2" else "comments"
+                # WS4-SFX: 첫 chat 씬은 whoosh+bubble, 이후는 bubble만
+                # 현재는 댓글이 1개 씬이므로 whoosh 포함
                 scenes.append(SceneDecision(
-                    type="comments",
+                    type=scene_type,
                     text_lines=[],
                     image_url=None,
                     mood=mood,
                     tts_emotion="",
-                    comment_items=comment_items,
+                    comment_items=comment_items if scene_type == "comments" else None,
+                    chat_messages=None,  # 댓글 씬은 chat_messages 미사용
                     dwell_sec=dwell,
                     sfx_events=["section_whoosh", "bubble"],  # WS4-SFX: 첫 댓글 장면은 whoosh+bubble
                 ))
-                logger.debug("댓글 씬 추가: %d개 댓글 (dwell=%.1fs, sfx=whoosh+bubble)", len(comment_items), dwell)
+                logger.debug("댓글 씬 추가: %d개 댓글 (dwell=%.1fs, type=%s, sfx=whoosh+bubble)", len(comment_items), dwell, scene_type)
 
         # ── Outro ──────────────────────────────────────────────────────
         outro_asset = _pick_asset("outro_image_dir")
@@ -1711,12 +1719,27 @@ class SceneDirector:
         logger.debug("[director] character '%s' → voice=%s", label, voice)
         return voice
 
-    def _assign_comment_voice(self, author: str) -> str | None:
+    def _assign_comment_voice(self, author: str, side: str | None = None) -> str | None:
         """댓글 작성자별 voice 배정. 동일 작성자=동일 목소리.
 
-        풀에서 내레이터와 겹치지 않는 키를 우선해 작성자 기반으로 결정적으로 선택한다.
+        WS3.4: side가 지정되면 settings.yaml의 comment_voice_mapping으로 고정 매핑.
+        매핑 없으면 풀에서 내레이터와 겹치지 않는 키를 우선해 작성자 기반으로 결정적으로 선택한다.
         같은 댓글은 Reels/Shorts 재시도에서도 같은 voice/cache key를 사용한다.
         """
+        # WS3.4: side 기반 고정 매핑 (settings.yaml comment_voice_mapping)
+        if side:
+            side_mapping = get_domain_setting("scene", "comment_voice_mapping", default={})
+            if side_mapping and side in side_mapping:
+                mapped_voice = side_mapping[side]
+                if mapped_voice and mapped_voice in (self.comment_voices or []):
+                    logger.info("[director] comment side '%s' → voice=%s (mapping)", side, mapped_voice)
+                    return mapped_voice
+                elif mapped_voice == "default":
+                    # "default" → narrator 사용
+                    logger.info("[director] comment side '%s' → narrator (default)", side)
+                    return self.narrator_voice
+
+        # 폴백: 기존 작성자 기반 로직
         key = author or "익명"
         if key in self._comment_author_voices:
             return self._comment_author_voices[key]

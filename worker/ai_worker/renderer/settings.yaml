@@ -53,3 +53,29 @@ thumbnail:
   height: 720
   font_size: 72
   jpeg_quality: 90
+
+# ── V2 테마 (marketing_v2 프로필용) ──
+tone_v2:
+  safe_zone:
+    top_pct: 0.12       # 상단 12% — 플랫폼 UI 세이프존(재생 버튼, 프로필)
+    bottom_pct: 0.22    # 하단 22% — 플랫폼 UI 세이프존(좋아요, 댓글, 공유)
+
+  typography:
+    body_max_chars_per_line: 14    # 본문 줄당 최대 글자 수 (어절 단위)
+    body_min_font_size_px: 56      # 본문 최소 크기
+    hook_min_font_size_px: 80      # 훅 최소 크기
+    wrap_word_boundary: true       # 어절 단위 줄바꿈
+
+  comments:
+    card_min_height_pct: 0.25      # 댓글 카드 최소 높이 (화면 높이 대비)
+
+  outro:
+    vote_bar:
+      height: 80                   # 투표 바 높이 (px)
+      corner_radius: 8             # 모서리 반경
+      padding_x: 30                # 좌우 여백
+      label_font_size: 32          # "A 60% : B 40%" 폰트
+      pct_font_size: 28            # 백분율 숫자
+      gap_top: 60                  # 투표 바 상단 여백
+      color_author: "#C9785A"      # 작성자 A 색상 (피치)
+      color_partner: "#5F8F76"     # 상대방 B 색상 (세이지)

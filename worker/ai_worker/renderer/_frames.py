@@ -1395,6 +1395,7 @@ def _render_outro_frame(
     layout: dict,
     font_dir: Path,
     out_path: Path,
+    render_profile: str | None = None,
 ) -> Path:
     """씬 outro — 참여유도 질문 + 댓글입력 목업 (구독유도 없음).
 
@@ -1492,6 +1493,43 @@ def _render_outro_frame(
         dom_x = (cw - int(_font_w(dom_font, dom_text))) // 2
         dom_y = y + domain_cfg.get("gap_top", 56)
         draw.text((dom_x, dom_y), dom_text, font=dom_font, fill=domain_cfg.get("color", "#A08670"))
+
+        _draw_ribbon(draw, cw, ch, layout)
+        img.save(str(out_path), "PNG")
+        return out_path
+
+    elif render_profile == "marketing_v2":
+        # ── V2 테마: 공감 투표 바 아웃트로 ───────────────────────────────────
+        palette = g.get("palette", {})
+        v2_cfg = layout.get("settings", {}).get("tone_v2", {}).get("outro", {})
+        vote_cfg = v2_cfg.get("vote_bar", {})
+
+        # 투표 비율 데이터 (brief 또는 기본값)
+        # 실제 공감 비율이 없으면 투표 바를 그리지 않는다.
+        # 가짜 50:50을 표시하면 실제 커뮤니티 투표 결과를 왜곡하게 된다
+        # (과거 상세페이지에서 authorPct 유령 필드로 항상 50:50이 나온 전례 있음).
+        empathy_ratio = (cfg or {}).get("empathy_ratio") if isinstance(cfg, dict) else None
+        if not isinstance(empathy_ratio, dict) or "a" not in empathy_ratio:
+            empathy_ratio = None
+
+        y = hdr_h + vote_cfg.get("gap_top", 60)
+        if empathy_ratio is not None:
+            _render_vote_bar(draw, y, cw, empathy_ratio, palette, vote_cfg)
+        y += vote_cfg.get("height", 80) + 40
+
+        # "당신은 어느 쪽?" 텍스트
+        cta_fs = 36
+        cta_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", cta_fs)
+        cta_text = "당신은 어느 쪽?"
+        _draw_centered_text(draw, [cta_text], cta_font, y, cta_fs + 20, "#5C4030", cw)
+        y += cta_fs + 60
+
+        # 도메인 + 로고
+        dom_fs = 34
+        dom_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", dom_fs)
+        dom_text = "againspring.net"
+        dom_x = (cw - int(_font_w(dom_font, dom_text))) // 2
+        draw.text((dom_x, y), dom_text, font=dom_font, fill="#A08670")
 
         _draw_ribbon(draw, cw, ch, layout)
         img.save(str(out_path), "PNG")
@@ -1741,6 +1779,7 @@ def _render_comments_frame(
     reveal_count: int | None = None,
     fade_alpha: float = 1.0,
     stage: int | None = None,
+    render_profile: str | None = None,
 ) -> Path:
     """씬 comments — 정렬바 + 커뮤니티 댓글 세로 리스트.
 
@@ -1778,6 +1817,13 @@ def _render_comments_frame(
 
         img = base_frame.copy()
         draw = ImageDraw.Draw(img)
+
+        # V2 테마: 카드 최소 높이 확대
+        ch = layout["canvas"]["height"]
+        min_card_height_v2 = None
+        if render_profile == "marketing_v2":
+            v2_cfg = layout.get("settings", {}).get("tone_v2", {})
+            min_card_height_v2 = int(ch * v2_cfg.get("comments", {}).get("card_min_height_pct", 0.25))
 
         sort_fs = sort_cfg.get("font_size", 36)
         sort_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", sort_fs)
@@ -1828,6 +1874,10 @@ def _render_comments_frame(
 
             text_lines = _wrap_korean(content, text_font, card_w - 2 * card_pad_x - av_d - avatar_cfg.get("gap_right", 16), keep_all=True)[:text_max_lines]
             card_h = card_pad_y + max(av_d, nick_fs + 10) + 10 + len(text_lines) * text_lh + 10 + int(footer_cfg.get("font_size", 26) * 1.4) + card_pad_y
+
+            # V2: 카드 최소 높이 확대
+            if min_card_height_v2 is not None:
+                card_h = max(card_h, min_card_height_v2)
 
             border_color = cards_cfg.get("best_border", "#C9785A") if is_best else cards_cfg.get("border", "#E5DED2")
             img = _draw_card(img, pad_x, y, card_w, card_h, cards_cfg.get("radius", 24), palette, border_color)
@@ -2446,6 +2496,86 @@ def _render_video_text_overlay(
 # ---------------------------------------------------------------------------
 # 내부 유틸 (비공개)
 # ---------------------------------------------------------------------------
+
+
+
+def _render_vote_bar(
+    draw: ImageDraw.ImageDraw,
+    y_top: int,
+    cw: int,
+    empathy_ratio: dict | None,
+    palette: dict,
+    cfg: dict,
+) -> int:
+    """V2 아웃트로 — 공감 비율 바 렌더.
+
+    empathy_ratio: {"a": 60, "b": 40} 형태, 또는 None이면 기본값 50:50.
+    반환: 바의 하단 y 좌표.
+    """
+    from ai_worker.renderer.layout import _load_font
+
+    if empathy_ratio is None:
+        # 호출부에서 걸러야 하지만, 방어적으로 여기서도 그리지 않는다
+        return
+
+    pct_a = empathy_ratio.get("a", 50)
+    pct_b = empathy_ratio.get("b", 50)
+
+    bar_height = cfg.get("height", 80)
+    corner_radius = cfg.get("corner_radius", 8)
+    pad_x = cfg.get("padding_x", 30)
+    label_fs = cfg.get("label_font_size", 32)
+    pct_fs = cfg.get("pct_font_size", 28)
+    gap_top = cfg.get("gap_top", 60)
+    color_a = cfg.get("color_author", "#C9785A")
+    color_b = cfg.get("color_partner", "#5F8F76")
+
+    y = y_top + gap_top
+    bar_w = cw - 2 * pad_x
+
+    # 레이블 텍스트 "A 60% : B 40%"
+    label_text = f"A {pct_a}% : B {pct_b}%"
+    label_font = ImageFont.load_default()  # 폴백
+    label_y = y - int(label_fs * 1.2)
+    draw.text((cw // 2 - 80, label_y), label_text, font=label_font, fill="#5C4030")
+
+    # 투표 바 배경 (회색)
+    bar_x = pad_x
+    bar_y = y
+    try:
+        draw.rounded_rectangle(
+            [(bar_x, bar_y), (bar_x + bar_w, bar_y + bar_height)],
+            radius=corner_radius,
+            fill="#E5DED2",
+        )
+    except TypeError:
+        draw.rectangle(
+            [(bar_x, bar_y), (bar_x + bar_w, bar_y + bar_height)],
+            fill="#E5DED2",
+        )
+
+    # A 쪽 채우기
+    filled_w = int(bar_w * pct_a / 100.0)
+    if filled_w > 0:
+        try:
+            draw.rounded_rectangle(
+                [(bar_x, bar_y), (bar_x + filled_w, bar_y + bar_height)],
+                radius=corner_radius,
+                fill=color_a,
+            )
+        except TypeError:
+            draw.rectangle(
+                [(bar_x, bar_y), (bar_x + filled_w, bar_y + bar_height)],
+                fill=color_a,
+            )
+
+    # B 쪽 텍스트 표시
+    b_text_x = bar_x + filled_w + 20
+    pct_font = ImageFont.load_default()
+    draw.text((b_text_x, bar_y + (bar_height - pct_fs) // 2), f"{pct_b}%", font=pct_font, fill="#5C4030")
+
+    return bar_y + bar_height
+
 
 def _draw_media_placeholder(
     draw: ImageDraw.ImageDraw,

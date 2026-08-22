@@ -406,9 +406,9 @@ def _compose_sibom_onto_base(
     )
 
     if size == "small" and scale == 1.0 and alpha >= 0.999:
-        return paste_on_frame(base, sibom_pil, size="small", render_profile=render_profile)
+        return paste_on_frame(base, sibom_pil, size="small")
     if size == "large" and scale == 1.0 and alpha >= 0.999:
-        return paste_on_frame(base, sibom_pil, size="large", render_profile=render_profile)
+        return paste_on_frame(base, sibom_pil, size="large")
 
     frame = base.convert("RGBA").copy()
     if size == "small":
@@ -1457,10 +1457,10 @@ def _render_pipeline(
                 # BGM + TTS 혼싱 (동적 덕킹 + loudnorm)
                 # TTS와 BGM을 분리하여 처리하고, BGM에 sidechain 적용하여 음성이 있을 때 축소
                 bgm_audio_filter = (
-                    f"[1:a]asplit=2[tts_key][tts_mix];"
+                    f"[1:a]anull[tts];"
                     f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[bgm_loop][tts_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
-                    f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                    f"[bgm_loop][tts]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                    f"[tts][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
                     f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                 )
                 cmd = [
@@ -1547,10 +1547,10 @@ def _render_pipeline(
                 )
                 # BGM + TTS 혼싱 (동적 덕킹 + loudnorm)
                 bgm_audio_filter = (
-                    f"[1:a]asplit=2[tts_key][tts_mix];"
+                    f"[1:a]anull[tts];"
                     f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[bgm_loop][tts_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
-                    f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[aout_premix_mixed];"
+                    f"[bgm_loop][tts]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                    f"[tts][bgm_ducked]amix=inputs=2:duration=first:normalize=0[aout_premix_mixed];"
                     f"[aout_premix_mixed]loudnorm=I=-14:TP=-1:LRA=7[aout_premix]"
                 )
                 if bgm_sfx_extra:
