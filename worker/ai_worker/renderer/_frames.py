@@ -1162,6 +1162,7 @@ def _render_image_text_frame(
     content_top: int,
     stage: int | None = None,
     display_lines: list[str] | None = None,
+    render_profile: str | None = None,
 ) -> Path:
     """씬 image_text — 자막(위) + 자연비율 이미지(좌우 흰여백).
 
@@ -1175,18 +1176,26 @@ def _render_image_text_frame(
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
 
-    if theme == "tone_l":
+    # v2 분기: 마케팅_v2 또는 tone_l 테마일 때 새 캔버스 생성
+    is_v2 = render_profile == "marketing_v2" or theme == "tone_l"
+
+    if is_v2:
         palette = layout["global"].get("palette", {})
         pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
         card_cfg = sc.get("card", {})
         quote_cfg = sc.get("quote", {})
         image_cfg = sc.get("image", {})
 
+        # v2: 새로운 크림 배경 캔버스 (헤더 제거, 앱 크롬 제거)
+        img = Image.new("RGB", (cw, ch), "#EDF1E8")
+
         card_x = pad_x
         card_w = cw - 2 * pad_x
         card_pad = card_cfg.get("pad", 44)
         card_radius = card_cfg.get("radius", 28)
-        card_y = content_top + card_cfg.get("gap_top", 36)
+        # 세이프존: 상단 12% 내에 배치
+        safe_top = int(ch * 0.12)
+        card_y = safe_top + card_cfg.get("gap_top", 36)
 
         q_fs = quote_cfg.get("font_size", 54)
         q_lh = quote_cfg.get("line_height", 68)
@@ -1202,12 +1211,12 @@ def _render_image_text_frame(
         img_size = card_w - 2 * card_pad
         img_gap = image_cfg.get("gap_top", 40)
         card_h = card_pad + len(q_lines) * q_lh + img_gap + img_size + card_pad
-        max_card_h = ch - card_y - 140
+        safe_bottom = int(ch * 0.22)
+        max_card_h = ch - card_y - safe_bottom
         if card_h > max_card_h:
             card_h = max_card_h
             img_size = max(200, card_h - card_pad - len(q_lines) * q_lh - img_gap - card_pad)
 
-        img = base_frame.copy()
         img = _draw_card(img, card_x, card_y, card_w, card_h, card_radius, palette)
         draw = ImageDraw.Draw(img)
 
@@ -1282,6 +1291,7 @@ def _render_text_only_frame(
     out_path: Path,
     content_top: int,
     stage: int | None = None,
+    render_profile: str | None = None,
 ) -> Path:
     """씬 text_only — 자막 누적 표시.
 
@@ -1293,10 +1303,15 @@ def _render_text_only_frame(
     theme = _theme_name(layout)
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
-    img = base_frame.copy()
-    draw = ImageDraw.Draw(img)
 
-    if theme == "tone_l":
+    # v2 분기: 마케팅_v2 또는 tone_l 테마일 때 새 캔버스 생성
+    is_v2 = render_profile == "marketing_v2" or theme == "tone_l"
+
+    if is_v2:
+        # v2: 새로운 크림 배경 캔버스 (헤더 제거, 앱 크롬 제거)
+        img = Image.new("RGB", (cw, ch), "#EDF1E8")
+        draw = ImageDraw.Draw(img)
+
         palette = layout["global"].get("palette", {})
         pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
         sc = layout["scenes"]["text_only"]
@@ -1306,7 +1321,9 @@ def _render_text_only_frame(
         lh = bul_cfg.get("line_height", 84)
         font = _load_font(font_dir, _body_font_file(layout), font_size)
 
-        y = content_top + bul_cfg.get("gap_top", 64)
+        # 세이프존: 상단 12%부터 시작
+        safe_top = int(ch * 0.12)
+        y = safe_top + bul_cfg.get("gap_top", 64)
         slot_gap = int(bul_cfg.get("slot_gap", 28))
         last_idx = len(text_history) - 1
         for entry_i, entry in enumerate(text_history):
@@ -1324,6 +1341,10 @@ def _render_text_only_frame(
         _draw_ribbon(draw, cw, ch, layout)
         img.save(str(out_path), "PNG")
         return out_path
+
+    # fast 경로: 기존 base_frame 사용
+    img = base_frame.copy()
+    draw = ImageDraw.Draw(img)
 
     sc = layout["scenes"]["text_only"]
     ta = sc["elements"]["text_area"]
@@ -1418,10 +1439,14 @@ def _render_outro_frame(
     ch = layout["canvas"]["height"]
     hdr_h: int = hdr.get("height", 150)
 
-    img = header_only_frame.copy()
-    draw = ImageDraw.Draw(img)
+    # v2 분기: 마케팅_v2 또는 tone_l 테마일 때 새 캔버스 생성
+    is_v2 = render_profile == "marketing_v2" or theme == "tone_l"
 
-    if theme == "tone_l":
+    if is_v2:
+        # v2: 새로운 크림 배경 캔버스 (헤더 제거, 앱 크롬 제거)
+        img = Image.new("RGB", (cw, ch), "#EDF1E8")
+        draw = ImageDraw.Draw(img)
+
         palette = g.get("palette", {})
         sprout_cfg = sc.get("sprout_mark", {})
         q_cfg = sc.get("question", {})
@@ -1429,8 +1454,10 @@ def _render_outro_frame(
         pill_cfg = sc.get("input_pill", {})
         domain_cfg = sc.get("domain", {})
 
+        # 세이프존: 상단 12% 내에 배치
+        safe_top = int(ch * 0.12)
         mark_size = sprout_cfg.get("size", 200)
-        y = hdr_h + sprout_cfg.get("gap_top", 48)
+        y = safe_top + sprout_cfg.get("gap_top", 48)
         _draw_sprout_mark(draw, cw // 2, y + mark_size // 2, mark_size, palette)
         y += mark_size
 
@@ -1499,60 +1526,54 @@ def _render_outro_frame(
         img.save(str(out_path), "PNG")
         return out_path
 
-    elif render_profile == "marketing_v2":
-        # ── V2 테마: 공감 투표 바 아웃트로 (헤더 제거 + 세이프존) ─────────────
-        # 이 분기에서는 header_only_frame을 무시하고 새 캔버스를 생성한다.
-        # 목표: 앱 크롬(헤더·탭바) 제거, 크림 배경만 유지
-        
-        # V2용 새 캔버스 생성 — 헤더 없음
-        img = Image.new("RGB", (cw, ch), "#EDF1E8")  # 크림 배경
-        draw = ImageDraw.Draw(img)
-        
-        palette = g.get("palette", {})
-        v2_cfg = layout.get("settings", {}).get("tone_v2", {}).get("outro", {})
-        vote_cfg = v2_cfg.get("vote_bar", {})
-        
-        # 세이프존 설정 (모바일 플랫폼 UI가 덮는 영역)
-        safe_top = int(ch * 0.12)      # 상단 12% (플랫폼 상태바·헤더)
-        safe_bottom = int(ch * 0.78)   # 하단 22% (플랫폼 탭바) = 상단부터 78%
-        
-        # y 시작점을 세이프존 상단부터 시작
-        y = safe_top + vote_cfg.get("gap_top", 60)
+    # fast 경로: 기존 header_only_frame 사용
+    img = header_only_frame.copy()
+    draw = ImageDraw.Draw(img)
 
-        # 투표 비율 데이터 (brief 또는 기본값)
-        # 실제 공감 비율이 없으면 투표 바를 그리지 않는다.
-        # 가짜 50:50을 표시하면 실제 커뮤니티 투표 결과를 왜곡하게 된다
-        # (과거 상세페이지에서 authorPct 유령 필드로 항상 50:50이 나온 전례 있음).
-        cfg = None  # cfg not passed; empathy_ratio will be None
-        empathy_ratio = (cfg or {}).get("empathy_ratio") if isinstance(cfg, dict) else None
-        if not isinstance(empathy_ratio, dict) or "a" not in empathy_ratio:
-            empathy_ratio = None
-            logger.info("[outro] 공감비율 없음 — 투표 바 생략")
-        else:
-            logger.info("[outro] 공감비율 a=%s b=%s",
-                        empathy_ratio.get("a"), empathy_ratio.get("b"))
+    mascot_cfg = sc.get("mascot", {})
+    q_cfg = sc.get("question", {})
+    sub_cfg = sc.get("sub_caption", {})
+    box_cfg = sc.get("input_box", {})
+    cta_cfg = sc.get("cta_text", {})
+    hdr_bg: str = hdr.get("bg_color", "#FBD024")
+    hdr_ink: str = hdr.get("ink_color", "#1A1A1A")
 
-        if empathy_ratio is not None:
-            _render_vote_bar(draw, y, cw, empathy_ratio, palette, vote_cfg)
-        y += vote_cfg.get("height", 80) + 40
+    mascot_enabled: bool = mascot_cfg.get("enabled", True)
+    mascot_d: int = mascot_cfg.get("diameter", 220)
+    mascot_pad: int = mascot_cfg.get("pad_top", 180)
 
-        # "당신은 어느 쪽?" 텍스트
-        cta_fs = 36
-        cta_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", cta_fs)
-        cta_text = "당신은 어느 쪽?"
-        _draw_centered_text(draw, [cta_text], cta_font, y, cta_fs + 20, "#5C4030", cw)
-        y += cta_fs + 60
+    if mascot_enabled:
+        # ── 마스코트 (코드 드로잉) ────────────────────────────────────────
+        mascot_color: str = mascot_cfg.get("circle_color", "#1A1A1A")
+        feature_color: str = mascot_cfg.get("feature_color", "#FBD024")
 
-        # 도메인 + 로고
-        dom_fs = 34
-        dom_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", dom_fs)
-        dom_text = "againspring.net"
-        dom_x = (cw - int(_font_w(dom_font, dom_text))) // 2
-        draw.text((dom_x, y), dom_text, font=dom_font, fill="#A08670")
+        mx0 = (cw - mascot_d) // 2
+        my0 = hdr_h + mascot_pad
+        mx1 = mx0 + mascot_d
+        my1 = my0 + mascot_d
+        draw.ellipse([(mx0, my0), (mx1, my1)], fill=mascot_color)
 
-        _draw_ribbon(draw, cw, ch, layout)
-        img.save(str(out_path), "PNG")
-        return out_path
+        # 눈 — 두 옐로우 타원
+        eye_w = int(mascot_d * 0.12)
+        eye_h = int(mascot_d * 0.17)
+        eye_cy = my0 + int(mascot_d * 0.38)
+        eye_gap = int(mascot_d * 0.19)
+        mcx = (mx0 + mx1) // 2
+        for ex in [mcx - eye_gap - eye_w // 2, mcx + eye_gap - eye_w // 2]:
+            draw.ellipse([(ex, eye_cy - eye_h // 2),
+                          (ex + eye_w, eye_cy + eye_h // 2)],
+                         fill=feature_color)
+
+        # 입 — 호
+        mouth_w = int(mascot_d * 0.24)
+        mouth_h = int(mascot_d * 0.10)
+        mouth_y = my0 + int(mascot_d * 0.60)
+        mx0m = mcx - mouth_w // 2
+        draw.arc(
+            [(mx0m, mouth_y), (mx0m + mouth_w, mouth_y + mouth_h)],
+            start=0, end=180, fill=feature_color, width=5,
+        )
+        y = my1  # 마스코트 아래부터
     else:
         # Tone L: 마스코트 없이 넉넉한 여백만 (편지지 호흡)
         y = hdr_h + int(sc.get("content_pad_top_no_mascot", mascot_pad + mascot_d))
@@ -1775,7 +1796,10 @@ def _render_comments_frame(
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
 
-    if theme == "tone_l":
+    # v2 분기: 마케팅_v2 또는 tone_l 테마일 때 새 캔버스 생성
+    is_v2 = render_profile == "marketing_v2" or theme == "tone_l"
+
+    if is_v2:
         palette = layout["global"].get("palette", {})
         pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
         sort_cfg = sc.get("sort_bar", {})
@@ -1789,20 +1813,16 @@ def _render_comments_frame(
         items = comment_items[:max_items]
         visible = items if reveal_count is None else items[:reveal_count]
 
-        img = base_frame.copy()
+        # v2: 새로운 크림 배경 캔버스 (헤더 제거, 앱 크롬 제거)
+        img = Image.new("RGB", (cw, ch), "#EDF1E8")
         draw = ImageDraw.Draw(img)
-
-        # V2 테마: 카드 최소 높이 확대
-        ch = layout["canvas"]["height"]
-        min_card_height_v2 = None
-        if render_profile == "marketing_v2":
-            v2_cfg = layout.get("settings", {}).get("tone_v2", {})
-            min_card_height_v2 = int(ch * v2_cfg.get("comments", {}).get("card_min_height_pct", 0.25))
 
         sort_fs = sort_cfg.get("font_size", 36)
         sort_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", sort_fs)
         label_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", sort_fs - 8)
-        y = content_top + sort_cfg.get("gap_top", 8)
+        # 세이프존: 상단 12%부터 시작
+        safe_top = int(ch * 0.12)
+        y = safe_top + sort_cfg.get("gap_top", 8)
         draw.text((pad_x, y), "댓글 ", font=sort_font, fill=sort_cfg.get("count_color", "#5C4030"))
         prefix_w = int(_font_w(sort_font, "댓글 "))
         count_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", sort_fs)
@@ -1827,17 +1847,40 @@ def _render_comments_frame(
                        fill=divider_color)
         y += cards_cfg.get("gap_top", 30)
 
-        nick_fs = nick_cfg.get("font_size", 28)
+        # ── v2: 9:16 화면을 채우기 위한 확대 ──────────────────────────────
+        # 기본값(텍스트 36px·아바타 72px)은 앱 화면 기준이라, 세로 1920px 캔버스에서
+        # 짧은 댓글 2장이면 상단 22%만 차지하고 나머지가 빈 크림색으로 남는다.
+        # v2에서만 배율을 올려 카드 자체를 키운다(fast는 그대로).
+        _V2_COMMENT_SCALE = 1.45 if render_profile == "marketing_v2" else 1.0
+
+        def _sc(v: int) -> int:
+            return int(round(v * _V2_COMMENT_SCALE))
+
+        nick_fs = _sc(nick_cfg.get("font_size", 28))
         nick_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", nick_fs)
-        text_fs = text_cfg.get("font_size", 36)
+        text_fs = _sc(text_cfg.get("font_size", 36))
         text_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", text_fs)
-        text_lh = text_cfg.get("line_height", 52)
-        text_max_lines = text_cfg.get("max_lines", 2)
-        footer_font = _load_font(font_dir, "NotoSansKR-Regular.ttf", footer_cfg.get("font_size", 26))
-        av_d = avatar_cfg.get("size", 72)
-        card_pad_x = cards_cfg.get("pad_x", 24)
-        card_pad_y = cards_cfg.get("pad_y", 20)
+        text_lh = _sc(text_cfg.get("line_height", 52))
+        # 확대 시 줄 수도 늘려 카드가 세로로 더 자라게 한다
+        text_max_lines = text_cfg.get("max_lines", 2) + (2 if _V2_COMMENT_SCALE > 1.0 else 0)
+        footer_font = _load_font(font_dir, "NotoSansKR-Regular.ttf",
+                                 _sc(footer_cfg.get("font_size", 26)))
+        av_d = _sc(avatar_cfg.get("size", 72))
+        card_pad_x = _sc(cards_cfg.get("pad_x", 24))
+        card_pad_y = _sc(cards_cfg.get("pad_y", 20))
         card_w = cw - 2 * pad_x
+
+        # 남는 세로 공간을 카드 사이 간격으로 분배해 화면을 고르게 채운다.
+        # (카드를 키워도 2장뿐이면 하단이 비므로, 간격으로 균형을 맞춘다)
+        _base_gap = cards_cfg.get("gap_between", 24)
+        _v2_gap = _base_gap
+        if render_profile == "marketing_v2" and len(visible) > 1:
+            _safe_bottom = int(ch * 0.78)
+            _est_card_h = card_pad_y * 2 + max(av_d, nick_fs + 10) + 20 + text_lh * 2 + int(footer_cfg.get("font_size", 26) * 1.4)
+            _avail = _safe_bottom - y - _est_card_h * len(visible)
+            if _avail > 0:
+                _v2_gap = min(int(_avail / max(1, len(visible) - 1)), _base_gap * 6)
+                _v2_gap = max(_v2_gap, _base_gap)
 
         for item in visible:
             author = _sanitize_comment_display_text(item.get("author") or "익명") or "익명"
@@ -1848,10 +1891,6 @@ def _render_comments_frame(
 
             text_lines = _wrap_korean(content, text_font, card_w - 2 * card_pad_x - av_d - avatar_cfg.get("gap_right", 16), keep_all=True)[:text_max_lines]
             card_h = card_pad_y + max(av_d, nick_fs + 10) + 10 + len(text_lines) * text_lh + 10 + int(footer_cfg.get("font_size", 26) * 1.4) + card_pad_y
-
-            # V2: 카드 최소 높이 확대
-            if min_card_height_v2 is not None:
-                card_h = max(card_h, min_card_height_v2)
 
             border_color = cards_cfg.get("best_border", "#C9785A") if is_best else cards_cfg.get("border", "#E5DED2")
             img = _draw_card(img, pad_x, y, card_w, card_h, cards_cfg.get("radius", 24), palette, border_color)
@@ -1894,7 +1933,7 @@ def _render_comments_frame(
             draw.text((tx, ty + footer_cfg.get("gap_top", 8)), foot_text, font=footer_font,
                       fill=footer_cfg.get("color", "#A08670"))
 
-            y += card_h + cards_cfg.get("gap_between", 24)
+            y += card_h + _v2_gap
 
         _draw_step_dots(draw, cw, stage or 3, layout)
         _draw_ribbon(draw, cw, ch, layout)
@@ -2470,86 +2509,6 @@ def _render_video_text_overlay(
 # ---------------------------------------------------------------------------
 # 내부 유틸 (비공개)
 # ---------------------------------------------------------------------------
-
-
-
-def _render_vote_bar(
-    draw: ImageDraw.ImageDraw,
-    y_top: int,
-    cw: int,
-    empathy_ratio: dict | None,
-    palette: dict,
-    cfg: dict,
-) -> int:
-    """V2 아웃트로 — 공감 비율 바 렌더.
-
-    empathy_ratio: {"a": 60, "b": 40} 형태, 또는 None이면 기본값 50:50.
-    반환: 바의 하단 y 좌표.
-    """
-    from ai_worker.renderer.layout import _load_font
-
-    if empathy_ratio is None:
-        # 호출부에서 걸러야 하지만, 방어적으로 여기서도 그리지 않는다
-        return
-
-    pct_a = empathy_ratio.get("a", 50)
-    pct_b = empathy_ratio.get("b", 50)
-
-    bar_height = cfg.get("height", 80)
-    corner_radius = cfg.get("corner_radius", 8)
-    pad_x = cfg.get("padding_x", 30)
-    label_fs = cfg.get("label_font_size", 32)
-    pct_fs = cfg.get("pct_font_size", 28)
-    gap_top = cfg.get("gap_top", 60)
-    color_a = cfg.get("color_author", "#C9785A")
-    color_b = cfg.get("color_partner", "#5F8F76")
-
-    y = y_top + gap_top
-    bar_w = cw - 2 * pad_x
-
-    # 레이블 텍스트 "A 60% : B 40%"
-    label_text = f"A {pct_a}% : B {pct_b}%"
-    label_font = ImageFont.load_default()  # 폴백
-    label_y = y - int(label_fs * 1.2)
-    draw.text((cw // 2 - 80, label_y), label_text, font=label_font, fill="#5C4030")
-
-    # 투표 바 배경 (회색)
-    bar_x = pad_x
-    bar_y = y
-    try:
-        draw.rounded_rectangle(
-            [(bar_x, bar_y), (bar_x + bar_w, bar_y + bar_height)],
-            radius=corner_radius,
-            fill="#E5DED2",
-        )
-    except TypeError:
-        draw.rectangle(
-            [(bar_x, bar_y), (bar_x + bar_w, bar_y + bar_height)],
-            fill="#E5DED2",
-        )
-
-    # A 쪽 채우기
-    filled_w = int(bar_w * pct_a / 100.0)
-    if filled_w > 0:
-        try:
-            draw.rounded_rectangle(
-                [(bar_x, bar_y), (bar_x + filled_w, bar_y + bar_height)],
-                radius=corner_radius,
-                fill=color_a,
-            )
-        except TypeError:
-            draw.rectangle(
-                [(bar_x, bar_y), (bar_x + filled_w, bar_y + bar_height)],
-                fill=color_a,
-            )
-
-    # B 쪽 텍스트 표시
-    b_text_x = bar_x + filled_w + 20
-    pct_font = ImageFont.load_default()
-    draw.text((b_text_x, bar_y + (bar_height - pct_fs) // 2), f"{pct_b}%", font=pct_font, fill="#5C4030")
-
-    return bar_y + bar_height
-
 
 def _draw_media_placeholder(
     draw: ImageDraw.ImageDraw,
