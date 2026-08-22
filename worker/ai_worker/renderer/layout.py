@@ -377,7 +377,15 @@ def _plan_sequence(
 # ---------------------------------------------------------------------------
 
 def _attach_sibom_plan_fields(entry: dict, scene) -> None:
-    """Copy again_spring sibom metadata onto a plan entry (if present)."""
+    """Copy again_spring sibom metadata onto a plan entry (if present).
+
+    sfx_events(효과음 마커)는 시봄이 유무와 무관하므로 조기 return 앞에서 복사한다
+    — outro·comments 씬은 sibom_role이 없어 예전엔 마커가 통째로 유실됐다.
+    """
+    events = getattr(scene, "sfx_events", None)
+    if events:
+        entry["sfx_events"] = list(events)
+
     role = getattr(scene, "sibom_role", None)
     if not role:
         return
@@ -1446,9 +1454,6 @@ def _render_pipeline(
                 timings.append(acc)
                 acc += dur
 
-            _sfx_attached = _attach_sfx_events(plan, sentences, scenes_list)
-            if _sfx_attached:
-                logger.info("[sfx] 마커 부착: %d개", _sfx_attached)
             extra_inputs, sfx_filter = _build_layout_sfx_filter(
                 plan, timings, audio_dir, layout,
                 tts_input_idx=1, sfx_offset=sfx_offset,
