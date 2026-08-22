@@ -1396,6 +1396,7 @@ def _render_outro_frame(
     font_dir: Path,
     out_path: Path,
     render_profile: str | None = None,
+    cfg: dict | None = None,
 ) -> Path:
     """씬 outro — 참여유도 질문 + 댓글입력 목업 (구독유도 없음).
 
@@ -1499,20 +1500,38 @@ def _render_outro_frame(
         return out_path
 
     elif render_profile == "marketing_v2":
-        # ── V2 테마: 공감 투표 바 아웃트로 ───────────────────────────────────
+        # ── V2 테마: 공감 투표 바 아웃트로 (헤더 제거 + 세이프존) ─────────────
+        # 이 분기에서는 header_only_frame을 무시하고 새 캔버스를 생성한다.
+        # 목표: 앱 크롬(헤더·탭바) 제거, 크림 배경만 유지
+        
+        # V2용 새 캔버스 생성 — 헤더 없음
+        img = Image.new("RGB", (cw, ch), "#EDF1E8")  # 크림 배경
+        draw = ImageDraw.Draw(img)
+        
         palette = g.get("palette", {})
         v2_cfg = layout.get("settings", {}).get("tone_v2", {}).get("outro", {})
         vote_cfg = v2_cfg.get("vote_bar", {})
+        
+        # 세이프존 설정 (모바일 플랫폼 UI가 덮는 영역)
+        safe_top = int(ch * 0.12)      # 상단 12% (플랫폼 상태바·헤더)
+        safe_bottom = int(ch * 0.78)   # 하단 22% (플랫폼 탭바) = 상단부터 78%
+        
+        # y 시작점을 세이프존 상단부터 시작
+        y = safe_top + vote_cfg.get("gap_top", 60)
 
         # 투표 비율 데이터 (brief 또는 기본값)
         # 실제 공감 비율이 없으면 투표 바를 그리지 않는다.
         # 가짜 50:50을 표시하면 실제 커뮤니티 투표 결과를 왜곡하게 된다
         # (과거 상세페이지에서 authorPct 유령 필드로 항상 50:50이 나온 전례 있음).
+        cfg = None  # cfg not passed; empathy_ratio will be None
         empathy_ratio = (cfg or {}).get("empathy_ratio") if isinstance(cfg, dict) else None
         if not isinstance(empathy_ratio, dict) or "a" not in empathy_ratio:
             empathy_ratio = None
+            logger.info("[outro] 공감비율 없음 — 투표 바 생략")
+        else:
+            logger.info("[outro] 공감비율 a=%s b=%s",
+                        empathy_ratio.get("a"), empathy_ratio.get("b"))
 
-        y = hdr_h + vote_cfg.get("gap_top", 60)
         if empathy_ratio is not None:
             _render_vote_bar(draw, y, cw, empathy_ratio, palette, vote_cfg)
         y += vote_cfg.get("height", 80) + 40
@@ -1534,51 +1553,6 @@ def _render_outro_frame(
         _draw_ribbon(draw, cw, ch, layout)
         img.save(str(out_path), "PNG")
         return out_path
-
-    mascot_cfg = sc.get("mascot", {})
-    q_cfg = sc.get("question", {})
-    sub_cfg = sc.get("sub_caption", {})
-    box_cfg = sc.get("input_box", {})
-    cta_cfg = sc.get("cta_text", {})
-    hdr_bg: str = hdr.get("bg_color", "#FBD024")
-    hdr_ink: str = hdr.get("ink_color", "#1A1A1A")
-
-    mascot_enabled: bool = mascot_cfg.get("enabled", True)
-    mascot_d: int = mascot_cfg.get("diameter", 220)
-    mascot_pad: int = mascot_cfg.get("pad_top", 180)
-
-    if mascot_enabled:
-        # ── 마스코트 (코드 드로잉) ────────────────────────────────────────
-        mascot_color: str = mascot_cfg.get("circle_color", "#1A1A1A")
-        feature_color: str = mascot_cfg.get("feature_color", "#FBD024")
-
-        mx0 = (cw - mascot_d) // 2
-        my0 = hdr_h + mascot_pad
-        mx1 = mx0 + mascot_d
-        my1 = my0 + mascot_d
-        draw.ellipse([(mx0, my0), (mx1, my1)], fill=mascot_color)
-
-        # 눈 — 두 옐로우 타원
-        eye_w = int(mascot_d * 0.12)
-        eye_h = int(mascot_d * 0.17)
-        eye_cy = my0 + int(mascot_d * 0.38)
-        eye_gap = int(mascot_d * 0.19)
-        mcx = (mx0 + mx1) // 2
-        for ex in [mcx - eye_gap - eye_w // 2, mcx + eye_gap - eye_w // 2]:
-            draw.ellipse([(ex, eye_cy - eye_h // 2),
-                          (ex + eye_w, eye_cy + eye_h // 2)],
-                         fill=feature_color)
-
-        # 입 — 호
-        mouth_w = int(mascot_d * 0.24)
-        mouth_h = int(mascot_d * 0.10)
-        mouth_y = my0 + int(mascot_d * 0.60)
-        mx0m = mcx - mouth_w // 2
-        draw.arc(
-            [(mx0m, mouth_y), (mx0m + mouth_w, mouth_y + mouth_h)],
-            start=0, end=180, fill=feature_color, width=5,
-        )
-        y = my1  # 마스코트 아래부터
     else:
         # Tone L: 마스코트 없이 넉넉한 여백만 (편지지 호흡)
         y = hdr_h + int(sc.get("content_pad_top_no_mascot", mascot_pad + mascot_d))

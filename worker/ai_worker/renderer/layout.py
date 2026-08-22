@@ -44,6 +44,16 @@ def _resolve_render_profile(post_id: int) -> str:
         logger.warning("[layout] resolve_render_profile 실패 (post_id=%d): %s", post_id, e)
         return "default"
 
+
+# variant_config 조회 (processor 위임)
+def _resolve_post_variant_config(post_id: int) -> dict:
+    """게시글 variant_config 조회 (외부 ingest 데이터 포함, empathy_ratio 포함)."""
+    try:
+        from ai_worker.core.processor import _resolve_post_variant_config as get_config
+        return get_config(post_id)
+    except Exception as e:
+        logger.warning("[layout] variant_config 조회 실패 (post_id=%d): %s", post_id, e)
+        return {}
 # ── 내부 모듈 re-import (기존 import 경로 호환) ──
 from ai_worker.renderer._frames import (
     CANVAS_W, CANVAS_H, HEADER_H, HEADER_COLOR,
@@ -1094,6 +1104,9 @@ def _render_pipeline(
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
+    # variant_config 조회 (외부 ingest 데이터)  
+    variant_config = _resolve_post_variant_config(post_id)
+
     # ── 진단 정보 수집 ────────────────────────────────────────
     generation_diagnostics: dict = {
         "story_duration_sec": 0.0,
@@ -1344,7 +1357,9 @@ def _render_pipeline(
                 # 아웃트로는 헤더only 프레임 사용 (제목블록 없음)
                 outro_text = sentences[sent_idx]["text"] if sent_idx is not None else ""
                 _render_outro_frame(
-                    header_only_frame, outro_text, layout, font_dir, frame_path, render_profile=render_profile,
+                    header_only_frame, outro_text, layout, font_dir, frame_path,
+                    render_profile=render_profile,
+                    cfg=_resolve_post_variant_config(post_id),
                 )
 
             elif scene_type == "comments":
