@@ -1459,7 +1459,7 @@ def _render_pipeline(
                 bgm_audio_filter = (
                     f"[1:a]anull[tts];"
                     f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[bgm_loop][tts]sidechaincompress=threshold=0.003:ratio=9:attack=50:release=400:makeup=no[bgm_ducked];"
+                    f"[bgm_loop][tts]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
                     f"[tts][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
                     f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                 )
@@ -1549,7 +1549,7 @@ def _render_pipeline(
                 bgm_audio_filter = (
                     f"[1:a]anull[tts];"
                     f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[bgm_loop][tts]sidechaincompress=threshold=0.003:ratio=9:attack=50:release=400:makeup=no[bgm_ducked];"
+                    f"[bgm_loop][tts]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
                     f"[tts][bgm_ducked]amix=inputs=2:duration=first:normalize=0[aout_premix_mixed];"
                     f"[aout_premix_mixed]loudnorm=I=-14:TP=-1:LRA=7[aout_premix]"
                 )
