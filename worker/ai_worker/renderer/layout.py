@@ -96,7 +96,14 @@ def _sfx_config_for_profile(layout: dict, render_profile: str | None) -> dict:
     """
     if render_profile != "marketing_v2":
         return {}
-    return (layout.get("sfx") or {}).get("active") or {}
+    # sfx 설정은 layout config가 아니라 renderer/settings.yaml에 있다.
+    # layout dict에는 canvas/constraints/global/layout_algorithm/scenes/themes만
+    # 들어 있어, 여기서 찾으면 항상 빈 dict가 되어 효과음이 0개가 된다.
+    settings = _load_renderer_settings()
+    cfg = (settings.get("sfx") or {}).get("active") or {}
+    if not cfg:
+        cfg = (layout.get("sfx") or {}).get("active") or {}
+    return cfg
 
 
 # ---------------------------------------------------------------------------
