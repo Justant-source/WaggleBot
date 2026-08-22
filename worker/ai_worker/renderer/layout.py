@@ -1480,27 +1480,63 @@ def _render_pipeline(
                 generation_diagnostics["bgm"] = "None"
 
             if effective_bgm is not None:
-                # BGM + TTS 혼싱 (동적 덕킹 + loudnorm)
-                # TTS와 BGM을 분리하여 처리하고, BGM에 sidechain 적용하여 음성이 있을 때 축소
-                bgm_audio_filter = (
-                    f"[1:a]asplit=2[tts_key][tts_mix];"
-                    f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[bgm_loop][tts_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
-                    f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
-                    f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
-                )
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", str(video_only),
-                    "-i", str(merged_tts),
-                    "-stream_loop", "-1", "-i", str(effective_bgm),
-                    "-filter_complex", bgm_audio_filter,
-                    "-map", "0:v", "-map", "[aout]",
-                    "-c:v", "copy",
-                    "-c:a", "aac", "-b:a", "192k",
-                    str(output_path),
-                ]
+                # BGM이 있는 경우: SFX 유무에 따라 필터 그래프 선택
+                if sfx_count > 0:
+                    # ─── BGM + SFX + TTS 병합 ───────────────────────────────
+                    # TTS + SFX → [voice]
+                    # [voice] → asplit → [v_key][v_mix]
+                    # BGM → volume → [bgm]
+                    # [bgm][v_key] → sidechaincompress → [bgm_ducked]
+                    # [v_mix][bgm_ducked] → amix → loudnorm → [aout]
+                    extra_inputs_bgm, voice_filter = _build_layout_sfx_filter(
+                        plan, timings, audio_dir, layout,
+                        tts_input_idx=1, sfx_offset=sfx_offset,
+                        sfx_config=_sfx_config_for_profile(layout, render_profile),
+                        sfx_start_idx=3,  # BGM이 입력 2를 차지하므로 SFX는 3부터 시작
+                        output_label="[voice]",  # TTS+SFX 결과를 [voice]로 명명
+                    )
+                    bgm_sfx_filter = (
+                        f"{voice_filter};"
+                        f"[voice]asplit=2[v_key][v_mix];"
+                        f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm];"
+                        f"[bgm][v_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[v_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                        f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", str(video_only),
+                        "-i", str(merged_tts),
+                        "-stream_loop", "-1", "-i", str(effective_bgm),
+                        *extra_inputs_bgm,
+                        "-filter_complex", bgm_sfx_filter,
+                        "-map", "0:v", "-map", "[aout]",
+                        "-c:v", "copy",
+                        "-c:a", "aac", "-b:a", "192k",
+                        str(output_path),
+                    ]
+                else:
+                    # ─── BGM만 있는 경우 (기존 그래프 유지) ───────────────
+                    bgm_audio_filter = (
+                        f"[1:a]asplit=2[tts_key][tts_mix];"
+                        f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
+                        f"[bgm_loop][tts_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                        f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", str(video_only),
+                        "-i", str(merged_tts),
+                        "-stream_loop", "-1", "-i", str(effective_bgm),
+                        "-filter_complex", bgm_audio_filter,
+                        "-map", "0:v", "-map", "[aout]",
+                        "-c:v", "copy",
+                        "-c:a", "aac", "-b:a", "192k",
+                        str(output_path),
+                    ]
             else:
+                # BGM이 없는 경우 (SFX는 있을 수도 없을 수도)
                 cmd = [
                     "ffmpeg", "-y",
                     "-i", str(video_only),
@@ -1566,48 +1602,47 @@ def _render_pipeline(
                 generation_diagnostics["bgm"] = "None"
 
             if effective_bgm is not None:
-                bgm_sfx_extra, bgm_sfx_filter = _build_layout_sfx_filter(
-                    plan, timings, audio_dir, layout,
-                    tts_input_idx=1, sfx_offset=sfx_offset,
-                    sfx_config=_sfx_config_for_profile(layout, render_profile),
-                )
-                # BGM + TTS 혼싱 (동적 덕킹 + loudnorm)
-                bgm_audio_filter = (
-                    f"[1:a]asplit=2[tts_key][tts_mix];"
-                    f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[bgm_loop][tts_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
-                    f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[aout_premix_mixed];"
-                    f"[aout_premix_mixed]loudnorm=I=-14:TP=-1:LRA=7[aout_premix]"
-                )
-                if bgm_sfx_extra:
-                    bgm_extra_sfx, bgm_sfx_str = _build_layout_sfx_filter(
+                # BGM이 있는 경우: SFX 유무에 따라 필터 그래프 선택
+                if sfx_count > 0:
+                    # ─── BGM + SFX + TTS 병합 (concat 경로) ────────────────
+                    extra_inputs_bgm, voice_filter = _build_layout_sfx_filter(
                         plan, timings, audio_dir, layout,
                         tts_input_idx=1, sfx_offset=sfx_offset,
                         sfx_config=_sfx_config_for_profile(layout, render_profile),
+                        sfx_start_idx=3,  # BGM이 입력 2를 차지하므로 SFX는 3부터 시작
+                        output_label="[voice]",  # TTS+SFX 결과를 [voice]로 명명
                     )
-                    bgm_sfx_str_patched = bgm_sfx_str.replace(
-                        f"[1:a]acopy[aout]", "[aout_premix]acopy[aout]"
-                    ).replace(
-                        f"[1:a]", "[aout_premix]"
+                    bgm_sfx_filter = (
+                        f"{video_filter};"
+                        f"{voice_filter};"
+                        f"[voice]asplit=2[v_key][v_mix];"
+                        f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm];"
+                        f"[bgm][v_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[v_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                        f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                     )
-                    filter_complex = f"{video_filter};{bgm_audio_filter};{bgm_sfx_str_patched}"
                     cmd = [
                         "ffmpeg", "-y",
                         "-f", "concat", "-safe", "0", "-i", str(concat_file),
                         "-i", str(merged_tts),
                         "-stream_loop", "-1", "-i", str(effective_bgm),
-                        *bgm_extra_sfx,
-                        "-filter_complex", filter_complex,
+                        *extra_inputs_bgm,
+                        "-filter_complex", bgm_sfx_filter,
                         "-map", "[vout]", "-map", "[aout]",
                         *enc_args,
                         "-c:a", "aac", "-b:a", "192k", *_STATIC_CONCAT_CFR_ARGS,
                         str(output_path),
                     ]
                 else:
-                    bgm_audio_filter_final = bgm_audio_filter.replace(
-                        "[aout_premix]", "[aout]"
+                    # ─── BGM만 있는 경우 (기존 그래프 유지) ───────────────
+                    bgm_audio_filter = (
+                        f"[1:a]asplit=2[tts_key][tts_mix];"
+                        f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
+                        f"[bgm_loop][tts_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                        f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                     )
-                    filter_complex = f"{video_filter};{bgm_audio_filter_final}"
+                    filter_complex = f"{video_filter};{bgm_audio_filter}"
                     cmd = [
                         "ffmpeg", "-y",
                         "-f", "concat", "-safe", "0", "-i", str(concat_file),
@@ -1620,6 +1655,7 @@ def _render_pipeline(
                         str(output_path),
                     ]
             else:
+                # BGM이 없는 경우 (SFX는 있을 수도 없을 수도)
                 filter_complex = f"{video_filter};{sfx_filter}"
                 cmd = [
                     "ffmpeg", "-y",

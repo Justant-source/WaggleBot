@@ -75,6 +75,8 @@ def _build_layout_sfx_filter(
     tts_input_idx: int = 1,
     sfx_offset: float = -0.15,
     sfx_config: dict | None = None,
+    sfx_start_idx: int | None = None,
+    output_label: str = "[aout]",
 ) -> tuple[list[str], str]:
     """
     director가 설정한 sfx_events 마커를 처리하여 효과음을 삽입한다.
@@ -82,11 +84,17 @@ def _build_layout_sfx_filter(
     sfx_config: settings.yaml의 sfx.active 섹션 (이벤트 → {file, volume, offset})
     plan: 각 entry는 get("sfx_events", [])로 마커 리스트 포함 가능
     timings: 누적 초 리스트
+    sfx_start_idx: SFX 입력 인덱스 시작값. None이면 tts_input_idx + 1 (기본값).
+                   BGM이 입력 2를 차지할 때는 3으로 명시하여 충돌 방지.
+    output_label: 최종 필터 출력 라벨 (기본 "[aout]"). BGM+SFX 병합 시 "[voice]"로 사용.
 
     반환값: (extra_inputs 리스트, 최종 필터 문자열)
     """
     if sfx_config is None:
         sfx_config = {}
+
+    if sfx_start_idx is None:
+        sfx_start_idx = tts_input_idx + 1
 
     tts_ref = f"[{tts_input_idx}:a]"
 
@@ -124,7 +132,7 @@ def _build_layout_sfx_filter(
     extra_inputs: list[str] = []
     filter_parts: list[str] = []
     sfx_labels: list[str] = []
-    current_idx = tts_input_idx + 1
+    current_idx = sfx_start_idx
 
     for sfx_idx, (event_key, t_start) in enumerate(sfx_events_to_insert):
         event_cfg = sfx_config.get(event_key, {})
@@ -153,10 +161,10 @@ def _build_layout_sfx_filter(
     if sfx_labels:
         all_refs = tts_ref + "".join(sfx_labels)
         n = 1 + len(sfx_labels)
-        filter_str = ";".join(filter_parts) + f";{all_refs}amix=inputs={n}:normalize=0[aout]"
+        filter_str = ";".join(filter_parts) + f";{all_refs}amix=inputs={n}:normalize=0{output_label}"
         logger.info("[sfx] %d개 삽입됨 (최대 6개 규칙 준수)", len(sfx_labels))
     else:
-        filter_str = f"{tts_ref}acopy[aout]"
+        filter_str = f"{tts_ref}acopy{output_label}"
 
     return extra_inputs, filter_str
 
