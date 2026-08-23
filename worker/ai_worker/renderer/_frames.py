@@ -1063,6 +1063,69 @@ def _create_header_only_frame(
 # 씬 렌더러 (모두 base_frame.copy()에서 시작)
 # ---------------------------------------------------------------------------
 
+def _render_intro_frame_v2(
+    img_pil: Optional[Image.Image],
+    title_text: str,
+    layout: dict,
+    font_dir: Path,
+    out_path: Path,
+    stage: int | None = None,
+) -> Path:
+    """v2 인트로 — 크림 배경 + 제목 + 시봄이 카드 (앱 크롬 없음).
+
+    시봄이는 정사각 일러스트라 cover(잘라 채우기) 대신 contain 으로 넣는다.
+    예전에는 세로로 긴 영역에 cover 를 써서 캐릭터 팔이 좌우로 잘려나갔다.
+    """
+    from ai_worker.renderer.layout import _load_font
+
+    cw = layout["canvas"]["width"]
+    ch = layout["canvas"]["height"]
+    palette = layout["global"].get("palette", {})
+    pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
+    sc_it = layout["scenes"]["image_text"]
+    card_cfg = sc_it.get("card", {})
+    card_pad = card_cfg.get("pad", 44)
+    card_radius = card_cfg.get("radius", 28)
+
+    img = Image.new("RGB", (cw, ch), "#EDF1E8")
+    draw = ImageDraw.Draw(img)
+
+    # 제목 — 세이프존(상단 12%) 아래에서 시작
+    safe_top = int(ch * 0.12)
+    t_cfg = layout["global"].get("title_block", {})
+    t_fs = t_cfg.get("font_size", 50) + 6      # 표지라 본문보다 조금 크게
+    t_lh = t_cfg.get("line_height", 62) + 8
+    t_font = _load_font(font_dir, _body_font_file(layout), t_fs)
+    t_lines = _wrap_korean(title_text or "", t_font, cw - 2 * pad_x, keep_all=True)[:3]
+    y = safe_top
+    for line in t_lines:
+        draw.text((pad_x, y), line, font=t_font, fill=palette.get("ink", "#5C4030"))
+        y += t_lh
+
+    # 시봄이 카드 — 정사각, contain(잘림 없음)
+    card_x = pad_x
+    card_w = cw - 2 * pad_x
+    card_y = y + 48
+    inner = card_w - 2 * card_pad
+    safe_bottom = int(ch * 0.22)
+    inner = min(inner, max(120, ch - safe_bottom - card_y - 2 * card_pad))
+    card_h = card_pad * 2 + inner
+    draw.rounded_rectangle(
+        [(card_x, card_y), (card_x + card_w, card_y + card_h)],
+        radius=card_radius, fill="#FFFFFF",
+    )
+    if img_pil is not None:
+        fitted = _fit_contain(img_pil, inner, inner)
+        ox = card_x + card_pad + (inner - fitted.width) // 2
+        oy = card_y + card_pad + (inner - fitted.height) // 2
+        img.paste(fitted, (ox, oy), fitted if fitted.mode == "RGBA" else None)
+
+    _draw_step_dots(draw, cw, stage or 1, layout)
+    _draw_ribbon(draw, cw, ch, layout)
+    img.save(str(out_path), "PNG")
+    return out_path
+
+
 def _render_intro_frame(
     base_frame: Image.Image,
     img_pil: Optional[Image.Image],
@@ -1072,6 +1135,8 @@ def _render_intro_frame(
     out_path: Path,
     content_top: int,
     stage: int | None = None,
+    render_profile: str | None = None,
+    title_text: str = "",
 ) -> Path:
     """씬 intro — hook 자막(중앙, 굵은 검정) + 자연비율 표지 이미지.
 
@@ -1084,6 +1149,13 @@ def _render_intro_frame(
     sc = layout["scenes"]["intro"]
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
+
+    # v2 인트로 — 앱 크롬 없이 크림 캔버스에 제목 + 시봄이 카드.
+    # 본문(image_text) 씬과 같은 구성이라 첫 장면부터 톤이 이어진다.
+    if render_profile == "marketing_v2":
+        return _render_intro_frame_v2(
+            img_pil, title_text or hook_text, layout, font_dir, out_path, stage=stage,
+        )
 
     img = base_frame.copy()
     draw = ImageDraw.Draw(img)
@@ -1862,7 +1934,10 @@ def _render_comments_frame(
         text_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", text_fs)
         text_lh = _sc(text_cfg.get("line_height", 52))
         # 확대 시 줄 수도 늘려 카드가 세로로 더 자라게 한다
-        text_max_lines = text_cfg.get("max_lines", 2) + (2 if _V2_COMMENT_SCALE > 1.0 else 0)
+        # v2 는 카드를 세로 중앙에 놓아 위아래 여유가 크다. 상한이 낮으면
+        # 조금만 긴 댓글도 문장 중간에서 잘린다 — 세이프존이 감당하는 만큼 올린다.
+        text_max_lines = text_cfg.get("max_lines", 2) + (7 if _V2_COMMENT_SCALE > 1.0 else 0)
+        _ELLIPSIS = "\u2026"
         footer_font = _load_font(font_dir, "NotoSansKR-Regular.ttf",
                                  _sc(footer_cfg.get("font_size", 26)))
         av_d = _sc(avatar_cfg.get("size", 72))
@@ -1874,13 +1949,21 @@ def _render_comments_frame(
         # (카드를 키워도 2장뿐이면 하단이 비므로, 간격으로 균형을 맞춘다)
         _base_gap = cards_cfg.get("gap_between", 24)
         _v2_gap = _base_gap
+        _safe_bottom = int(ch * 0.78)
+        _est_lines = min(text_max_lines, 4)  # 실제로는 대개 3~4줄이다
+        _est_card_h = card_pad_y * 2 + max(av_d, nick_fs + 10) + 20 + text_lh * _est_lines + int(footer_cfg.get("font_size", 26) * 1.4)
         if render_profile == "marketing_v2" and len(visible) > 1:
-            _safe_bottom = int(ch * 0.78)
-            _est_card_h = card_pad_y * 2 + max(av_d, nick_fs + 10) + 20 + text_lh * 2 + int(footer_cfg.get("font_size", 26) * 1.4)
             _avail = _safe_bottom - y - _est_card_h * len(visible)
             if _avail > 0:
                 _v2_gap = min(int(_avail / max(1, len(visible) - 1)), _base_gap * 6)
                 _v2_gap = max(_v2_gap, _base_gap)
+        elif render_profile == "marketing_v2" and len(visible) == 1:
+            # 카드가 1장일 때는 나눌 간격이 없어 위쪽에 붙고 아래 절반이 빈다.
+            # 남는 세로 공간의 절반만큼 내려 시각 무게를 가운데로 옮긴다.
+            # (헤더에서 너무 떨어지지 않게 상한을 둔다)
+            _avail = _safe_bottom - y - _est_card_h
+            if _avail > 0:
+                y += min(_avail // 2, int(ch * 0.14))
 
         for item in visible:
             author = _sanitize_comment_display_text(item.get("author") or "익명") or "익명"
@@ -1889,7 +1972,16 @@ def _render_comments_frame(
             likes = item.get("likes", 0) or 0
             is_best = bool(item.get("is_best"))
 
-            text_lines = _wrap_korean(content, text_font, card_w - 2 * card_pad_x - av_d - avatar_cfg.get("gap_right", 16), keep_all=True)[:text_max_lines]
+            _all_lines = _wrap_korean(
+                content, text_font,
+                card_w - 2 * card_pad_x - av_d - avatar_cfg.get("gap_right", 16),
+                keep_all=True,
+            )
+            text_lines = _all_lines[:text_max_lines]
+            if len(_all_lines) > text_max_lines and text_lines:
+                # 잘렸다는 사실을 보이게 한다. 아무 표시 없이 끊기면
+                # 렌더가 깨진 것처럼 보이고, 낭독은 끝까지 나가 귀와 어긋난다.
+                text_lines[-1] = text_lines[-1].rstrip() + _ELLIPSIS
             card_h = card_pad_y + max(av_d, nick_fs + 10) + 10 + len(text_lines) * text_lh + 10 + int(footer_cfg.get("font_size", 26) * 1.4) + card_pad_y
 
             border_color = cards_cfg.get("best_border", "#C9785A") if is_best else cards_cfg.get("border", "#E5DED2")

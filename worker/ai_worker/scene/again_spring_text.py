@@ -72,6 +72,35 @@ def _split_by_endings(text: str) -> list[str]:
 # 다만 낭독 속도(약 10.2자/초) 기준 40자 ≈ 4초라, 호흡을 위해 그보다 낮게 잡는다.
 _MAX_LINE_CHARS = 40
 
+# 이보다 짧은 줄은 독립된 화면으로 두지 않는다.
+# 기준을 15자로 잡았더니 "아버지 요즘 항암 투병 중이세요"(17자)처럼
+# 한 줄짜리 화면이 4초씩 유지되며 화면의 95%가 비었다.
+# 가용폭 900px·본문 52px 기준 표시 한 줄이 약 22자다. 22자를 넘겨야
+# 두 줄로 감싸져 글 덩어리로 보이므로 24자를 하한으로 둔다.
+_MIN_LINE_CHARS = 24
+# 되붙일 때의 상한 — 가용폭 900px · 본문 52px · 표시 3줄이 감당하는 한계
+_MERGE_CEILING = 66
+
+
+def _absorb_short_lines(lines: list[str]) -> list[str]:
+    """짧은 조각을 이웃 줄에 흡수시킨다.
+
+    앞 줄에 붙이는 것을 우선하고(문장 흐름이 이어진다), 앞 줄이 이미 꽉 차
+    있으면 뒤 줄 앞에 붙인다. 둘 다 안 되면 그대로 둔다 — 화면 하나를
+    희생하더라도 글자가 잘리는 것보다는 낫다.
+    """
+    out: list[str] = []
+    for line in lines:
+        if out and len(line) < _MIN_LINE_CHARS and len(out[-1]) + 1 + len(line) <= _MERGE_CEILING:
+            out[-1] = f"{out[-1]} {line}"
+        else:
+            out.append(line)
+    # 앞에서 흡수하지 못한 짧은 줄(주로 첫 줄)은 뒤 줄로 넘긴다
+    if len(out) >= 2 and len(out[0]) < _MIN_LINE_CHARS and len(out[0]) + 1 + len(out[1]) <= _MERGE_CEILING:
+        out[1] = f"{out[0]} {out[1]}"
+        out.pop(0)
+    return out
+
 
 # 상한 때문에 어쩔 수 없이 끊어야 할 때, 아무 띄어쓰기가 아니라
 # 어미로 끝나는 어절 뒤를 고른다. 안 그러면 "밥을 따로 먹어 나 / 혼자 식탁에" 처럼
@@ -126,7 +155,7 @@ def split_story_lines(text: str) -> list[str]:
                 continue
             for clause in _split_clauses(chunk):
                 lines.extend(_enforce_max_chars(clause))
-    return [line for line in lines if line]
+    return _absorb_short_lines([line for line in lines if line])
 
 
 def _split_clauses(sentence: str) -> list[str]:

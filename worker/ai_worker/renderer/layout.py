@@ -1332,12 +1332,14 @@ def _render_pipeline(
                 _render_intro_frame(
                     base_frame, img_pil, hook_text,
                     layout, font_dir, frame_path, content_top, stage=1,
+                    render_profile=render_profile, title_text=title,
                 )
-                if theme == "tone_l" and img_pil is not None:
+                if (theme == "tone_l" or render_profile == "marketing_v2") and img_pil is not None:
                     def _rf_intro(_img, _out, _txt=hook_text):
                         _render_intro_frame(
                             base_frame, _img, _txt,
                             layout, font_dir, _out, content_top, stage=1,
+                            render_profile=render_profile, title_text=title,
                         )
                     # intro 첫 프레임은 썸네일 후보라 더 밝게 시작한다
                     _wire_sibom_motion(entry, _rf_intro, img_pil, tmp_dir, frame_idx,
