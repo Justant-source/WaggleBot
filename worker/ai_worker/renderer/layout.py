@@ -866,6 +866,14 @@ def _scenes_to_plan_and_sentences(
     """
     sentences: list[dict] = []
     plan: list[dict] = []
+    # 효과음 마커 상태 — 본문이 시작됐는지, 방금 시봄이 카드였는지,
+    # 본문 줄이 몇 번째인지(3줄마다 화면이 비워진다)
+    _sfx_body_seen = False
+    _sfx_after_card = False
+    _sfx_line_no = 0
+    _sfx_max_slots = int(
+        layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
+    )
     images: list[str] = []
 
     for scene_i, scene in enumerate(scenes):
@@ -908,10 +916,17 @@ def _scenes_to_plan_and_sentences(
             sentences.append(sent_dict)
             plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
             _attach_sibom_plan_fields(plan[-1], scene)
-            # 시봄이가 뜨는 비트는 이야기의 마디다 — 본문 전환음보다 존재감 있는
-            # 소리를 준다. turn 은 예전부터 파일만 있고 쓰이지 않았다.
             if not plan[-1].get("sfx_events"):
-                plan[-1]["sfx_events"] = ["turn"]
+                # 카드가 착지하고(card_in) → 캐릭터가 떠오르고(sibom_punch)
+                # → 캐릭터가 제 감정대로 움직인다(motion_*). 셋을 오프셋으로
+                # 벌려 하나의 연출처럼 들리게 한다.
+                _img_id = getattr(scene, "sibom_image_id", None) or plan[-1].get("sibom_image_id")
+                _motion = _get_sibom_motion_for_image_id(_img_id) if _img_id else "sway"
+                plan[-1]["sfx_events"] = [
+                    "card_in", "sibom_punch", f"motion_{_motion}",
+                ]
+            _sfx_after_card = True
+            _sfx_body_seen = True
 
         elif scene.type == "video_text":
             # Pre-split editor lines are individual narration/display entries:
@@ -952,10 +967,23 @@ def _scenes_to_plan_and_sentences(
                     sent_dict["lines"] = [text]
                 sentences.append(sent_dict)
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
-                # 본문이 넘어갈 때마다 은은한 전환음. 첫 화면은 hook_in 이 이미
-                # 울리므로 건너뛴다(두 소리가 겹치면 지저분해진다).
-                if len(plan) > 1:
-                    plan[-1].setdefault("sfx_events", ["page"])
+                _ev: list[str] = []
+                # 인트로 직후 첫 본문 — 표지에서 이야기로 넘어가는 지점
+                if not _sfx_body_seen:
+                    _ev.append("intro_out")
+                # 시봄이 카드 다음 첫 본문 — 카드가 걷히는 지점
+                elif _sfx_after_card:
+                    _ev.append("card_out")
+                # 3줄이 차면 화면이 비워지고 새 장이 시작된다
+                # (_append_text_only_line 이 max_slots 에서 history 를 리셋한다)
+                if _sfx_body_seen and _sfx_line_no % _sfx_max_slots == 0:
+                    _ev.append("page")
+                # 줄이 하나 새로 나타나는 것 자체 — 가장 잦다
+                _ev.append("text_line")
+                plan[-1].setdefault("sfx_events", _ev)
+                _sfx_body_seen = True
+                _sfx_after_card = False
+                _sfx_line_no += 1
 
         elif scene.type == "image_only":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
@@ -977,6 +1005,11 @@ def _scenes_to_plan_and_sentences(
             plan.append({"type": "outro", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
             # outro 씬의 sfx_events(vote_fill·logo)를 plan에 실어야 효과음이 발화한다
             _attach_sibom_plan_fields(plan[-1], scene)
+            # 마무리 화면으로 넘어가는 소리를 투표 소리 앞에 둔다
+            _evo = list(plan[-1].get("sfx_events") or [])
+            if "outro_in" not in _evo:
+                _evo.insert(0, "outro_in")
+            plan[-1]["sfx_events"] = _evo
 
         elif scene.type == "comments":
             # 항목당 1개 TTS 엔트리 — text_only 패턴과 동일하게 점진적 낭독
@@ -1005,9 +1038,14 @@ def _scenes_to_plan_and_sentences(
                     "scene_idx": scene_i,
                     "item_idx": k,  # 0..k 누적 공개 인덱스 (전체 리스트 기준)
                 })
-                # 말풍선 효과음은 댓글마다 1회(설계 의도). 첫 항목만 전환음을 함께 받는다.
+                # 말풍선 효과음은 댓글마다 1회(설계 의도). 첫 항목만 전환음과
+                # BEST 배지 소리를 함께 받는다 — 배지는 추천 1위 카드에 붙는다.
                 if k == 0:
                     _attach_sibom_plan_fields(plan[-1], scene)
+                    _ev0 = list(plan[-1].get("sfx_events") or [])
+                    if "best_badge" not in _ev0:
+                        _ev0.append("best_badge")
+                    plan[-1]["sfx_events"] = _ev0
                 else:
                     plan[-1]["sfx_events"] = ["bubble"]
 

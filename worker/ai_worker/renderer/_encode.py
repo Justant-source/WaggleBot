@@ -97,9 +97,13 @@ def _build_layout_sfx_filter(
     # (예전엔 6이 코드에 박혀 있어 설정을 올려도 반영되지 않았다)
     try:
         from ai_worker.renderer.layout import _load_renderer_settings
-        max_sfx = int((_load_renderer_settings().get("sfx") or {}).get("max_per_video", 6))
+        _sfx_cfg = (_load_renderer_settings().get("sfx") or {})
+        max_sfx = int(_sfx_cfg.get("max_per_video", 6))
+        min_gap = float(_sfx_cfg.get("min_gap_sec", 2.5))
+        short_gap = float(_sfx_cfg.get("short_gap_sec", 1.0))
+        short_events = set(_sfx_cfg.get("short_gap_events") or ())
     except Exception:
-        max_sfx = 6
+        max_sfx, min_gap, short_gap, short_events = 6, 2.5, 1.0, set()
 
     if sfx_start_idx is None:
         sfx_start_idx = tts_input_idx + 1
@@ -109,7 +113,6 @@ def _build_layout_sfx_filter(
     # sfx_events 마커 수집 (최대 6개, 간격 규칙 적용)
     sfx_events_to_insert: list[tuple[str, float]] = []  # (event_key, timing_sec)
     last_sfx_time = -float('inf')
-    min_gap = 2.5  # 기본 최소 간격
 
     for entry_idx, (entry, t_start) in enumerate(zip(plan, timings)):
         events = entry.get("sfx_events", [])
@@ -132,9 +135,10 @@ def _build_layout_sfx_filter(
             # 말풍선은 짧고 가벼운 소리라 촘촘해도 지저분하지 않다.
             # (앞이 전환음일 때도 1.0초를 적용한다 — 예전엔 2.5초라
             #  첫 댓글의 말풍선이 전환음에 밀려 항상 사라졌다)
-            # 말풍선·화면 전환음은 짧고 가벼워 촘촘해도 지저분하지 않다.
-            # 본문 화면은 2~6초 간격이라 2.5초 규칙이면 절반이 버려진다.
-            current_gap_rule = 1.0 if event_key in ("bubble", "page") else min_gap
+            # 짧고 가벼운 소리는 촘촘해도 지저분하지 않다. 어느 소리가 그런지는
+            # settings.yaml 의 sfx.short_gap_events 가 정한다 — 코드에 박아두면
+            # 어드민에서 이벤트를 바꿔도 규칙이 따라오지 않는다.
+            current_gap_rule = short_gap if event_key in short_events else min_gap
 
             if eff_t - last_sfx_time >= current_gap_rule or not sfx_events_to_insert:
                 sfx_events_to_insert.append((event_key, t_start))

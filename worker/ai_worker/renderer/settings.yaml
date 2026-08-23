@@ -20,37 +20,87 @@ audio:
 sfx:
   active:
     hook_in:
-      file: hook_in.wav
-      volume: 0.9
-      offset: 0.0       # 훅 텍스트 등장 순간
-    turn:
-      file: turn.wav
-      volume: 0.8
-      offset: 0.0       # 반전/결정적 한마디 씬 진입
-    section_whoosh:
-      file: section_whoosh.wav
-      volume: 0.7
-      offset: -0.5      # story→comment 전환 — 장면보다 살짝 먼저 끌어준다
-    bubble:
-      file: bubble.wav
-      volume: 0.8
-      offset: 0.5       # 댓글 말풍선 등장 (각 1회) — 카드가 뜨는 순간
-    vote_fill:
-      file: vote_fill.wav
-      volume: 0.7
-      offset: 0.0       # 아웃트로 투표 바 채워지는 동안
+      file: _library/bell/bell_600.wav
+      volume: 0.85
+      offset: 0.0       # 인트로 시작
+    intro_out:
+      file: _library/paper/paper_1530.wav
+      volume: 0.5
+      offset: -0.1      # 인트로 → 본문
+    card_in:
+      file: _library/game/game_2072.wav
+      volume: 0.55
+      offset: -0.1      # 본문 → 시봄이 카드 (카드 착지)
+    sibom_punch:
+      file: _library/game/game_2045.wav
+      volume: 0.4
+      offset: 0.25      # 시봄이 등장 — punch 페이드인 중
+    motion_sway:
+      file: _library/game/game_2058.wav
+      volume: 0.28
+      offset: 0.95      # 모션 sway (평온) — punch 끝난 뒤
+    motion_sink:
+      file: _library/game/game_2363.wav
+      volume: 0.35
+      offset: 0.95      # 모션 sink (지침)
+    motion_shake:
+      file: _library/game/game_2324.wav
+      volume: 0.45
+      offset: 0.95      # 모션 shake (분노·충격)
+    motion_pop:
+      file: _library/game/game_2313.wav
+      volume: 0.38
+      offset: 0.95      # 모션 pop (안도·화해)
+    motion_sob:
+      file: _library/game/game_2043.wav
+      volume: 0.35
+      offset: 0.95      # 모션 sob (울음)
+    card_out:
+      file: _library/click/click_1117.wav
+      volume: 0.4
+      offset: -0.08     # 시봄이 카드 → 본문
     page:
-      file: page.wav
-      volume: 0.30      # 화면마다 울리므로 낮게 — 있는 듯 없는 듯해야 한다
-      offset: -0.08     # 화면이 바뀌는 순간보다 아주 살짝 먼저
-    logo:
-      file: logo.wav
-      volume: 0.6
-      offset: 2.6       # 투표바가 다 찬 뒤 마무리 로고
-  max_per_video: 18     # 본문 화면 전환마다 page 가 붙으므로 넉넉히
-  min_gap_sec: 2.5      # 연속 SFX 간격 하한 (bubble 연속 제외)
-  bubble_consecutive_gap_sec: 1.0  # bubble 연속 특례
-
+      file: _library/click/click_1660.wav
+      volume: 0.3
+      offset: -0.12     # 본문 화면 넘김 (3줄마다 비워짐)
+    text_line:
+      file: _library/click/click_216.wav
+      volume: 0.16
+      offset: 0.0       # 본문 새 줄 등장 — 가장 잦아 가장 낮게
+    section_whoosh:
+      file: _library/interface/interface_2574.wav
+      volume: 0.65
+      offset: -0.5      # 본문 → 댓글
+    bubble:
+      file: _library/interface/interface_2574.wav
+      volume: 0.55
+      offset: 0.5       # 댓글 카드 등장
+    best_badge:
+      file: _library/interface/interface_2574.wav
+      volume: 0.35
+      offset: 0.9       # BEST 배지
+    outro_in:
+      file: _library/notification/notification_2870.wav
+      volume: 0.55
+      offset: -0.1      # 댓글 → 아웃트로
+    vote_fill:
+      file: _library/interface/interface_2575.wav
+      volume: 0.5
+      offset: 0.6       # 투표 바 (⚠️ 아직 그림 없음)
+  max_per_video: 40
+  min_gap_sec: 2.0      # 연속 SFX 간격 하한
+  short_gap_sec: 0.6    # 짧고 가벼운 소리에 적용하는 하한
+  short_gap_events:
+    - text_line
+    - page
+    - bubble
+    - best_badge
+    - sibom_punch
+    - motion_sway
+    - motion_sink
+    - motion_shake
+    - motion_pop
+    - motion_sob
 # ── 썸네일 ──
 thumbnail:
   width: 1280

@@ -310,6 +310,9 @@ services:
       - ../config:/app/config
       - ../assets/media:/app/media
       - ../assets/voices:/app/media/voices:ro
+      # 효과음 매핑 API 가 렌더러 설정(sfx 블록)을 읽고 쓴다.
+      # 디렉토리째 마운트하는 이유 — 단일 파일 마운트는 파일이 교체되면 끊긴다.
+      - ../worker/ai_worker/renderer:/app/renderer
     environment:
       SPRING_DATASOURCE_URL: "jdbc:mariadb://db:3306/wagglebot"
       SPRING_DATASOURCE_USERNAME: "wagglebot"
