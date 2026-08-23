@@ -1253,10 +1253,50 @@ def _render_pipeline(
         to_max_chars = sc_to.get("text_max_chars", 0)
         keep_word_units = theme == "tone_l"
 
-        for sent in sentences:
+        # v2(tone_l)는 위 기본값과 다른 폰트·폭으로 그린다. 계산과 렌더가 어긋나면
+        # "한 줄에 들어간다"고 판단한 줄이 화면 밖으로 잘려나간다 — 실제 렌더 기준을 쓴다.
+        _is_v2_text = render_profile == "marketing_v2" or theme == "tone_l"
+
+        def _wrap_metrics_for(scene_type: str):
+            """(font, max_width) — 해당 씬을 실제로 그릴 때의 값."""
+            if not _is_v2_text:
+                return to_font, to_max_w
+            from ai_worker.renderer._frames import _body_font_file
+
+            cw_ = layout["canvas"]["width"]
+            pad_x_ = layout["global"].get("title_block", {}).get("pad_x", 90)
+            body_font_file = _body_font_file(layout)
+            if scene_type == "image_text":
+                q_cfg = layout["scenes"]["image_text"].get("quote", {})
+                card_pad = layout["scenes"]["image_text"].get("card", {}).get("pad", 44)
+                fnt = _load_font(font_dir, body_font_file, q_cfg.get("font_size", 54))
+                return fnt, (cw_ - 2 * pad_x_) - 2 * card_pad
+            bul_cfg = sc_to.get("bullets", {})
+            fnt = _load_font(font_dir, body_font_file, bul_cfg.get("font_size", 52))
+            return fnt, cw_ - 2 * pad_x_
+
+        # 문장 → 실제 배치될 씬 종류
+        _sent_scene_type: dict[int, str] = {}
+        for _entry in plan:
+            _si = _entry.get("sent_idx")
+            if _si is not None:
+                _sent_scene_type[_si] = _entry.get("type", "text_only")
+
+        for _sent_i, sent in enumerate(sentences):
+            to_font, to_max_w = _wrap_metrics_for(
+                _sent_scene_type.get(_sent_i, "text_only")
+            )
             if sent.get("semantic_lines"):
-                if "lines" not in sent:
-                    sent["lines"] = [sent.get("text", "")]
+                # semantic 이어도 폭에 맞춘다. 의미 분리는 "어디서 끊을지"를 정하고
+                # 줄바꿈은 "화면에 어떻게 담을지"를 정한다 — 서로 대체 관계가 아니다.
+                # 예전엔 여기서 그냥 continue 해서, 긴 줄이 캔버스 밖으로 잘려나갔다.
+                raw_lines = sent.get("lines") or [sent.get("text", "")]
+                wrapped: list[str] = []
+                for line in raw_lines:
+                    wrapped.extend(
+                        _wrap_korean(line, to_font, to_max_w, keep_all=keep_word_units)
+                    )
+                sent["lines"] = wrapped or [sent.get("text", "")]
                 continue
             if "lines" in sent:
                 expanded: list[str] = []
