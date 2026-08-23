@@ -95,6 +95,14 @@ def _bgm_allowed_for_profile(render_profile: str | None) -> bool:
     director는 프로필과 무관하게 bgm_path를 채우므로, 소비 지점인 여기서 막지 않으면
     현재 발행되는 영상에 BGM이 그대로 들어간다(Phase 1 게이트 미통과 상태).
     """
+    # 전역 차단 스위치 — settings.yaml 의 bgm.enabled 가 false 면 어떤 렌더에도
+    # BGM 을 넣지 않는다. 고르는 기능(어드민 매핑·카탈로그·잡별 bgmTrack)은
+    # 그대로 두고 소비 지점만 막는다. 다시 켜려면 값을 true 로 바꾸면 된다.
+    try:
+        if not bool((_load_renderer_settings().get("bgm") or {}).get("enabled", True)):
+            return False
+    except Exception:
+        pass
     return render_profile == "marketing_v2"
 
 
