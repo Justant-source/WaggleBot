@@ -1567,8 +1567,8 @@ def _render_pipeline(
                     bgm_sfx_filter = (
                         f"{voice_filter};"
                         f"[voice]asplit=2[v_key][v_mix];"
-                        f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm];"
-                        f"[bgm][v_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[2:a]volume=0.40,aloop=loop=-1:size=2e+09[bgm];"
+                        f"[bgm][v_key]sidechaincompress=threshold=0.10:ratio=4:attack=50:release=400:makeup=1[bgm_ducked];"
                         f"[v_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
                         f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                     )
@@ -1588,8 +1588,8 @@ def _render_pipeline(
                     # ─── BGM만 있는 경우 (기존 그래프 유지) ───────────────
                     bgm_audio_filter = (
                         f"[1:a]asplit=2[tts_key][tts_mix];"
-                        f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                        f"[bgm_loop][tts_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[2:a]volume=0.40,aloop=loop=-1:size=2e+09[bgm_loop];"
+                        f"[bgm_loop][tts_key]sidechaincompress=threshold=0.10:ratio=4:attack=50:release=400:makeup=1[bgm_ducked];"
                         f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
                         f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                     )
@@ -1685,8 +1685,8 @@ def _render_pipeline(
                         f"{video_filter};"
                         f"{voice_filter};"
                         f"[voice]asplit=2[v_key][v_mix];"
-                        f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm];"
-                        f"[bgm][v_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[2:a]volume=0.40,aloop=loop=-1:size=2e+09[bgm];"
+                        f"[bgm][v_key]sidechaincompress=threshold=0.10:ratio=4:attack=50:release=400:makeup=1[bgm_ducked];"
                         f"[v_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
                         f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                     )
@@ -1706,8 +1706,8 @@ def _render_pipeline(
                     # ─── BGM만 있는 경우 (기존 그래프 유지) ───────────────
                     bgm_audio_filter = (
                         f"[1:a]asplit=2[tts_key][tts_mix];"
-                        f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                        f"[bgm_loop][tts_key]sidechaincompress=threshold=0.03:ratio=9:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[2:a]volume=0.40,aloop=loop=-1:size=2e+09[bgm_loop];"
+                        f"[bgm_loop][tts_key]sidechaincompress=threshold=0.10:ratio=4:attack=50:release=400:makeup=1[bgm_ducked];"
                         f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
                         f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                     )
