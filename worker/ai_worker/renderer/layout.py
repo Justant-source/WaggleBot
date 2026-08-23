@@ -871,9 +871,20 @@ def _scenes_to_plan_and_sentences(
     _sfx_body_seen = False
     _sfx_after_card = False
     _sfx_line_no = 0
-    _sfx_max_slots = int(
-        layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
-    )
+    # 이 함수에는 layout 이 없다(변환 단계라 렌더 설정을 받지 않는다).
+    # 설정에서 직접 읽되, 못 읽으면 렌더러 기본값 3을 쓴다.
+    try:
+        _sfx_max_slots = int(
+            _load_renderer_settings()
+            .get("scenes", {})
+            .get("text_only", {})
+            .get("elements", {})
+            .get("text_area", {})
+            .get("max_slots", 3)
+        )
+    except Exception:
+        _sfx_max_slots = 3
+    _sfx_max_slots = max(1, _sfx_max_slots)
     images: list[str] = []
 
     for scene_i, scene in enumerate(scenes):

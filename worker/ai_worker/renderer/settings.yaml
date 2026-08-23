@@ -88,19 +88,27 @@ sfx:
       volume: 0.5
       offset: 0.6       # 투표 바 (⚠️ 아직 그림 없음)
   max_per_video: 40
-  min_gap_sec: 2.0      # 연속 SFX 간격 하한
-  short_gap_sec: 0.6    # 짧고 가벼운 소리에 적용하는 하한
+  min_gap_sec: 2.0      # 같은 소리가 겹치지 않게 하는 마지막 안전장치
+  short_gap_sec: 0.34   # 오프셋으로 이미 시간차를 뒀으므로 규칙은 최소만 건다
+  # 지점별 오프셋이 실제 간격을 정한다. 여기에 없으면 min_gap_sec 이 걸려
+  # 일부러 겹쳐 배치한 소리(카드 착지→캐릭터 등장→모션)가 통째로 버려진다.
   short_gap_events:
-    - text_line
-    - page
-    - bubble
-    - best_badge
+    - intro_out
+    - card_in
     - sibom_punch
     - motion_sway
     - motion_sink
     - motion_shake
     - motion_pop
     - motion_sob
+    - card_out
+    - page
+    - text_line
+    - section_whoosh
+    - bubble
+    - best_badge
+    - outro_in
+    - vote_fill
 # ── 썸네일 ──
 thumbnail:
   width: 1280
