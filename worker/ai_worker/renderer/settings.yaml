@@ -39,11 +39,15 @@ sfx:
       file: vote_fill.wav
       volume: 0.7
       offset: 0.0       # 아웃트로 투표 바 채워지는 동안
+    page:
+      file: page.wav
+      volume: 0.30      # 화면마다 울리므로 낮게 — 있는 듯 없는 듯해야 한다
+      offset: -0.08     # 화면이 바뀌는 순간보다 아주 살짝 먼저
     logo:
       file: logo.wav
       volume: 0.6
       offset: 2.6       # 투표바가 다 찬 뒤 마무리 로고
-  max_per_video: 8      # 영상당 최대 SFX 개수 (훅1+전환1+말풍선3+투표1+로고1=7)
+  max_per_video: 18     # 본문 화면 전환마다 page 가 붙으므로 넉넉히
   min_gap_sec: 2.5      # 연속 SFX 간격 하한 (bubble 연속 제외)
   bubble_consecutive_gap_sec: 1.0  # bubble 연속 특례
 

@@ -908,6 +908,10 @@ def _scenes_to_plan_and_sentences(
             sentences.append(sent_dict)
             plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
             _attach_sibom_plan_fields(plan[-1], scene)
+            # 시봄이가 뜨는 비트는 이야기의 마디다 — 본문 전환음보다 존재감 있는
+            # 소리를 준다. turn 은 예전부터 파일만 있고 쓰이지 않았다.
+            if not plan[-1].get("sfx_events"):
+                plan[-1]["sfx_events"] = ["turn"]
 
         elif scene.type == "video_text":
             # Pre-split editor lines are individual narration/display entries:
@@ -948,6 +952,10 @@ def _scenes_to_plan_and_sentences(
                     sent_dict["lines"] = [text]
                 sentences.append(sent_dict)
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
+                # 본문이 넘어갈 때마다 은은한 전환음. 첫 화면은 hook_in 이 이미
+                # 울리므로 건너뛴다(두 소리가 겹치면 지저분해진다).
+                if len(plan) > 1:
+                    plan[-1].setdefault("sfx_events", ["page"])
 
         elif scene.type == "image_only":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)

@@ -132,7 +132,9 @@ def _build_layout_sfx_filter(
             # 말풍선은 짧고 가벼운 소리라 촘촘해도 지저분하지 않다.
             # (앞이 전환음일 때도 1.0초를 적용한다 — 예전엔 2.5초라
             #  첫 댓글의 말풍선이 전환음에 밀려 항상 사라졌다)
-            current_gap_rule = 1.0 if event_key == "bubble" else min_gap
+            # 말풍선·화면 전환음은 짧고 가벼워 촘촘해도 지저분하지 않다.
+            # 본문 화면은 2~6초 간격이라 2.5초 규칙이면 절반이 버려진다.
+            current_gap_rule = 1.0 if event_key in ("bubble", "page") else min_gap
 
             if eff_t - last_sfx_time >= current_gap_rule or not sfx_events_to_insert:
                 sfx_events_to_insert.append((event_key, t_start))
