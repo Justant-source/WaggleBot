@@ -93,6 +93,14 @@ def _build_layout_sfx_filter(
     if sfx_config is None:
         sfx_config = {}
 
+    # 상한은 settings.yaml 의 sfx.max_per_video 가 권위본이다.
+    # (예전엔 6이 코드에 박혀 있어 설정을 올려도 반영되지 않았다)
+    try:
+        from ai_worker.renderer.layout import _load_renderer_settings
+        max_sfx = int((_load_renderer_settings().get("sfx") or {}).get("max_per_video", 6))
+    except Exception:
+        max_sfx = 6
+
     if sfx_start_idx is None:
         sfx_start_idx = tts_input_idx + 1
 
@@ -109,19 +117,26 @@ def _build_layout_sfx_filter(
             continue
 
         for event_key in events:
-            if len(sfx_events_to_insert) >= 6:  # 최대 6개 제한
+            # 실제 재생 시각 = 씬 시작 + 이벤트별 offset.
+            # 같은 씬의 두 이벤트는 t_start 가 같아서, offset 을 빼고 비교하면
+            # 뒤엣것이 항상 간격 규칙에 걸려 조용히 사라진다.
+            eff_t = t_start + float(sfx_config.get(event_key, {}).get("offset", 0.0) or 0.0)
+            if len(sfx_events_to_insert) >= max_sfx:
                 logger.info(
-                    "[sfx] 영상당 최대 6회 초과, 해당 이벤트 dropped: %s @%.2fs",
-                    event_key, t_start
+                    "[sfx] 영상당 최대 %d회 초과, 해당 이벤트 dropped: %s @%.2fs",
+                    max_sfx, event_key, t_start
                 )
                 continue
 
             # 간격 규칙: bubble 연속 시 1.0초, 나머지는 2.5초
-            current_gap_rule = 1.0 if event_key == "bubble" and sfx_events_to_insert and sfx_events_to_insert[-1][0] == "bubble" else min_gap
+            # 말풍선은 짧고 가벼운 소리라 촘촘해도 지저분하지 않다.
+            # (앞이 전환음일 때도 1.0초를 적용한다 — 예전엔 2.5초라
+            #  첫 댓글의 말풍선이 전환음에 밀려 항상 사라졌다)
+            current_gap_rule = 1.0 if event_key == "bubble" else min_gap
 
-            if t_start - last_sfx_time >= current_gap_rule or not sfx_events_to_insert:
+            if eff_t - last_sfx_time >= current_gap_rule or not sfx_events_to_insert:
                 sfx_events_to_insert.append((event_key, t_start))
-                last_sfx_time = t_start
+                last_sfx_time = eff_t
             else:
                 logger.debug(
                     "[sfx] 간격 규칙 위반, 이벤트 dropped: %s @%.2fs (last: %.2fs, gap: %.2fs < %.2fs)",
@@ -158,11 +173,20 @@ def _build_layout_sfx_filter(
         sfx_labels.append(f"[{label}]")
         current_idx += 1
 
+    # sfx 진단 — 어떤 마커가 실제로 들어갔는지 이름과 시각을 남긴다.
+    # (개수만 찍으면 마커 유실을 눈치채지 못한다)
+    logger.info(
+        "[sfx] plan=%d timings=%d 마커보유=%d 삽입=%s",
+        len(plan), len(timings),
+        sum(1 for e in plan if e.get("sfx_events")),
+        [f"{k}@{t:.1f}s" for k, t in sfx_events_to_insert],
+    )
+
     if sfx_labels:
         all_refs = tts_ref + "".join(sfx_labels)
         n = 1 + len(sfx_labels)
         filter_str = ";".join(filter_parts) + f";{all_refs}amix=inputs={n}:normalize=0{output_label}"
-        logger.info("[sfx] %d개 삽입됨 (최대 6개 규칙 준수)", len(sfx_labels))
+        logger.info("[sfx] %d개 삽입됨 (상한 %d)", len(sfx_labels), max_sfx)
     else:
         filter_str = f"{tts_ref}acopy{output_label}"
 

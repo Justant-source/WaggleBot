@@ -26,6 +26,8 @@ public record ExternalJobRequest(
         Boolean videoGen,
         Boolean autoHdRender,
         String ttsVoice,
+        /** 관리자가 어드민 설정에서 고른 BGM 경로 (/api/media/bgm/<emotion>/<file>). 비면 자동 선택. */
+        String bgmTrack,
         /**
          * Deprecated for video path — ignored at ingest (metaphor PNG unplugged).
          * Kept for backward-compatible JSON deserialization.

@@ -967,6 +967,8 @@ def _scenes_to_plan_and_sentences(
                                   "voice_override": getattr(scene, "voice_override", None),
                                   "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "outro", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
+            # outro 씬의 sfx_events(vote_fill·logo)를 plan에 실어야 효과음이 발화한다
+            _attach_sibom_plan_fields(plan[-1], scene)
 
         elif scene.type == "comments":
             # 항목당 1개 TTS 엔트리 — text_only 패턴과 동일하게 점진적 낭독
@@ -995,6 +997,11 @@ def _scenes_to_plan_and_sentences(
                     "scene_idx": scene_i,
                     "item_idx": k,  # 0..k 누적 공개 인덱스 (전체 리스트 기준)
                 })
+                # 말풍선 효과음은 댓글마다 1회(설계 의도). 첫 항목만 전환음을 함께 받는다.
+                if k == 0:
+                    _attach_sibom_plan_fields(plan[-1], scene)
+                else:
+                    plan[-1]["sfx_events"] = ["bubble"]
 
         elif scene.type == "chat":
             # 항목당 1개 TTS 엔트리 — 시간 순서대로 점진적 낭독

@@ -1263,6 +1263,17 @@ class SceneDirector:
                 return result
 
             def _pick_bgm() -> _Path | None:
+                # 관리자가 어드민에서 고른 트랙이 있으면 그것을 쓴다.
+                # 값은 "/api/media/bgm/<emotion>/<file>" 형태(카탈로그 path 그대로).
+                chosen = self.variant_config.get("bgm_track") or self.variant_config.get("bgmTrack")
+                if isinstance(chosen, str) and chosen.strip():
+                    rel = chosen.strip().split("/api/media/", 1)[-1].lstrip("/")
+                    cand = MEDIA_DIR / rel
+                    if cand.is_file():
+                        logger.info("[bgm] 관리자 선택 사용: %s", cand)
+                        return cand
+                    logger.warning("[bgm] 선택한 파일 없음 → 자동 선택으로 폴백: %s", chosen)
+
                 # WS4.2: hook_emotion을 기반한 BGM 선택
                 hook_emotion = self.variant_config.get("hook_emotion") or self.variant_config.get("hookEmotion")
                 if not isinstance(hook_emotion, str) or not hook_emotion.strip():
@@ -1485,9 +1496,10 @@ class SceneDirector:
                     }
                     for i, c in enumerate(sorted_cmts)
                 ]
-                # WS3.3~3.4: v2 프로필 분기 - chat 씬 연결
-                render_profile = self.variant_config.get("render_profile") if isinstance(self.variant_config, dict) else None
-                scene_type = "chat" if render_profile == "marketing_v2" else "comments"
+                # v2도 "comments" 씬을 쓴다. 예전 WS3.3~3.4 분기는 v2를 "chat" 으로
+                # 돌렸지만 chat_messages 를 채우지 않아 화면이 통째로 비었다
+                # (comment=0.0s). v2 전용 확대는 _frames.py comments 렌더러에 있다.
+                scene_type = "comments"
                 # WS4-SFX: 첫 chat 씬은 whoosh+bubble, 이후는 bubble만
                 # 현재는 댓글이 1개 씬이므로 whoosh 포함
                 scenes.append(SceneDecision(

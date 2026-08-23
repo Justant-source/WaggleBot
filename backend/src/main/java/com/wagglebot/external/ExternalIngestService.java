@@ -134,12 +134,13 @@ public class ExternalIngestService {
         boolean marketingCritical = "again_spring".equals(siteCode) || (options != null && "MARKETING_CRITICAL".equalsIgnoreCase(options.priority()));
         boolean preScripted = options != null && Boolean.TRUE.equals(options.preScripted());
         String renderProfile = (options != null && options.renderProfile() != null) ? options.renderProfile().trim() : null;
+        String bgmTrack = (options != null && options.bgmTrack() != null) ? options.bgmTrack().trim() : null;
         OffsetDateTime deadlineAt = options != null ? options.deadlineAt() : null;
         if (marketingCritical && deadlineAt == null) deadlineAt = OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(10);
         upsertContent(
             post.getId(), now, req, videoGen, paired, outroText, autoHdRender,
             ttsVoice, commentVoices, mood, ttsEmotion, maxDurationSec, platformLayout, sibomPlan,
-            marketingCritical, preScripted, renderProfile, deadlineAt
+            marketingCritical, preScripted, renderProfile, deadlineAt, bgmTrack
         );
 
         log.info(
@@ -185,7 +186,8 @@ public class ExternalIngestService {
         Integer maxDurationSec,
         String platformLayout,
         com.fasterxml.jackson.databind.JsonNode sibomPlan,
-        boolean marketingCritical, boolean preScripted, String renderProfile, OffsetDateTime deadlineAt
+        boolean marketingCritical, boolean preScripted, String renderProfile, OffsetDateTime deadlineAt,
+        String bgmTrack
     ) {
         Content content = contentRepo.findByPostId(postId).orElseGet(() -> {
             Content c = new Content();
@@ -205,6 +207,8 @@ public class ExternalIngestService {
         variantConfig.put("pre_scripted", preScripted);
         if (renderProfile != null && !renderProfile.isBlank()) variantConfig.put("render_profile", renderProfile);
         if (deadlineAt != null) variantConfig.put("deadline_at", deadlineAt.toString());
+        // 관리자가 고른 BGM. 비어 있으면 director 가 hook_emotion 으로 자동 선택한다.
+        if (bgmTrack != null && !bgmTrack.isBlank()) variantConfig.put("bgm_track", bgmTrack);
         if (ttsVoice != null && !ttsVoice.isBlank()) {
             variantConfig.put("tts_voice", ttsVoice);
             content.setTtsVoice(ttsVoice);
