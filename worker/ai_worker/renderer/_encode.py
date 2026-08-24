@@ -102,8 +102,10 @@ def _build_layout_sfx_filter(
         min_gap = float(_sfx_cfg.get("min_gap_sec", 2.5))
         short_gap = float(_sfx_cfg.get("short_gap_sec", 1.0))
         short_events = set(_sfx_cfg.get("short_gap_events") or ())
+        same_file_gap = float(_sfx_cfg.get("same_file_gap_sec", 1.5))
     except Exception:
         max_sfx, min_gap, short_gap, short_events = 6, 2.5, 1.0, set()
+        same_file_gap = 1.5
 
     if sfx_start_idx is None:
         sfx_start_idx = tts_input_idx + 1
@@ -113,6 +115,10 @@ def _build_layout_sfx_filter(
     # sfx_events 마커 수집 (최대 6개, 간격 규칙 적용)
     sfx_events_to_insert: list[tuple[str, float]] = []  # (event_key, timing_sec)
     last_sfx_time = -float('inf')
+    # 같은 음원 파일이 마지막으로 울린 시각. 이벤트 이름이 달라도 파일이 같으면
+    # 귀에는 같은 소리다 — 지점 이름만으로 간격을 재면 한 장면에서 똑같은 소리가
+    # 두세 번 연달아 난다(실제로 interface_2574 를 세 지점에 매핑해 그렇게 됐다).
+    last_file_time: dict[str, float] = {}
 
     for entry_idx, (entry, t_start) in enumerate(zip(plan, timings)):
         events = entry.get("sfx_events", [])
@@ -140,9 +146,20 @@ def _build_layout_sfx_filter(
             # 어드민에서 이벤트를 바꿔도 규칙이 따라오지 않는다.
             current_gap_rule = short_gap if event_key in short_events else min_gap
 
+            # 파일 기준 간격 — 이벤트가 달라도 같은 소리면 촘촘히 반복하지 않는다
+            _file = str(sfx_config.get(event_key, {}).get("file", "") or "")
+            if _file and eff_t - last_file_time.get(_file, -float("inf")) < same_file_gap:
+                logger.info(
+                    "[sfx] 같은 음원 반복이라 건너뜀: %s(%s) @%.2fs",
+                    event_key, _file.rsplit("/", 1)[-1], eff_t,
+                )
+                continue
+
             if eff_t - last_sfx_time >= current_gap_rule or not sfx_events_to_insert:
                 sfx_events_to_insert.append((event_key, t_start))
                 last_sfx_time = eff_t
+                if _file:
+                    last_file_time[_file] = eff_t
             else:
                 logger.debug(
                     "[sfx] 간격 규칙 위반, 이벤트 dropped: %s @%.2fs (last: %.2fs, gap: %.2fs < %.2fs)",

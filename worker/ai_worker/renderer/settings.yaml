@@ -27,74 +27,75 @@ sfx:
   active:
     hook_in:
       file: _library/bell/bell_600.wav
-      volume: 0.85
-      offset: 0.0       # 인트로 시작
+      volume: 0.75
+      offset: 0.0
     intro_out:
       file: _library/paper/paper_1530.wav
       volume: 0.5
-      offset: -0.1      # 인트로 → 본문
+      offset: -0.1
     card_in:
       file: _library/game/game_2072.wav
       volume: 0.55
-      offset: -0.1      # 본문 → 시봄이 카드 (카드 착지)
+      offset: -0.1
     sibom_punch:
       file: _library/game/game_2045.wav
       volume: 0.4
-      offset: 0.25      # 시봄이 등장 — punch 페이드인 중
+      offset: 0.25
     motion_sway:
       file: _library/game/game_2058.wav
       volume: 0.28
-      offset: 0.95      # 모션 sway (평온) — punch 끝난 뒤
+      offset: 0.95
     motion_sink:
       file: _library/game/game_2363.wav
       volume: 0.35
-      offset: 0.95      # 모션 sink (지침)
+      offset: 0.95
     motion_shake:
       file: _library/game/game_2324.wav
       volume: 0.45
-      offset: 0.95      # 모션 shake (분노·충격)
+      offset: 0.95
     motion_pop:
       file: _library/game/game_2313.wav
       volume: 0.38
-      offset: 0.95      # 모션 pop (안도·화해)
+      offset: 0.95
     motion_sob:
       file: _library/game/game_2043.wav
       volume: 0.35
-      offset: 0.95      # 모션 sob (울음)
+      offset: 0.95
     card_out:
       file: _library/click/click_1117.wav
       volume: 0.4
-      offset: -0.08     # 시봄이 카드 → 본문
+      offset: -0.08
     page:
       file: _library/click/click_1660.wav
       volume: 0.3
-      offset: -0.12     # 본문 화면 넘김 (3줄마다 비워짐)
+      offset: -0.12
     text_line:
       file: _library/click/click_216.wav
       volume: 0.16
-      offset: 0.0       # 본문 새 줄 등장 — 가장 잦아 가장 낮게
+      offset: 0.0
     section_whoosh:
       file: _library/interface/interface_2574.wav
       volume: 0.65
-      offset: -0.5      # 본문 → 댓글
+      offset: -0.5
     bubble:
       file: _library/interface/interface_2574.wav
       volume: 0.55
-      offset: 0.5       # 댓글 카드 등장
+      offset: 0.5
     best_badge:
       file: _library/interface/interface_2574.wav
       volume: 0.35
-      offset: 0.9       # BEST 배지
+      offset: 0.9
     outro_in:
       file: _library/notification/notification_2870.wav
       volume: 0.55
-      offset: -0.1      # 댓글 → 아웃트로
+      offset: -0.1
     vote_fill:
       file: _library/interface/interface_2575.wav
       volume: 0.5
-      offset: 0.6       # 투표 바 (⚠️ 아직 그림 없음)
+      offset: 0.6
   max_per_video: 40
   min_gap_sec: 2.0      # 같은 소리가 겹치지 않게 하는 마지막 안전장치
+  same_file_gap_sec: 1.5  # 같은 음원은 이 간격 안에 다시 울리지 않는다
   short_gap_sec: 0.34   # 오프셋으로 이미 시간차를 뒀으므로 규칙은 최소만 건다
   # 지점별 오프셋이 실제 간격을 정한다. 여기에 없으면 min_gap_sec 이 걸려
   # 일부러 겹쳐 배치한 소리(카드 착지→캐릭터 등장→모션)가 통째로 버려진다.
