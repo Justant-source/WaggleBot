@@ -103,9 +103,12 @@ def _build_layout_sfx_filter(
         short_gap = float(_sfx_cfg.get("short_gap_sec", 1.0))
         short_events = set(_sfx_cfg.get("short_gap_events") or ())
         same_file_gap = float(_sfx_cfg.get("same_file_gap_sec", 1.5))
+        one_per_change = bool(_sfx_cfg.get("one_per_change", True))
+        priority = list(_sfx_cfg.get("priority") or ())
     except Exception:
         max_sfx, min_gap, short_gap, short_events = 6, 2.5, 1.0, set()
         same_file_gap = 1.5
+        one_per_change, priority = True, []
 
     if sfx_start_idx is None:
         sfx_start_idx = tts_input_idx + 1
@@ -124,6 +127,20 @@ def _build_layout_sfx_filter(
         events = entry.get("sfx_events", [])
         if not events:
             continue
+
+        # 화면 변화 한 번에 소리 하나. 같은 plan 항목에 마커가 여러 개 붙어 있으면
+        # 우선순위가 가장 높은 하나만 남긴다 — 오프셋으로 벌려도 한 번의 변화에
+        # 여러 소리가 나는 것은 그대로라 겹쳐 들린다.
+        if one_per_change and len(events) > 1:
+            def _rank(k: str) -> int:
+                return priority.index(k) if k in priority else len(priority)
+            kept = min(events, key=_rank)
+            dropped = [e for e in events if e != kept]
+            logger.info(
+                "[sfx] 한 화면 한 소리 — %s 채택, %s 생략 (@%.2fs)",
+                kept, ", ".join(dropped), t_start,
+            )
+            events = [kept]
 
         for event_key in events:
             # 실제 재생 시각 = 씬 시작 + 이벤트별 offset.

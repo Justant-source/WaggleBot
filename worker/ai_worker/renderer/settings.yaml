@@ -93,6 +93,27 @@ sfx:
       file: _library/interface/interface_2575.wav
       volume: 0.5
       offset: 0.6
+  one_per_change: true  # 화면 변화 한 번에 효과음 하나만
+  # 같은 화면에 여러 마커가 붙으면 이 순서대로 앞에 있는 것이 이긴다.
+  # 여기 없는 이벤트는 맨 뒤로 밀린다.
+  priority:
+    - hook_in
+    - section_whoosh
+    - outro_in
+    - motion_shake
+    - motion_sob
+    - motion_pop
+    - motion_sink
+    - motion_sway
+    - sibom_punch
+    - card_in
+    - card_out
+    - intro_out
+    - best_badge
+    - vote_fill
+    - bubble
+    - page
+    - text_line
   max_per_video: 40
   min_gap_sec: 2.0      # 같은 소리가 겹치지 않게 하는 마지막 안전장치
   same_file_gap_sec: 1.5  # 같은 음원은 이 간격 안에 다시 울리지 않는다
