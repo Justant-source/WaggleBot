@@ -1063,6 +1063,14 @@ def _create_header_only_frame(
 # 씬 렌더러 (모두 base_frame.copy()에서 시작)
 # ---------------------------------------------------------------------------
 
+def _blend_over_bg(fg_hex: str, bg_hex: str, alpha: float) -> tuple[int, int, int]:
+    """fg_hex를 bg_hex 위에 alpha로 얹었을 때의 합성 RGB. 텍스트 페이드인용."""
+    fg = tuple(int(fg_hex.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    bg = tuple(int(bg_hex.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    a = max(0.0, min(1.0, alpha))
+    return tuple(int(round(bg[i] + (fg[i] - bg[i]) * a)) for i in range(3))
+
+
 def _render_intro_frame_v2(
     img_pil: Optional[Image.Image],
     title_text: str,
@@ -1070,13 +1078,27 @@ def _render_intro_frame_v2(
     font_dir: Path,
     out_path: Path,
     stage: int | None = None,
+    hook_alpha: float = 1.0,
 ) -> Path:
     """v2 인트로 — 크림 배경 + 제목 + 시봄이 카드 (앱 크롬 없음).
 
     시봄이는 정사각 일러스트라 cover(잘라 채우기) 대신 contain 으로 넣는다.
     예전에는 세로로 긴 영역에 cover 를 써서 캐릭터 팔이 좌우로 잘려나갔다.
+
+    2026-08-29 첫 프레임 강화(실측: marketing_v2 발행 0일차 평균 조회 475 =
+    동일 일령 v1의 37%, ffmpeg scene-detect로 첫 6초 장면전환 0회 확인. 반면
+    유지율은 v2 53% > v1 36% — 본문이 아니라 첫 프레임/썸네일이 병목):
+    - 훅 폰트: 56px(title_block.font_size+6 고정값) → 스펙(`settings.yaml`
+      tone_v2.typography.hook_min_font_size_px, 기본 80px)을 실제로 읽어 적용.
+      3줄 wrap을 넘치면 64px까지만 안전하게 축소(문구가 무한정 작아지지 않는다).
+    - 훅 색상: 팔레트 브라운 계열 안에서 더 진한 값(`ink_strong`)으로 대비 강화.
+      검정으로 바꾸지 않는다 — Tone L(편지지 톤)은 의도된 브랜드 결정.
+    - 앱 UI 잔재인 스텝닷(●○○)은 인트로에서만 제거(본문 image_text 씬은 유지).
+    - hook_alpha: 첫 3초 등장 애니메이션에서 캐릭터 punch-in과 같은 진행도로
+      훅 텍스트도 함께 페이드인시킨다(정적 배경만 있던 화면 전체의 변화폭을 키워
+      ffmpeg scene-detect가 실제로 장면전환을 인지하도록). 기본 1.0(완전 불투명).
     """
-    from ai_worker.renderer.layout import _load_font
+    from ai_worker.renderer.layout import _load_font, _load_renderer_settings
 
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
@@ -1090,16 +1112,30 @@ def _render_intro_frame_v2(
     img = Image.new("RGB", (cw, ch), "#EDF1E8")
     draw = ImageDraw.Draw(img)
 
-    # 제목 — 세이프존(상단 12%) 아래에서 시작
+    # 훅 — 세이프존(상단 12%) 아래에서 시작
     safe_top = int(ch * 0.12)
-    t_cfg = layout["global"].get("title_block", {})
-    t_fs = t_cfg.get("font_size", 50) + 6      # 표지라 본문보다 조금 크게
-    t_lh = t_cfg.get("line_height", 62) + 8
+    max_w = cw - 2 * pad_x
+    try:
+        typography = (_load_renderer_settings().get("tone_v2") or {}).get("typography") or {}
+        hook_target_fs = int(typography.get("hook_min_font_size_px", 80))
+    except Exception:
+        hook_target_fs = 80
+    hook_floor_fs = 64  # 넘쳐도 기존 56px보다는 항상 크게 축소 한도를 둔다
+    t_fs = hook_target_fs
     t_font = _load_font(font_dir, _body_font_file(layout), t_fs)
-    t_lines = _wrap_korean(title_text or "", t_font, cw - 2 * pad_x, keep_all=True)[:3]
+    t_lines = _wrap_korean(title_text or "", t_font, max_w, keep_all=True)
+    while len(t_lines) > 3 and t_fs > hook_floor_fs:
+        t_fs = max(hook_floor_fs, t_fs - 4)
+        t_font = _load_font(font_dir, _body_font_file(layout), t_fs)
+        t_lines = _wrap_korean(title_text or "", t_font, max_w, keep_all=True)
+    t_lines = t_lines[:3]
+    t_lh = int(t_fs * 1.25)
+    hook_color = palette.get("ink_strong", "#3D2A1F")
+    if hook_alpha < 0.999:
+        hook_color = _blend_over_bg(hook_color, "#EDF1E8", hook_alpha)
     y = safe_top
     for line in t_lines:
-        draw.text((pad_x, y), line, font=t_font, fill=palette.get("ink", "#5C4030"))
+        draw.text((pad_x, y), line, font=t_font, fill=hook_color)
         y += t_lh
 
     # 시봄이 카드 — 정사각, contain(잘림 없음)
@@ -1120,7 +1156,7 @@ def _render_intro_frame_v2(
         oy = card_y + card_pad + (inner - fitted.height) // 2
         img.paste(fitted, (ox, oy), fitted if fitted.mode == "RGBA" else None)
 
-    _draw_step_dots(draw, cw, stage or 1, layout)
+    # 스텝닷(●○○)은 앱 UI 잔재 — 인트로에서만 제거(본문 image_text 씬은 유지)
     _draw_ribbon(draw, cw, ch, layout)
     img.save(str(out_path), "PNG")
     return out_path
@@ -1137,6 +1173,7 @@ def _render_intro_frame(
     stage: int | None = None,
     render_profile: str | None = None,
     title_text: str = "",
+    hook_alpha: float = 1.0,
 ) -> Path:
     """씬 intro — hook 자막(중앙, 굵은 검정) + 자연비율 표지 이미지.
 
@@ -1155,6 +1192,7 @@ def _render_intro_frame(
     if render_profile == "marketing_v2":
         return _render_intro_frame_v2(
             img_pil, title_text or hook_text, layout, font_dir, out_path, stage=stage,
+            hook_alpha=hook_alpha,
         )
 
     img = base_frame.copy()

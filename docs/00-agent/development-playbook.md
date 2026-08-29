@@ -87,6 +87,7 @@ PYTHONPATH=/home/justant/Data/WaggleBot:/home/justant/Data/WaggleBot/worker \
 ```bash
 docker exec env-ai_worker-1 python3 /app/test/smoke_tonel.py
 docker exec env-ai_worker-1 python3 /app/test/smoke_sibom_motion.py
+docker exec env-ai_worker-1 python3 /app/test/smoke_intro_v2.py  # v2 인트로 폰트/대비/스텝닷/등장모션(2026-08-29)
 ```
 
 > 🚨 **`worker/config` (root 소유 빈 디렉토리)를 지우거나 바꾸지 말 것.**

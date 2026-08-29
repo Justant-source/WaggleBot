@@ -628,6 +628,42 @@ def _sibom_motion_sequences(
     return punch, loop
 
 
+def _intro_entrance_sequences(
+    render_frame,
+    sibom_pil: "Image.Image",
+    tmp_dir: Path,
+    frame_idx: int,
+    start_alpha: float = _SIBOM_PUNCH_START_ALPHA,
+) -> tuple[list[Path], list[Path]]:
+    """인트로 표지(시봄이 role 없는 일반 사진)용 등장(punch) + sway 루프.
+
+    _sibom_motion_sequences와 동일한 ease-out 진행도(_sibom_pop_progress)를
+    쓰되, render_frame(img, out_path, hook_alpha)로 훅 텍스트 알파도 같이
+    넘긴다 — 캐릭터만 움직이면 화면 전체 변화폭이 작아 ffmpeg scene-detect가
+    장면전환을 못 잡는다(실측). 새 모션 곡선을 만들지 않고 기존 진행도를
+    텍스트에도 그대로 적용한다.
+    """
+    punch: list[Path] = []
+    n = _SIBOM_PUNCH_POP_FRAMES
+    for i in range(n):
+        p = _sibom_pop_progress(i, n)
+        scale = _SIBOM_PUNCH_START_SCALE + (1.0 - _SIBOM_PUNCH_START_SCALE) * p
+        alpha = start_alpha + (1.0 - start_alpha) * p
+        out = tmp_dir / f"frame_{frame_idx:03d}_intro_punch_{i:02d}.png"
+        render_frame(_sibom_variant(sibom_pil, scale, 0, 0, alpha), out, hook_alpha=alpha)
+        punch.append(out)
+
+    loop: list[Path] = []
+    ln = _SIBOM_BREATHE_FRAMES
+    for i in range(ln):
+        scale = _sibom_breathe_scale(i, ln)
+        out = tmp_dir / f"frame_{frame_idx:03d}_intro_loop_{i:02d}.png"
+        render_frame(_sibom_variant(sibom_pil, scale, 0, 0), out, hook_alpha=1.0)
+        loop.append(out)
+
+    return punch, loop
+
+
 def _wire_sibom_motion(
     entry: dict,
     render_frame,
@@ -1400,15 +1436,37 @@ def _render_pipeline(
                     render_profile=render_profile, title_text=title,
                 )
                 if (theme == "tone_l" or render_profile == "marketing_v2") and img_pil is not None:
-                    def _rf_intro(_img, _out, _txt=hook_text):
+                    def _rf_intro(_img, _out, _txt=hook_text, hook_alpha=1.0):
                         _render_intro_frame(
                             base_frame, _img, _txt,
                             layout, font_dir, _out, content_top, stage=1,
                             render_profile=render_profile, title_text=title,
+                            hook_alpha=hook_alpha,
                         )
                     # intro 첫 프레임은 썸네일 후보라 더 밝게 시작한다
-                    _wire_sibom_motion(entry, _rf_intro, img_pil, tmp_dir, frame_idx,
-                                       start_alpha=_SIBOM_INTRO_START_ALPHA)
+                    if entry.get("sibom_role"):
+                        _wire_sibom_motion(entry, _rf_intro, img_pil, tmp_dir, frame_idx,
+                                           start_alpha=_SIBOM_INTRO_START_ALPHA)
+                    else:
+                        # 2026-08-29: 실측(ffmpeg scene-detect) — 시봄이가 아닌 표지
+                        # 사진일 때는 인트로가 완전 정지 화면이라 첫 6초 장면전환 0회.
+                        # 새 모션 시스템을 만들지 않고 기존 등장(punch-in) 프리미티브를
+                        # 재사용하되, 캐릭터만으로는 화면 변화폭이 작아 훅 텍스트도
+                        # 같은 진행도로 페이드인시킨다(_intro_entrance_sequences).
+                        try:
+                            punch, loop = _intro_entrance_sequences(
+                                _rf_intro, img_pil, tmp_dir, frame_idx,
+                                start_alpha=_SIBOM_INTRO_START_ALPHA,
+                            )
+                            entry["sibom_punch_paths"] = [str(p) for p in punch]
+                            entry["sibom_loop_paths"] = [str(p) for p in loop]
+                        except Exception:
+                            logger.warning(
+                                "[intro] 표지 이미지 등장 모션 생성 실패 — 정지 프레임으로 진행",
+                                exc_info=True,
+                            )
+                            entry.pop("sibom_punch_paths", None)
+                            entry.pop("sibom_loop_paths", None)
 
             elif scene_type == "image_text":
                 img_pil = image_cache.get(img_idx) if img_idx is not None else None

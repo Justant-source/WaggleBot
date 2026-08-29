@@ -10,7 +10,7 @@
 | 10 Context | [10-context/system-context.md](10-context/system-context.md) | 2026-06-12 | 전역 / 코드 |
 | 20 Container | [20-containers/topology.md](20-containers/topology.md) | 2026-06-25 | `env/docker-compose.yml` |
 | 20 Config | [20-containers/config.md](20-containers/config.md) | 2026-06-25 | `config/settings.py` |
-| 30 Pipeline | [30-components/pipeline.md](30-components/pipeline.md) | 2026-06-13 | `worker/ai_worker/pipeline/content_processor.py` |
+| 30 Pipeline | [30-components/pipeline.md](30-components/pipeline.md) | 2026-08-29 | `worker/ai_worker/pipeline/content_processor.py` |
 | 30 Overview | [30-components/overview.md](30-components/overview.md) | 2026-06-25 | `worker/ai_worker/`, `worker/crawlers/` |
 | 30 Status | [30-components/implementation-status.md](30-components/implementation-status.md) | 2026-06-25 | 코드 전역 |
 | 40 Data | [40-data/schema.md](40-data/schema.md) | 2026-06-25 | `worker/db/migrations/`, Flyway |
