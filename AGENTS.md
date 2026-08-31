@@ -1,4 +1,4 @@
-# WaggleBot — CLAUDE.md
+# WaggleBot — AGENTS.md
 
 @.claude/rules/llm-safety.md
 
@@ -27,32 +27,32 @@
 
 | 작업 유형 | 먼저 읽을 문서 |
 |----------|--------------|
-| 시스템 전체 그림, 행위자, 외부 경계 | [docs/10-context/system-context.md](docs/10-context/system-context.md) |
-| docker-compose, 포트/볼륨/환경변수/VRAM | [docs/20-containers/topology.md](docs/20-containers/topology.md) |
-| settings.py·pipeline.json·.env 설정 | [docs/20-containers/config.md](docs/20-containers/config.md) |
-| Phase 1~8 로직, 씬/대본/TTS/비디오/렌더링 | [docs/30-components/pipeline.md](docs/30-components/pipeline.md) |
-| 모듈 책임, 크롤러/업로더 구조 | [docs/30-components/overview.md](docs/30-components/overview.md) |
-| 구현 현황·버그 픽스 이력 확인 | [docs/30-components/implementation-status.md](docs/30-components/implementation-status.md) |
-| DB 모델 변경, 마이그레이션, 쿼리 작성 | [docs/40-data/schema.md](docs/40-data/schema.md) |
-| backend·llm-worker API 추가/수정 | [docs/50-api/rest-spec.md](docs/50-api/rest-spec.md) · [flows.md](docs/50-api/flows.md) |
-| Post 상태 전이 | [docs/60-runtime/post-state-machine.md](docs/60-runtime/post-state-machine.md) |
-| 처리 루프, 4단계 폴백, 피드백 루프 | [docs/60-runtime/pipeline-runtime.md](docs/60-runtime/pipeline-runtime.md) |
-| 하드 제약 확인/수정 (**필독**) | [docs/70-policy/constraints.md](docs/70-policy/constraints.md) · [docs/90-adr/](docs/90-adr/) |
+| 시스템 전체 그림, 행위자, 외부 경계 | [docs/shared/10-context.md](docs/shared/10-context.md) |
+| docker-compose, 포트/볼륨/환경변수/VRAM | [docs/shared/20-containers.md](docs/shared/20-containers.md) |
+| settings.py·pipeline.json·.env 설정 | [docs/worker/20-containers.md](docs/worker/20-containers.md) |
+| Phase 1~8 로직, 씬/대본/TTS/비디오/렌더링 | [docs/worker/30-components/pipeline.md](docs/worker/30-components/pipeline.md) |
+| 모듈 책임, 크롤러/업로더 구조 | [docs/worker/30-components/overview.md](docs/worker/30-components/overview.md) |
+| 구현 현황·버그 픽스 이력 확인 | [docs/worker/30-components/implementation-status.md](docs/worker/30-components/implementation-status.md) |
+| DB 모델 변경, 마이그레이션, 쿼리 작성 | [docs/shared/40-data.md](docs/shared/40-data.md) |
+| backend·llm-worker API 추가/수정 | [docs/backend/50-api.md](docs/backend/50-api.md) · [docs/worker/50-api.md](docs/worker/50-api.md) |
+| Post 상태 전이 | [docs/shared/60-runtime.md](docs/shared/60-runtime.md) |
+| 처리 루프, 4단계 폴백, 피드백 루프 | [docs/worker/60-runtime.md](docs/worker/60-runtime.md) |
+| 하드 제약 확인/수정 (**필독**) | [docs/shared/70-policy.md](docs/shared/70-policy.md) · [docs/shared/90-adr/](docs/shared/90-adr/) |
 | 크롤러/업로더 플러그인 추가 | `worker/crawlers/ADDING_CRAWLER.md` · `worker/uploaders/ADDING_UPLOADER.md` |
-| AI agent 개발 작업 절차 | [docs/00-agent/development-playbook.md](docs/00-agent/development-playbook.md) |
+| AI agent 개발 작업 절차 | [docs/shared/00-agent.md](docs/shared/00-agent.md) |
 | 작업 완료 후 갱신할 문서 판단 | [docs/_index.md](docs/_index.md) 트리거 맵 |
 
 ## 핵심 컨텍스트 (모든 작업 공통)
 
 - **상태 전이:** COLLECTED → EDITING → APPROVED → PROCESSING → PREVIEW_RENDERED → RENDERED → UPLOADED (↕ DECLINED/FAILED)
-- **8-Phase:** ①analyze_resources → ②chunk_with_llm → ③validate_and_fix → ④SceneDirector → ④.5 assign_video_modes → ⑤TTS ‖ ⑥video_prompt (병렬) → ⑦video_clip(ComfyUI) → ⑧FFmpeg 렌더링. Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만. <!-- SSOT: docs/30-components/pipeline.md -->
+- **8-Phase:** ①analyze_resources → ②chunk_with_llm → ③validate_and_fix → ④SceneDirector → ④.5 assign_video_modes → ⑤TTS ‖ ⑥video_prompt (병렬) → ⑦video_clip(ComfyUI) → ⑧FFmpeg 렌더링. Phase 4.5~7은 `VIDEO_GEN_ENABLED=true`일 때만. <!-- SSOT: docs/worker/30-components/pipeline.md -->
 - **LLM 호출:** 전부 `worker/ai_worker/llm/transport.py`의 `call_llm()` 경유. `pick_model()` 라우팅 — chunk/generate_script/scene_director/feedback→**sonnet**, video_prompt/translate/comment_summarize→**haiku**. 백엔드 `cli`(llm-worker :8090, 구독)|`api`(Anthropic 직접) — `pipeline.json`의 `llm_backend`로 전환.
 - **ScriptData:** `Content.summary_text`에 JSON 저장. 문자열이면 레거시.
 - **스코어링:** `Post.engagement_score` = 조회×0.1 + 좋아요×2.0 + 댓글×1.5 + 베스트공감×0.5, 6시간 반감기.
 - **Mood 9종:** humor·touching·anger·sadness·horror·info·controversy·daily·shock
 - **dashboard_worker:** Java backend가 `jobs` 테이블에 enqueue → Python이 execute.
 - **볼륨 공유:** ComfyUI `/comfyui/output` ↔ ai_worker `media/tmp/videos` 동일 Docker 볼륨 (비디오 전달 경로).
-- **포트:** db 3306 · backend 8080 · frontend 3000 · llm-worker 8090 · fish-speech 8082→8080 · comfyui 8188 <!-- SSOT: docs/20-containers/topology.md -->
+- **포트:** db 3306 · backend 8080 · frontend 3000 · llm-worker 8090 · fish-speech 8082→8080 · comfyui 8188 <!-- SSOT: docs/shared/20-containers.md -->
 - **실행/로그:** `docker compose -f env/docker-compose.yml up -d` · `docker compose logs --tail 50 ai_worker`
 
 ## 모듈 맵
@@ -76,10 +76,10 @@
 with gpu_manager.managed_inference(ModelType.TTS, "fish-speech"):
     result = tts.synthesize(text)
 ```
-**FFmpeg:** `h264_nvenc` 필수, `libx264` 지정 금지 (프리뷰 480×854만 CPU 허용). 렌더러는 filter_complex 단일 NVENC 패스 — 중간 재인코딩 금지 → [ADR-0002](docs/90-adr/0002-single-nvenc.md)
-**ComfyUI:** `--lowvram --reserve-vram 2` 고정, `--normalvram` 금지 (텍스트 인코딩 OOM) → [ADR-0001](docs/90-adr/0001-comfyui-lowvram.md)
-**LTX-2:** 프레임 수 `1+8k`(9~145, 동적 상한 `VIDEO_NUM_FRAMES_MAX`=145), 해상도 8의 배수 — `video_utils.validate_frame_count()`/`validate_resolution()` 필수, 클립 4~6초 정책 → [ADR-0004](docs/90-adr/0004-clip-4-6s-frames-145.md)
-**Phase 5‖6 병렬:** 순차로 되돌리거나 GPU Phase를 병렬에 포함 금지 → [ADR-0003](docs/90-adr/0003-phase56-parallel.md)
+**FFmpeg:** `h264_nvenc` 필수, `libx264` 지정 금지 (프리뷰 480×854만 CPU 허용). 렌더러는 filter_complex 단일 NVENC 패스 — 중간 재인코딩 금지 → [ADR-0002](docs/shared/90-adr/0002-single-nvenc.md)
+**ComfyUI:** `--lowvram --reserve-vram 2` 고정, `--normalvram` 금지 (텍스트 인코딩 OOM) → [ADR-0001](docs/shared/90-adr/0001-comfyui-lowvram.md)
+**LTX-2:** 프레임 수 `1+8k`(9~145, 동적 상한 `VIDEO_NUM_FRAMES_MAX`=145), 해상도 8의 배수 — `video_utils.validate_frame_count()`/`validate_resolution()` 필수, 클립 4~6초 정책 → [ADR-0004](docs/shared/90-adr/0004-clip-4-6s-frames-145.md)
+**Phase 5‖6 병렬:** 순차로 되돌리거나 GPU Phase를 병렬에 포함 금지 → [ADR-0003](docs/shared/90-adr/0003-phase56-parallel.md)
 
 ## 코딩 규칙
 
