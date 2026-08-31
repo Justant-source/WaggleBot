@@ -1,193 +1,458 @@
 #!/usr/bin/env python3
-"""
-WaggleBot docs linter — 6개 검사.
-표준 라이브러리만 사용. 종료코드 0=통과, 1=실패.
+"""C4 SSOT lint for docs/ tree.
 
-검사 항목:
-  1) 루트에 허용 외 .md 없음 (CLAUDE.md / README.md / AGENTS.md 만)
-  2) docs/ 전체에 C4Context/C4Container/C4Component/C4Dynamic 0건
-  3) 모든 ```mermaid 블록 경량 검증 (펜스 균형·비어있지 않음·알려진 다이어그램 타입)
-     * 완전 파싱 아님 — 펜스 균형·첫 줄 타입만 확인
-  4) docs/_index.md 트리거 맵/계층 인덱스가 가리키는 파일 실재
-  5) docs/ 내 상대 마크다운 링크 깨짐 0건
-  6) 다이어그램 포함 문서에 last-verified + code-ref 헤더 존재
+Exit 0 = all checks pass. Exit 1 = one or more violations.
+Depends only on the Python 3.8+ standard library.
+
+Checks:
+   1. root-markdown-whitelist     — only CLAUDE.md, README.md, AGENTS.md at repo root
+   2. forbidden-diagram-dialects  — C4Context / C4Container / plantuml / @startuml = 0
+   3. mermaid-blocks-parseable    — every mermaid fence has a known diagram type
+   4. index-markdown-links        — all [..](path) links in _index.md resolve
+   5. index-backtick-paths        — all `docs/**.md` backtick paths in _index.md resolve
+   6. relative-links-resolvable   — no broken relative links in any docs/*.md
+   7. mermaid-provenance-headers  — every mermaid block preceded by last-verified + code-ref
+   8. code-ref-targets-exist      — every code-ref path actually exists in the repo
+   9. banned-refs                 — docs must not instruct use of deleted symbols
+  10. code-paths-exist            — trigger-map globs and ADR related_code resolve
+
+Exemptions:
+  - File-level:  <!-- lint-docs: allow-missing-code-refs -->  anywhere in the file
+  - Frontmatter: allow_missing_refs: true
+  - Block-level: <!-- lint-docs: allow-missing-start --> ... <!-- lint-docs: allow-missing-end -->
+  - External repos: paths prefixed with a repo name, e.g. `ASM:app/worker/pipeline.py`
 """
+from __future__ import annotations
 
 import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-DOCS_DIR = ROOT / "docs"
+ROOT = Path(__file__).resolve().parent.parent
+DOCS = ROOT / "docs"
+INDEX = DOCS / "_index.md"
 
-ALLOWED_ROOT_MD = {"CLAUDE.md", "README.md", "AGENTS.md"}
+ROOT_MD_ALLOWED = {"CLAUDE.md", "README.md", "AGENTS.md"}
 
-KNOWN_DIAGRAM_TYPES = {
-    "flowchart", "graph", "sequenceDiagram", "stateDiagram", "stateDiagram-v2",
-    "erDiagram", "gantt", "pie", "classDiagram", "gitGraph", "mindmap",
-    "timeline", "quadrantChart", "xychart-beta", "block-beta",
+VALID_DIAGRAM_TYPES = {
+    "flowchart", "graph",
+    "sequenceDiagram",
+    "stateDiagram-v2", "stateDiagram",
+    "erDiagram",
+    "classDiagram",
+    "gantt",
 }
 
-FORBIDDEN_C4 = re.compile(r"\bC4Context\b|\bC4Container\b|\bC4Component\b|\bC4Dynamic\b")
+# Extensions that mark a backtick token as a code path worth verifying.
+CODE_EXTS = (
+    ".java", ".kt", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".py", ".sh", ".sql", ".yml", ".yaml", ".json", ".toml", ".properties",
+    ".gradle", ".gradle.kts", ".conf", ".env", ".css", ".html",
+)
 
-# Matches ```mermaid ... ``` blocks (non-greedy)
-MERMAID_FENCE = re.compile(r"```mermaid\n(.*?)```", re.DOTALL)
+# Per-project: symbols that were deleted and must not be recommended any more.
+# Each entry: (compiled regex, human reason). Start empty; fill in per project.
+BANNED_DOC_REFS: list[tuple[re.Pattern, str]] = [
+    # Example (Again-Spring):
+    # (re.compile(r"->\s*`KeywordGuard`\s*컴포넌트", re.I),
+    #  "KeywordGuard 컴포넌트 — lib/utils/keywordGuard.ts 는 삭제됨"),
+]
 
-# Matches markdown links: [text](path)  — captures the path
-MD_LINK = re.compile(r"\[([^\]]*)\]\(([^)#\s]+)(#[^)]*)?\)")
-
-errors: list[str] = []
-
-
-def err(msg: str) -> None:
-    errors.append(msg)
-    print(f"  FAIL  {msg}")
-
-
-def ok(msg: str) -> None:
-    print(f"  pass  {msg}")
+_MAX_SHOWN = 20
 
 
-# ── Check 1: root .md files ──────────────────────────────────────────────────
-def check_root_md() -> None:
-    print("\n[1] 루트 .md 파일 (심링크 포함 허용)")
-    violations = [
-        f.name for f in ROOT.glob("*.md")
-        if f.name not in ALLOWED_ROOT_MD
-    ]
-    if violations:
-        err(f"루트에 허용 외 .md 발견: {violations}")
-    else:
-        ok(f"루트 md: {sorted(ALLOWED_ROOT_MD & {f.name for f in ROOT.glob('*.md')})}")
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FENCE_OPEN = re.compile(r"^\s*```mermaid\s*$")
+_FENCE_CLOSE = re.compile(r"^\s*```\s*$")
+_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+_LV_RE = re.compile(r"<!--\s*last-verified:\s*\d{4}-\d{2}-\d{2}\s*-->")
+_CR_RE = re.compile(r"<!--\s*code-ref:\s*(.+?)\s*-->")
+_BACKTICK_RE = re.compile(r"`([^`\n]+)`")
+_FILE_OPTOUT_RE = re.compile(r"<!--\s*lint-docs:\s*allow-missing-code-refs\s*-->")
+_BLOCK_START_RE = re.compile(r"<!--\s*lint-docs:\s*allow-missing-start\s*-->")
+_BLOCK_END_RE = re.compile(r"<!--\s*lint-docs:\s*allow-missing-end\s*-->")
+_FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---", re.S)
+_ALLOW_FM_RE = re.compile(r"^allow_missing_refs:\s*true\s*$", re.M)
+# `Word:` prefix that is NOT a line-number suffix — marks an external repository.
+_EXTERNAL_PREFIX_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*:(?!\d)")
 
 
-# ── Check 2: no C4 proprietary syntax ───────────────────────────────────────
-def check_no_c4_syntax() -> None:
-    print("\n[2] C4Context/C4Container/C4Component/C4Dynamic 0건")
-    hits: list[str] = []
-    for md in DOCS_DIR.rglob("*.md"):
-        text = md.read_text(encoding="utf-8", errors="replace")
-        if FORBIDDEN_C4.search(text):
-            hits.append(str(md.relative_to(ROOT)))
-    if hits:
-        err(f"C4 전용 구문 발견: {hits}")
-    else:
-        ok("C4 전용 구문 없음")
+def _docs_files() -> list[Path]:
+    return sorted(DOCS.rglob("*.md")) if DOCS.is_dir() else []
 
 
-# ── Check 3: mermaid block lightweight validation ────────────────────────────
-def check_mermaid_blocks() -> None:
-    print("\n[3] mermaid 블록 경량 검증")
-    block_count = 0
-    for md in DOCS_DIR.rglob("*.md"):
-        text = md.read_text(encoding="utf-8", errors="replace")
-        # Count fence opens vs closes
-        opens = text.count("```mermaid")
-        closes_after_open: list[int] = []
-        for m in MERMAID_FENCE.finditer(text):
-            content = m.group(1).strip()
-            block_count += 1
-            if not content:
-                err(f"{md.relative_to(ROOT)}: 빈 mermaid 블록")
-                continue
-            first_line = content.splitlines()[0].strip().split()[0] if content.splitlines() else ""
-            if first_line not in KNOWN_DIAGRAM_TYPES:
-                err(f"{md.relative_to(ROOT)}: 알 수 없는 다이어그램 타입 '{first_line}'")
-            closes_after_open.append(1)
-        # Fence balance check (non-regex)
-        if opens != len(closes_after_open):
-            err(f"{md.relative_to(ROOT)}: mermaid 펜스 불균형 (open={opens}, closed={len(closes_after_open)})")
-    ok(f"mermaid 블록 {block_count}개 검사 완료")
+def _read(p: Path) -> str:
+    return p.read_text(encoding="utf-8")
 
 
-# ── Check 4: _index.md links resolve ────────────────────────────────────────
-def check_index_links() -> None:
-    print("\n[4] docs/_index.md 가 가리키는 파일 실재")
-    index = DOCS_DIR / "_index.md"
-    if not index.exists():
-        err("docs/_index.md 없음")
-        return
-    text = index.read_text(encoding="utf-8", errors="replace")
-    missing: list[str] = []
-    for m in MD_LINK.finditer(text):
-        link_path = m.group(2)
-        if link_path.startswith("http"):
+def _rel(p: Path) -> str:
+    try:
+        return str(p.relative_to(ROOT))
+    except ValueError:
+        return str(p)
+
+
+def _file_is_exempt(text: str) -> bool:
+    """True when the whole file opted out of code-path verification."""
+    if _FILE_OPTOUT_RE.search(text):
+        return True
+    fm = _FRONTMATTER_RE.match(text)
+    return bool(fm and _ALLOW_FM_RE.search(fm.group(1)))
+
+
+def _exempt_line_numbers(lines: list[str]) -> set[int]:
+    """0-based line numbers inside allow-missing-start/end blocks."""
+    exempt: set[int] = set()
+    active = False
+    for i, line in enumerate(lines):
+        if _BLOCK_START_RE.search(line):
+            active = True
+        if active:
+            exempt.add(i)
+        if _BLOCK_END_RE.search(line):
+            active = False
+    return exempt
+
+
+def _strip_anchor(target: str) -> str:
+    return target.split("#", 1)[0].strip()
+
+
+def _is_skippable_link(target: str) -> bool:
+    return (not target) or target.startswith(
+        ("http://", "https://", "mailto:", "#", "<", "{")
+    )
+
+
+def _normalise_code_path(token: str) -> str | None:
+    """Strip :line / :start-end suffix. Return None when the token is not a path."""
+    token = token.strip().strip("`").rstrip(".,;")
+    if not token or _EXTERNAL_PREFIX_RE.match(token):
+        return None                      # external repo reference — not ours to verify
+    token = re.sub(r":\d+(?:-\d+)?$", "", token)
+    token = token.lstrip("/")            # '/path' is repo-root-anchored, same as 'path'
+    return token or None
+
+
+def _glob_prefix(path: str) -> str:
+    """For a glob, return the longest leading path with no wildcard."""
+    parts = path.split("/")
+    keep: list[str] = []
+    for part in parts:
+        if any(ch in part for ch in "*?["):
+            break
+        keep.append(part)
+    return "/".join(keep)
+
+
+def _path_exists(path: str) -> bool:
+    """Existence check that understands globs: the fixed prefix must exist."""
+    if any(ch in path for ch in "*?["):
+        prefix = _glob_prefix(path)
+        return bool(prefix) and (ROOT / prefix).exists()
+    return (ROOT / path).exists()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 1: root markdown whitelist
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_root_markdown_whitelist() -> list[str]:
+    """Forbidden .md at repo root. iterdir() so symlinks are caught too."""
+    found = {p.name for p in ROOT.iterdir() if p.name.endswith(".md")}
+    return sorted(found - ROOT_MD_ALLOWED)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 2: forbidden diagram dialects
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FORBIDDEN_RE = re.compile(
+    r"\b(C4Context|C4Container|plantuml|@startuml)\b", re.IGNORECASE
+)
+
+
+def check_forbidden_diagram_dialects() -> list[tuple[Path, int, str]]:
+    violations: list[tuple[Path, int, str]] = []
+    for md in _docs_files():
+        for i, line in enumerate(_read(md).splitlines(), 1):
+            m = _FORBIDDEN_RE.search(line)
+            if m:
+                violations.append((md, i, m.group()))
+    return violations
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 3: mermaid blocks parseable (static — no mmdc dependency)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_mermaid_blocks_parseable() -> list[tuple[Path, int, str]]:
+    violations: list[tuple[Path, int, str]] = []
+    for md in _docs_files():
+        lines = _read(md).splitlines()
+        i = 0
+        while i < len(lines):
+            if _FENCE_OPEN.match(lines[i]):
+                start = i
+                body: list[str] = []
+                i += 1
+                while i < len(lines) and not _FENCE_CLOSE.match(lines[i]):
+                    body.append(lines[i])
+                    i += 1
+                if i >= len(lines):
+                    violations.append((md, start + 1, "unclosed mermaid fence"))
+                    break
+                first = next((b.strip() for b in body if b.strip()), "")
+                head = first.split()[0] if first else ""
+                if head not in VALID_DIAGRAM_TYPES:
+                    violations.append(
+                        (md, start + 1, "unknown diagram type: %r" % head)
+                    )
+            i += 1
+    return violations
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 4: _index.md markdown links resolve
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_index_markdown_links() -> list[tuple[Path, str]]:
+    if not INDEX.exists():
+        return [(INDEX, "docs/_index.md does not exist")]
+    missing: list[tuple[Path, str]] = []
+    for m in _LINK_RE.finditer(_read(INDEX)):
+        target = _strip_anchor(m.group(2))
+        if _is_skippable_link(target):
             continue
-        # Remove trailing slash
-        target = (DOCS_DIR / link_path.rstrip("/")).resolve()
-        if not target.exists():
-            missing.append(link_path)
-    if missing:
-        err(f"_index.md 대상 파일 없음: {missing}")
-    else:
-        ok("_index.md 링크 모두 실재")
+        if not (INDEX.parent / target).exists():
+            missing.append((INDEX, target))
+    return missing
 
 
-# ── Check 5: no broken relative links in docs/ ──────────────────────────────
-def check_relative_links() -> None:
-    print("\n[5] docs/ 내 상대 링크 깨짐 0건")
-    broken: list[str] = []
-    for md in DOCS_DIR.rglob("*.md"):
-        text = md.read_text(encoding="utf-8", errors="replace")
-        for m in MD_LINK.finditer(text):
-            link_path = m.group(2)
-            if link_path.startswith("http") or link_path.startswith("mailto"):
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 5: _index.md backtick doc paths resolve   (from Again-Spring check-docs.js)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_index_backtick_paths() -> list[tuple[Path, str]]:
+    """Verify `docs/**.md` written as inline code in _index.md.
+
+    v1 only parsed markdown links, so the trigger-map tables — which use
+    backticks — were never verified. This closes that hole.
+    """
+    if not INDEX.exists():
+        return []                        # check 4 already reports the absence
+    missing: list[tuple[Path, str]] = []
+    for m in _BACKTICK_RE.finditer(_read(INDEX)):
+        token = m.group(1).strip()
+        if not token.startswith("docs/") or not token.endswith(".md"):
+            continue
+        if not (ROOT / token).exists():
+            missing.append((INDEX, token))
+    return missing
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 6: relative links resolvable
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_relative_links_resolvable() -> list[tuple[Path, str]]:
+    broken: list[tuple[Path, str]] = []
+    for md in _docs_files():
+        for m in _LINK_RE.finditer(_read(md)):
+            target = _strip_anchor(m.group(2))
+            if _is_skippable_link(target):
                 continue
-            if link_path.startswith("/"):
-                target = ROOT / link_path.lstrip("/")
+            if not (md.parent / target).exists():
+                broken.append((md, target))
+    return broken
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 7: mermaid provenance headers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_mermaid_provenance_headers() -> list[tuple[Path, int]]:
+    """Each mermaid fence needs both comments within the 5 preceding lines:
+         <!-- last-verified: YYYY-MM-DD -->
+         <!-- code-ref: <path> -->
+    """
+    missing: list[tuple[Path, int]] = []
+    for md in _docs_files():
+        lines = _read(md).splitlines()
+        for i, line in enumerate(lines):
+            if _FENCE_OPEN.match(line):
+                preamble = "\n".join(lines[max(0, i - 5):i])
+                if not (_LV_RE.search(preamble) and _CR_RE.search(preamble)):
+                    missing.append((md, i + 1))
+    return missing
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 8: code-ref targets exist                                       [NEW]
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_code_ref_targets_exist() -> list[tuple[Path, int, str]]:
+    """v1 only checked that a code-ref comment was present, never that the path
+    was real. A diagram whose source file was deleted stayed green forever.
+    """
+    missing: list[tuple[Path, int, str]] = []
+    for md in _docs_files():
+        text = _read(md)
+        if _file_is_exempt(text):
+            continue
+        lines = text.splitlines()
+        exempt = _exempt_line_numbers(lines)
+        for i, line in enumerate(lines):
+            if i in exempt:
+                continue
+            m = _CR_RE.search(line)
+            if not m:
+                continue
+            for raw in m.group(1).split(","):
+                path = _normalise_code_path(raw)
+                if path and not _path_exists(path):
+                    missing.append((md, i + 1, path))
+    return missing
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 9: banned refs                          (from Again-Spring check-docs.js)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def check_banned_refs() -> list[tuple[Path, str]]:
+    """Docs must not tell readers to use a symbol that no longer exists.
+
+    Mentioning a deletion in a '부재하는 것' section is fine — the patterns are
+    written to match usage instructions, not bare mentions.
+    """
+    hits: list[tuple[Path, str]] = []
+    if not BANNED_DOC_REFS:
+        return hits
+    for md in _docs_files():
+        text = _read(md)
+        if _file_is_exempt(text):
+            continue
+        for pattern, reason in BANNED_DOC_REFS:
+            if pattern.search(text):
+                hits.append((md, reason))
+    return hits
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check 10: trigger-map globs and ADR related_code resolve              [NEW]
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _related_code_entries(text: str) -> list[str]:
+    fm = _FRONTMATTER_RE.match(text)
+    if not fm:
+        return []
+    out: list[str] = []
+    inside = False
+    for line in fm.group(1).splitlines():
+        if re.match(r"^related_code:\s*$", line):
+            inside = True
+            continue
+        if inside:
+            m = re.match(r"^\s+-\s+(.+?)\s*$", line)
+            if m:
+                out.append(m.group(1))
             else:
-                target = (md.parent / link_path).resolve()
-            # Allow directory links (trailing slash) by checking existence of path
-            if not target.exists():
-                broken.append(f"{md.relative_to(ROOT)} → {link_path}")
-    if broken:
-        err(f"깨진 상대 링크 {len(broken)}건:\n" + "\n".join(f"    {b}" for b in broken))
-    else:
-        ok(f"상대 링크 깨짐 없음")
+                inside = False
+    return out
 
 
-# ── Check 6: diagrams have last-verified + code-ref headers ─────────────────
-def check_diagram_headers() -> None:
-    print("\n[6] 다이어그램 포함 문서에 last-verified + code-ref 헤더 존재")
-    missing_header: list[str] = []
-    for md in DOCS_DIR.rglob("*.md"):
-        text = md.read_text(encoding="utf-8", errors="replace")
-        if "```mermaid" not in text:
+def check_code_paths_exist() -> list[tuple[Path, str]]:
+    """_index.md trigger-map code globs + every doc's related_code frontmatter.
+
+    Bit-Mania's own _index.md confessed this hole: 'the trigger map's code paths
+    are not verified — the linter passes even after the code is deleted'.
+    Measured on Bit-Mania: 16 of 39 related_code entries pointed at nothing.
+    """
+    missing: list[tuple[Path, str]] = []
+
+    if INDEX.exists():
+        text = _read(INDEX)
+        if not _file_is_exempt(text):
+            lines = text.splitlines()
+            exempt = _exempt_line_numbers(lines)
+            for i, line in enumerate(lines):
+                if i in exempt:
+                    continue
+                for m in _BACKTICK_RE.finditer(line):
+                    token = m.group(1).strip()
+                    if token.startswith("docs/"):
+                        continue                 # check 5 owns those
+                    if "/" not in token:
+                        continue                 # prose, not a path
+                    looks_like_code = token.endswith(CODE_EXTS) or "*" in token
+                    if not looks_like_code:
+                        continue
+                    path = _normalise_code_path(token)
+                    if path and not _path_exists(path):
+                        missing.append((INDEX, path))
+
+    for md in _docs_files():
+        text = _read(md)
+        if _file_is_exempt(text):
             continue
-        # Check top 20 lines for headers
-        header_zone = "\n".join(text.splitlines()[:20])
-        has_lv = "last-verified" in header_zone
-        has_cr = "code-ref" in header_zone
-        if not has_lv or not has_cr:
-            missing_what = []
-            if not has_lv:
-                missing_what.append("last-verified")
-            if not has_cr:
-                missing_what.append("code-ref")
-            missing_header.append(f"{md.relative_to(ROOT)} (없음: {', '.join(missing_what)})")
-    if missing_header:
-        err(f"헤더 누락 {len(missing_header)}건:\n" + "\n".join(f"    {h}" for h in missing_header))
+        for raw in _related_code_entries(text):
+            path = _normalise_code_path(raw)
+            if path and not _path_exists(path):
+                missing.append((md, path))
+
+    return missing
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Runner
+# ─────────────────────────────────────────────────────────────────────────────
+
+CHECKS = [
+    ("root-markdown-whitelist",    check_root_markdown_whitelist),
+    ("forbidden-diagram-dialects", check_forbidden_diagram_dialects),
+    ("mermaid-blocks-parseable",   check_mermaid_blocks_parseable),
+    ("index-markdown-links",       check_index_markdown_links),
+    ("index-backtick-paths",       check_index_backtick_paths),
+    ("relative-links-resolvable",  check_relative_links_resolvable),
+    ("mermaid-provenance-headers", check_mermaid_provenance_headers),
+    ("code-ref-targets-exist",     check_code_ref_targets_exist),
+    ("banned-refs",                check_banned_refs),
+    ("code-paths-exist",           check_code_paths_exist),
+]
+
+
+def _fmt(v: object) -> str:
+    if isinstance(v, tuple):
+        parts = [_rel(x) if isinstance(x, Path) else str(x) for x in v]
+        return "  " + "  ".join(parts)
+    return "  " + str(v)
+
+
+def main() -> int:
+    if not DOCS.is_dir():
+        print("FAIL  docs/ directory not found at %s" % _rel(DOCS))
+        return 1
+    fail = 0
+    for name, fn in CHECKS:
+        violations = fn()
+        if violations:
+            fail += 1
+            print("FAIL [%s]  (%d violation(s))" % (name, len(violations)))
+            for v in violations[:_MAX_SHOWN]:
+                print(_fmt(v))
+            if len(violations) > _MAX_SHOWN:
+                print("  ... and %d more" % (len(violations) - _MAX_SHOWN))
+        else:
+            print("PASS [%s]" % name)
+    if fail:
+        print("\n%d/%d check(s) failed." % (fail, len(CHECKS)))
     else:
-        ok("모든 다이어그램 문서에 헤더 존재")
+        print("\nAll %d checks passed." % len(CHECKS))
+    return 1 if fail else 0
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("=" * 60)
-    print("WaggleBot docs lint — 6개 검사")
-    print("=" * 60)
-
-    check_root_md()
-    check_no_c4_syntax()
-    check_mermaid_blocks()
-    check_index_links()
-    check_relative_links()
-    check_diagram_headers()
-
-    print("\n" + "=" * 60)
-    if errors:
-        print(f"FAIL — {len(errors)}개 항목 실패")
-        sys.exit(1)
-    else:
-        print(f"PASS — 6개 검사 모두 통과")
-        sys.exit(0)
+    sys.exit(main())
