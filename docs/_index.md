@@ -1,72 +1,89 @@
+---
+title: docs — 문서 지도 & Doc-Sync 트리거 맵
+last_updated: 2026-08-31
+---
+
 # docs/_index.md — 문서 지도 & Doc-Sync 트리거 맵
 
-> **충돌 해결:** 코드(runtime) > 이 문서 > 하위 docs. 문서 간 충돌은 `last-verified`가 최신인 쪽 우선.
+> **SSOT 해결 규칙**: 충돌 시 **코드(runtime) > 이 문서 > 다른 문서** 순으로 우선한다.
+> 새 컨텍스트를 시작할 때 이 파일을 첫 번째로 읽는다.
 
-## 계층 인덱스 (C4 줌 순서)
+## §1. 계층 인덱스 (대분류 × 계층)
 
-| 계층 | 경로 | last-verified | authority |
-|------|------|---------------|-----------|
-| 00 Agent | [00-agent/development-playbook.md](00-agent/development-playbook.md) | 2026-06-25 | `AGENTS.md`, `CLAUDE.md`, 코드 전역 |
-| 10 Context | [10-context/system-context.md](10-context/system-context.md) | 2026-06-12 | 전역 / 코드 |
-| 20 Container | [20-containers/topology.md](20-containers/topology.md) | 2026-06-25 | `env/docker-compose.yml` |
-| 20 Config | [20-containers/config.md](20-containers/config.md) | 2026-06-25 | `config/settings.py` |
-| 30 Pipeline | [30-components/pipeline.md](30-components/pipeline.md) | 2026-06-13 | `worker/ai_worker/pipeline/content_processor.py` |
-| 30 Overview | [30-components/overview.md](30-components/overview.md) | 2026-06-25 | `worker/ai_worker/`, `worker/crawlers/` |
-| 30 Status | [30-components/implementation-status.md](30-components/implementation-status.md) | 2026-06-25 | 코드 전역 |
-| 40 Data | [40-data/schema.md](40-data/schema.md) | 2026-06-25 | `worker/db/migrations/`, Flyway |
-| 50 API Spec | [50-api/rest-spec.md](50-api/rest-spec.md) | 2026-06-25 | backend controller, llm-worker |
-| 50 API Flows | [50-api/flows.md](50-api/flows.md) | 2026-06-12 | `worker/llm/LlmController.java` |
-| 60 State | [60-runtime/post-state-machine.md](60-runtime/post-state-machine.md) | 2026-06-12 | `worker/db/models.py` PostStatus |
-| 60 Runtime | [60-runtime/pipeline-runtime.md](60-runtime/pipeline-runtime.md) | 2026-06-13 | `worker/ai_worker/core/processor.py` |
-| 70 Policy | [70-policy/constraints.md](70-policy/constraints.md) | 2026-06-25 | CLAUDE.md / ADR |
-| 90 ADR | [90-adr/](90-adr/) | — | 결정 기록 |
+| 계층 | `backend/` | `frontend/` | `telegram/` | `worker/` | `shared/` |
+|---|---|---|---|---|---|
+| **00** agent | — | — | — | — | `00-agent.md` |
+| **10** context | — | — | — | — | `10-context.md` 🏛 |
+| **20** containers | — | — | — | `20-containers.md` | `20-containers.md` 🏛 |
+| **30** components | — | — | — | `30-components/` (3) | — |
+| **40** data | — | — | — | — | `40-data.md` 🏛 |
+| **50** api | `50-api.md` | — | — | `50-api.md` | — |
+| **60** runtime | — | — | — | `60-runtime.md` | `60-runtime.md` 🏛 |
+| **70** policy | — | — | — | — | `70-policy.md` 🏛 |
+| **90** adr | — | — | — | — | `90-adr/` (6) 🏛 |
 
----
+경로 접두 `docs/<대분류>/`. frontend·telegram 문서는 없다 (빈 껍데기 금지). compose는 `docs/` 를 마운트하지 않는다.
 
-## 트리거 맵 — 코드 변경 → 갱신할 문서
+## §2. 작업별 진입 문서
 
-> §2.1 SSOT Doc-Sync 게이트가 이 표를 참조한다.
+| 작업 | 1차 진입(이것만 읽기) | 2차(필요 시) | 실제 코드 확인 |
+|---|---|---|---|
+| 에이전트 작업 절차 | `docs/shared/00-agent.md` | `docs/_index.md` | `AGENTS.md` |
+| 시스템 전체 그림 | `docs/shared/10-context.md` | `docs/shared/20-containers.md` | `env/docker-compose.yml` |
+| 배포 · 포트 · VRAM | `docs/shared/20-containers.md` | `docs/worker/20-containers.md` | `env/docker-compose.yml` |
+| worker 설정 | `docs/worker/20-containers.md` | `docs/shared/20-containers.md` | `config/settings.py` |
+| 파이프라인 Phase | `docs/worker/30-components/pipeline.md` | `docs/worker/60-runtime.md` | `worker/ai_worker/pipeline/content_processor.py` |
+| 모듈 · 크롤러 | `docs/worker/30-components/overview.md` | `docs/worker/30-components/implementation-status.md` | `worker/ai_worker/` · `worker/crawlers/` |
+| DB 스키마 | `docs/shared/40-data.md` | — | `worker/db/migrations/` · `backend/src/main/resources/db/migration/` |
+| Backend REST | `docs/backend/50-api.md` | `docs/worker/50-api.md` | `backend/src/main/java/com/wagglebot/controller/` |
+| llm-worker 흐름 | `docs/worker/50-api.md` | `docs/backend/50-api.md` | `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java` |
+| Post 상태 전이 | `docs/shared/60-runtime.md` | `docs/worker/60-runtime.md` | `worker/db/models.py` |
+| 처리 루프 · 폴백 | `docs/worker/60-runtime.md` | `docs/worker/30-components/pipeline.md` | `worker/ai_worker/core/processor.py` |
+| 하드 제약 | `docs/shared/70-policy.md` | `docs/shared/90-adr/` | ADR `related_code` |
+| ADR | `docs/shared/90-adr/` | `docs/shared/90-adr/design-notes.md` | — |
 
-| 코드 영역 (glob) | 갱신 대상 문서 |
-|-----------------|---------------|
-| `AGENTS.md`, `CLAUDE.md` 라우팅/규칙 변경 | `70-policy/constraints.md`, 이 파일(`_index.md`), `00-agent/development-playbook.md` |
-| `README.md` 구조·설치·링크 변경 | 관련 SSOT 문서, 이 파일(`_index.md`) |
-| `docs/00-agent/**` | 이 파일(`_index.md`), 필요 시 `AGENTS.md`/`CLAUDE.md` |
-| `env/docker-compose.yml` (서비스·포트·볼륨) | `20-containers/topology.md`, README 포트표 |
-| `config/settings.py`, `config/pipeline.json` | `20-containers/config.md` |
-| `config/scene_policy.json`, `config/video_styles.json` | `20-containers/config.md` |
-| `worker/db/models.py`, `worker/db/migrations/**` | `40-data/schema.md` |
-| `backend/**/db/migration/**` (Flyway) | `40-data/schema.md` |
-| `backend/**/controller/**` | `50-api/rest-spec.md` |
-| `worker/llm/**` (llm-worker API 변경) | `50-api/rest-spec.md`, `50-api/flows.md` |
-| `worker/ai_worker/pipeline/**`, `scene/**`, `video/**`, `tts/**`, `renderer/**` | `30-components/pipeline.md` |
-| `worker/ai_worker/core/processor.py` | `60-runtime/pipeline-runtime.md` |
-| `worker/db/models.py` PostStatus 변경 | `60-runtime/post-state-machine.md` |
-| `worker/ai_worker/**` (VRAM 배분 변경) | `20-containers/topology.md` (VRAM pie) |
-| 하드 제약 추가·변경·제거 | `90-adr/` 신규 ADR, `70-policy/constraints.md` |
-| 크롤러 플러그인 추가 | `30-components/implementation-status.md`, `30-components/overview.md` |
-| `env/.env` 환경변수 추가 | `20-containers/config.md`, `20-containers/topology.md` |
+## §4. 문서 권위 그래프
 
----
+| 충돌 | 이긴 쪽 |
+|---|---|
+| 코드 vs 문서 | 코드 |
+| 이 파일 vs 다른 문서 | 이 파일 |
+| `docs/shared/70-policy.md` vs `AGENTS.md` 제약 표 | `docs/shared/70-policy.md` |
 
-## docs/90-adr/ 현황
+## §5. Doc-Sync 트리거 맵
 
-| 번호 | 파일 | 결정 요약 |
-|------|------|-----------|
-| 0001 | [0001-comfyui-lowvram.md](90-adr/0001-comfyui-lowvram.md) | ComfyUI `--lowvram` 고정, `--normalvram` 금지 |
-| 0002 | [0002-single-nvenc.md](90-adr/0002-single-nvenc.md) | 렌더러 NVENC 단일 패스 (filter_complex 통합) |
-| 0003 | [0003-phase56-parallel.md](90-adr/0003-phase56-parallel.md) | Phase 5(TTS)+6(video_prompt) asyncio.gather 병렬 |
-| 0004 | [0004-clip-4-6s-frames-145.md](90-adr/0004-clip-4-6s-frames-145.md) | 클립 4~6초 정책 + 동적 프레임 상한 145 |
-| 0005 | [0005-openaudio-s1-mini.md](90-adr/0005-openaudio-s1-mini.md) | TTS OpenAudio S1-mini 업그레이드 + reference_id 음성 구조 |
+| # | 코드 영역 (glob) | 갱신 대상 문서 | 등급 |
+|---|---|---|---|
+| 1 | `AGENTS.md` | `docs/shared/70-policy.md` · `docs/_index.md` · `docs/shared/00-agent.md` | M |
+| 2 | `env/docker-compose.yml` | `docs/shared/20-containers.md` · `README.md` | M |
+| 3 | `config/settings.py` | `docs/worker/20-containers.md` | M |
+| 4 | `config/pipeline.json` | `docs/worker/20-containers.md` | M |
+| 5 | `config/scene_policy.json` | `docs/worker/20-containers.md` | M |
+| 6 | `config/video_styles.json` | `docs/worker/20-containers.md` | M |
+| 7 | `worker/db/models.py` | `docs/shared/40-data.md` · `docs/shared/60-runtime.md` | M |
+| 8 | `worker/db/migrations/**` | `docs/shared/40-data.md` | M |
+| 9 | `backend/src/main/resources/db/migration/**` | `docs/shared/40-data.md` | M |
+| 10 | `backend/src/main/java/com/wagglebot/controller/**` | `docs/backend/50-api.md` | M |
+| 11 | `worker/llm/**` | `docs/backend/50-api.md` · `docs/worker/50-api.md` | M |
+| 12 | `worker/ai_worker/pipeline/**` | `docs/worker/30-components/pipeline.md` | M |
+| 13 | `worker/ai_worker/scene/**` | `docs/worker/30-components/pipeline.md` | M |
+| 14 | `worker/ai_worker/video/**` | `docs/worker/30-components/pipeline.md` | M |
+| 15 | `worker/ai_worker/tts/**` | `docs/worker/30-components/pipeline.md` | M |
+| 16 | `worker/ai_worker/renderer/**` | `docs/worker/30-components/pipeline.md` | M |
+| 17 | `worker/ai_worker/core/processor.py` | `docs/worker/60-runtime.md` | M |
+| 18 | `worker/crawlers/**` | `docs/worker/30-components/overview.md` · `docs/worker/30-components/implementation-status.md` | C |
+| 19 | 하드 제약 추가·변경 | `docs/shared/90-adr/` · `docs/shared/70-policy.md` | M |
 
-> 결정 배경 노트 → [90-adr/design-notes.md](90-adr/design-notes.md)
+## §6. Code → Docs 역인덱스
 
----
-
-## pre-push 체크리스트 (수동)
-
-1. 위 트리거 맵에서 변경한 코드 영역 → 대응 문서 식별
-2. 대응 문서 + README.md 갱신 후 `last-verified` 날짜 업데이트 — **같은 커밋**
-3. `python3 scripts/lint_docs.py` 통과 확인
-4. 신규 하드 제약 발생 시 → `90-adr/` ADR 작성 + `70-policy/constraints.md` 갱신
-5. 갱신 없으면 커밋 메시지에 `Doc-Sync: 없음` 명시
+| 코드 경로 접두 | 소유 모듈 | 먼저 읽을 문서 | 권위본 |
+|---|---|---|---|
+| `worker/ai_worker/pipeline/**` | worker | `docs/worker/30-components/pipeline.md` | 🏛 |
+| `worker/ai_worker/core/processor.py` | worker | `docs/worker/60-runtime.md` | |
+| `worker/ai_worker/scene/**` | worker | `docs/worker/30-components/pipeline.md` | |
+| `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java` | worker | `docs/worker/50-api.md` | |
+| `backend/src/main/java/com/wagglebot/controller/**` | backend | `docs/backend/50-api.md` | |
+| `worker/db/models.py` | shared | `docs/shared/40-data.md` | `docs/shared/60-runtime.md` |
+| `env/docker-compose.yml` | shared | `docs/shared/20-containers.md` | |
+| `config/settings.py` | worker | `docs/worker/20-containers.md` | |
+| `scripts/lint_docs.py` | shared | 이 파일. 검사 4·5·10이 링크와 코드 glob 실재를 본다. | |
