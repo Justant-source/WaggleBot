@@ -94,7 +94,7 @@ whispering→`(whispering)`, neutral→`""`, friendly→`(relaxed)`, surprised�
 | `VIDEO_RESOLUTION_FALLBACK` | `(768, 512)` | 폴백 해상도 |
 | `VIDEO_NUM_FRAMES` | `97` | 기본 프레임 수 (1+8×12, estimated_tts_sec 없을 때) |
 | `VIDEO_NUM_FRAMES_FALLBACK` | `65` | 폴백 프레임 수 (1+8×8) |
-| `VIDEO_NUM_FRAMES_MAX` | `145` | 동적 프레임 상한 (1+8×18 = 6.04초 @24fps) → [ADR-0004](../90-adr/0004-clip-4-6s-frames-145.md) |
+| `VIDEO_NUM_FRAMES_MAX` | `145` | 동적 프레임 상한 (1+8×18 = 6.04초 @24fps) → [ADR-0004](../shared/90-adr/0004-clip-4-6s-frames-145.md) |
 | `VIDEO_FPS` | `24` | 프레임레이트 |
 | `VIDEO_STEPS` | `20` | Full 모델 denoising steps |
 | `VIDEO_STEPS_DISTILLED` | `8` | Distilled 모델 steps |

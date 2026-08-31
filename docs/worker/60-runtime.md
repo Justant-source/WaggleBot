@@ -75,6 +75,9 @@ prepend했다. 최종 MP4의 첫 text→speech silence는 `0.149592s`, outro tex
 
 `video_gen_enabled_for_post(post_id)`가 `true`일 때만 실행. ComfyUI LTX-2 실패 시 순차 폴백:
 
+<!-- last-verified: 2026-08-14 -->
+<!-- code-ref: worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, worker/ai_worker/renderer/ -->
+
 ```mermaid
 flowchart LR
     F1[Full<br/>1280×720, 동적 프레임≤145<br/>20 steps] -->|실패| F2
@@ -85,11 +88,14 @@ flowchart LR
 
 - `video_prompt_simplified`(앵커 유지)를 F2에서 사용
 - F4에서도 실패하면 해당 씬을 삭제하고 인접 씬을 병합하여 파이프라인 계속
-- LTX-2 프레임 규칙: `1+8k` (9~145) — `video_utils.validate_frame_count()` 필수 → [ADR-0004](../90-adr/0004-clip-4-6s-frames-145.md)
+- LTX-2 프레임 규칙: `1+8k` (9~145) — `video_utils.validate_frame_count()` 필수 → [ADR-0004](../shared/90-adr/0004-clip-4-6s-frames-145.md)
 
 ## Phase 5‖6 병렬 시퀀싱
 
 `VIDEO_GEN_ENABLED=true`일 때 `asyncio.gather(tts_phase(), video_prompt_phase())`로 동시 실행.
+
+<!-- last-verified: 2026-08-14 -->
+<!-- code-ref: worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, worker/ai_worker/renderer/ -->
 
 ```mermaid
 sequenceDiagram
@@ -107,9 +113,12 @@ sequenceDiagram
 ```
 
 - Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경 → 뮤텍스 불필요
-- GPU Phase(TTS·ComfyUI)를 병렬에 포함 **금지** → [ADR-0003](../90-adr/0003-phase56-parallel.md)
+- GPU Phase(TTS·ComfyUI)를 병렬에 포함 **금지** → [ADR-0003](../shared/90-adr/0003-phase56-parallel.md)
 
 ## 피드백 루프
+
+<!-- last-verified: 2026-08-14 -->
+<!-- code-ref: worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, worker/ai_worker/renderer/ -->
 
 ```mermaid
 flowchart LR
@@ -121,5 +130,5 @@ flowchart LR
 
 > 피드백 주입은 `analytics.feedback.build_extra_instructions()`를 경유한다. extra_instructions + mood_weights>1.1 선호 mood 힌트 + A/B variant_config를 합쳐 Phase 2(chunk)·레거시(generate_script) 양 경로의 user tail에 붙인다.
 
-> Post 상태 전이 → [`docs/60-runtime/post-state-machine.md`](post-state-machine.md)
-> Phase별 책임 → [`docs/30-components/pipeline.md`](../30-components/pipeline.md)
+> Post 상태 전이 → [`docs/shared/60-runtime.md`](../shared/60-runtime.md)
+> Phase별 책임 → [`docs/worker/30-components/pipeline.md`](30-components/pipeline.md)

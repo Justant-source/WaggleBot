@@ -5,6 +5,9 @@
 
 ## ai_worker 내부 모듈 구조
 
+<!-- last-verified: 2026-06-25 -->
+<!-- code-ref: worker/ai_worker/, worker/crawlers/, worker/uploaders/, backend/, frontend/ -->
+
 ```mermaid
 flowchart LR
     subgraph Core["core/"]
@@ -84,6 +87,9 @@ flowchart LR
 
 ## 크롤러 / 업로더 플러그인
 
+<!-- last-verified: 2026-06-25 -->
+<!-- code-ref: worker/ai_worker/, worker/crawlers/, worker/uploaders/, backend/, frontend/ -->
+
 ```mermaid
 flowchart LR
     subgraph Crawlers["worker/crawlers/"]
@@ -119,5 +125,5 @@ flowchart LR
 | `dashboard_worker` | `worker/dashboard_worker/` | `jobs` 테이블 폴링 → Job 실행 (Python) |
 | `llm-worker` | `worker/llm/` | Spring Boot Claude CLI 브릿지 :8090 |
 
-> 8-Phase 상세 → [`pipeline.md`](pipeline.md)
-> 처리 루프 → [`../60-runtime/pipeline-runtime.md`](../60-runtime/pipeline-runtime.md)
+> 8-Phase 상세 → [pipeline.md](pipeline.md)
+> 처리 루프 → [`../60-runtime/pipeline-runtime.md`](../60-runtime.md)

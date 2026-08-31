@@ -5,6 +5,9 @@
 
 ## llm-worker 내부 동작 흐름
 
+<!-- last-verified: 2026-06-12 -->
+<!-- code-ref: worker/llm/src/main/java/com/wagglebot/llmworker/ -->
+
 ```mermaid
 sequenceDiagram
     participant PY as Python ai_worker
@@ -26,6 +29,9 @@ sequenceDiagram
 
 ## JSON Mode 처리 흐름
 
+<!-- last-verified: 2026-06-12 -->
+<!-- code-ref: worker/llm/src/main/java/com/wagglebot/llmworker/ -->
+
 ```mermaid
 flowchart LR
     J1[systemPrompt에<br/>JSON 지시문 추가] --> J2[LLM 응답 수신]
@@ -39,5 +45,5 @@ flowchart LR
 
 > **주의 (LLM Proxy JSON quirk):** 프록시가 `jsonMode` 무시·코드펜스 첨부 가능 → Python 측에서 항상 `extract_json_object()`로 파싱할 것. `jsonValid=false` 응답도 텍스트 파싱 시도 필수.
 
-> 엔드포인트 명세 → [`rest-spec.md`](rest-spec.md)
-> Phase 5‖6 병렬 시퀀싱 → [`../60-runtime/pipeline-runtime.md`](../60-runtime/pipeline-runtime.md)
+> 엔드포인트 명세 → [`docs/backend/50-api.md`](../backend/50-api.md)
+> Phase 5‖6 병렬 시퀀싱 → [`../60-runtime/pipeline-runtime.md`](60-runtime.md)

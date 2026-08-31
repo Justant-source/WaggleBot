@@ -9,6 +9,9 @@
 
 ## 전체 파이프라인 흐름
 
+<!-- last-verified: 2026-08-14 -->
+<!-- code-ref: worker/ai_worker/pipeline/content_processor.py, worker/ai_worker/core/processor.py, worker/ai_worker/scene/director.py, worker/ai_worker/renderer/ -->
+
 ```mermaid
 flowchart TD
     START([APPROVED Post]) --> P1
@@ -163,8 +166,8 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 - **LTX-2 프레임 규칙:** `1+8k` (9, 17, ..., 145) — `video_utils.validate_frame_count()` 필수.
   프레임 수는 `scene.estimated_tts_sec` 기반 동적 계산(`calc_frames_from_duration`),
   상한 `VIDEO_NUM_FRAMES_MAX=145`(6.04초 @24fps) — 씬 병합 4.0~6.0초 정책과 동기
-  → [ADR-0004](../90-adr/0004-clip-4-6s-frames-145.md)
-- 4단계 폴백 상세 → [`docs/60-runtime/pipeline-runtime.md`](../60-runtime/pipeline-runtime.md)
+  → [ADR-0004](../../shared/90-adr/0004-clip-4-6s-frames-145.md)
+- 4단계 폴백 상세 → [`docs/worker/60-runtime.md`](../60-runtime.md)
 
 ### Phase 8 — FFmpeg 렌더링
 - `h264_nvenc` (NVENC 필수, `libx264` 금지)
@@ -180,6 +183,9 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 
 ## LLM 모델 라우팅
 
+<!-- last-verified: 2026-08-14 -->
+<!-- code-ref: worker/ai_worker/pipeline/content_processor.py, worker/ai_worker/core/processor.py, worker/ai_worker/scene/director.py, worker/ai_worker/renderer/ -->
+
 ```mermaid
 flowchart LR
     CALL[call_llm call_type] --> ROUTER[pick_model]
@@ -192,4 +198,17 @@ flowchart LR
 `call_llm(images=[...])`은 vision 입력(api 백엔드 전용, base64 image block) — cli 백엔드는 무시+경고.
 호출 전 `llm_backend_supports_vision()`으로 판단할 것.
 
-> 처리 루프·4단계 폴백·피드백 루프 → [`docs/60-runtime/pipeline-runtime.md`](../60-runtime/pipeline-runtime.md)
+> 처리 루프·4단계 폴백·피드백 루프 → [`docs/worker/60-runtime.md`](../60-runtime.md)
+
+## 부재하는 것 (정상/리팩터)
+
+아래 README는 리팩터 후 폐기됐다. 내용은 이 문서에 통합한다.
+
+- `worker/ai_worker/core/README.md` — 폐기 (2026-06-13)
+- `worker/ai_worker/pipeline/README.md` — 폐기
+- `worker/ai_worker/renderer/README.md` — 폐기
+- `worker/ai_worker/scene/README.md` — 폐기
+- `worker/ai_worker/script/README.md` — 폐기
+- `worker/ai_worker/tts/README.md` — 폐기
+- `worker/ai_worker/video/README.md` — 폐기
+- `worker/ai_worker/tts/README.md`가 가리키던 `assets/pronunciation_map.json`, `assets/slang_map.json` — 자산 없음. 발음/슬랭 매핑은 코드·설정을 따른다.
