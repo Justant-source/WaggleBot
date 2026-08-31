@@ -1,18 +1,27 @@
 # WaggleBot — 파이프라인 런타임 동작
 
-> last-verified: 2026-08-05 · code-ref: `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/`
+> last-verified: 2026-08-14 · code-ref: `worker/ai_worker/core/main.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/`
 > scope: ai_worker 처리 루프, 4단계 폴백, 피드백 루프, Phase5‖6 병렬 시퀀싱 — SSOT
 
 ## 처리 루프
 
 `ai_worker/core/processor.py`:
 
-1. `Post.status == APPROVED` 폴링 (`AI_POLL_INTERVAL=10초`)
+1. `Post.status == APPROVED` 폴링 (`AI_POLL_INTERVAL=10초`). `again_spring`은 `MARKETING_CRITICAL`로 일반 잡보다 먼저 선택하며 렌더 대기열도 priority 순서다.
 2. 상태 → `PROCESSING` 전환
 3. 8-Phase 실행 (`content_processor.py`)
 4. 성공 → `PREVIEW_RENDERED` / `RENDERED`
 5. 실패 → `FAILED`, `retry_count++`, `MAX_RETRY_COUNT=3` 초과 시 영구 FAILED
-6. **하트비트**: 각 Phase 경계에서 `posts.updated_at` 갱신 — 15분 이상 미갱신 시 "응답 없음" 배지
+6. **하트비트**: 각 Phase 경계에서 `posts.updated_at`와 `content_runtime_state(progress).last_heartbeat_at`을 갱신한다. 진행률·Phase 7 체크포인트·SLA·품질 진단은 서로 다른 state row를 원자적 upsert하므로 장시간 렌더 세션과 충돌하지 않는다.
+
+렌더 단계는 진행률을 별도 세션으로 저장한 직후 기존 읽기 트랜잭션을 종료하고 최신 `contents` 행을 다시 읽는다. 마케팅 deadline 상태 저장이 같은 행의 오래된 스냅샷을 커밋해 MariaDB errno 1020으로 렌더를 실패시키는 것을 방지한다.
+
+## Again Spring 마케팅 고속 경로
+
+- 외부 요청이 `preScripted=true`이면 원격 Claude 청킹을 건너뛰고 제목/본문을 로컬 문장 분할해 TTS로 보낸다. Claude는 원격 호출이므로 GPU 락을 점유하지 않으며 Fish Speech와 비디오 구간만 같은 GPU 락을 사용한다.
+- `deadlineAt`을 넘긴 critical 작업은 `FAILED`로 고정하지 않고 `content_runtime_state(sla)`에 degraded 사유를 남긴다. pre-scripted 마케팅 렌더의 댓글 정책은 SLA와 무관하게 좋아요 상위 2개(동률은 댓글 ID)다.
+- 댓글 보이스는 작성자 해시로 결정적으로 선택하며 voice/text/emotion 키의 전역 WAV 캐시를 Reels·Shorts 재시도 간 공유한다.
+- 본문 길이 품질 게이트는 hook·사연·CTA의 narrator WAV만 대상으로 한다. 댓글 2개와 아웃트로는 별도 tail이며 `generation_diagnostics`에 본문/댓글/아웃트로/최종 MP4 길이를 남긴다.
 
 ## 게시글별 video_gen 오버라이드
 

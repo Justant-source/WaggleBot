@@ -8,6 +8,7 @@ import com.wagglebot.common.JobType;
 import com.wagglebot.common.PostStatus;
 import com.wagglebot.domain.Content;
 import com.wagglebot.domain.ContentRepository;
+import com.wagglebot.domain.ContentRuntimeStateRepository;
 import com.wagglebot.domain.Post;
 import com.wagglebot.domain.PostRepository;
 import com.wagglebot.external.ExternalIngestService;
@@ -40,6 +41,7 @@ public class ExternalJobController {
     private final ExternalIngestService ingestService;
     private final PostRepository postRepo;
     private final ContentRepository contentRepo;
+    private final ContentRuntimeStateRepository runtimeStateRepo;
     private final JobService jobService;
     private final ObjectMapper objectMapper;
 
@@ -68,7 +70,24 @@ public class ExternalJobController {
         body.put("jobId", post.getId());
         body.put("status", post.getStatus().name());
         body.put("externalId", post.getOriginId());
-        body.put("progress", content != null ? parseProgress(content.getPipelineState()) : null);
+        JsonNode progressState = runtimeState(content, "progress");
+        body.put("progress", parseProgress(progressState != null ? progressState : content != null ? content.getPipelineState() : null));
+        if (content != null && content.getVariantConfig() != null) {
+            JsonNode cfg = content.getVariantConfig();
+            body.put("priority", cfg.path("priority").asText("NORMAL"));
+            if (cfg.hasNonNull("deadline_at")) body.put("deadlineAt", cfg.get("deadline_at").asText());
+        }
+        if (content != null) {
+            JsonNode state = runtimeState(content, "sla");
+            if (state == null) state = content.getPipelineState();
+            if (state == null) state = objectMapper.getNodeFactory().nullNode();
+            body.put("degraded", state.path("degraded").asBoolean(false));
+            if (state.has("degrade_reasons")) body.put("degradeReasons", state.get("degrade_reasons"));
+            JsonNode diagnostics = runtimeState(content, "generation_diagnostics");
+            if (diagnostics != null) body.put("generationDiagnostics", diagnostics);
+        }
+
+        if (post.getStatus() == PostStatus.FAILED) addFailure(body, content, post.getLastError());
 
         boolean rendered = post.getStatus() == PostStatus.PREVIEW_RENDERED || post.getStatus() == PostStatus.RENDERED;
         if (rendered && content != null) {
@@ -80,6 +99,25 @@ public class ExternalJobController {
         }
 
         return ResponseEntity.ok(body);
+    }
+
+    private JsonNode runtimeState(Content content, String stateKey) {
+        if (content == null || content.getId() == null) return null;
+        return runtimeStateRepo.findByContentIdAndStateKey(content.getId(), stateKey)
+            .map(state -> state.getStateValue())
+            .orElse(null);
+    }
+
+    /** Every terminal response has a stable, safe failure envelope for ASM. */
+    private void addFailure(Map<String, Object> body, Content content, String lastError) {
+        JsonNode failure = runtimeState(content, "failure");
+        String fallback = lastError == null || lastError.isBlank() ? "pipeline failed" : lastError;
+        body.put("failureCode", failure == null ? "PIPELINE_UNKNOWN_ERROR" : failure.path("failure_code").asText("PIPELINE_UNKNOWN_ERROR"));
+        body.put("failureStage", failure == null ? "unknown" : failure.path("failure_stage").asText("unknown"));
+        body.put("retryable", failure == null || failure.path("retryable").asBoolean(true));
+        body.put("errorSummary", failure == null ? fallback.substring(0, Math.min(500, fallback.length())) : failure.path("error_summary").asText(fallback));
+        JsonNode diagnostics = runtimeState(content, "generation_diagnostics");
+        if (diagnostics != null) body.put("generationDiagnostics", diagnostics);
     }
 
     private Map<String, Object> buildArtifacts(Content content) {

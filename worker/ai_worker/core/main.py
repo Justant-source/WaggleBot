@@ -11,6 +11,9 @@ Fish Speech(~5GB)와 LTX-2(~12.7GB)는 RTX 3090 24GB에 동시 로드 불가.
 import asyncio
 import logging
 import signal
+from datetime import datetime, timezone
+
+from sqlalchemy import case
 
 from ai_worker.core.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
 from config.settings import AI_POLL_INTERVAL, CUDA_CONCURRENCY
@@ -31,6 +34,17 @@ def _mark_post_failed(post_id: int, error: str = "") -> None:
                 post.status = PostStatus.FAILED
                 post.last_error = error[:1000] if error else None
                 session.commit()
+                lower = error.lower()
+                if "record has changed since last read" in lower or "(1020)" in lower:
+                    code, stage = "INFRA_DB_CONFLICT", "runtime_state"
+                elif "tts" in lower or "audio" in lower:
+                    code, stage = "TTS_GENERATION_FAILED", "tts"
+                elif "llm" in lower or "claude" in lower:
+                    code, stage = "VARIANT_LLM_ERROR", "llm"
+                else:
+                    code, stage = "RENDER_FAILED", "render"
+                from ai_worker.core.progress import save_failure
+                save_failure(post_id, code=code, stage=stage, retryable=code != "VARIANT_LLM_ERROR", error_summary=error or "pipeline failed")
     except Exception:
         logger.exception("FAILED 마킹 실패: post_id=%d", post_id)
 
@@ -98,7 +112,12 @@ def _get_gpu_stage_lock() -> asyncio.Lock:
 # 파이프라인 워커
 # ---------------------------------------------------------------------------
 
-async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
+def _post_priority(post: Post) -> int:
+    """Smaller values run first; Again Spring is always marketing critical."""
+    return 0 if post.site_code == "again_spring" else 10
+
+
+async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
     """APPROVED 게시글을 폴링해 LLM+TTS 처리 후 render_queue에 적재."""
     from ai_worker.core.processor import RobustProcessor
     processor = RobustProcessor()
@@ -112,7 +131,10 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
             post = (
                 session.query(Post)
                 .filter(Post.status == PostStatus.APPROVED)
-                .order_by(Post.created_at.asc())
+                .order_by(
+                    case((Post.site_code == "again_spring", 0), else_=1),
+                    Post.created_at.asc(),
+                )
                 .first()
             )
             if post is not None:
@@ -128,37 +150,34 @@ async def _llm_tts_worker(render_queue: asyncio.Queue) -> None:
                 pass
             continue
 
-        # GPU 작업: LLM + TTS (gpu_lock으로 렌더 Phase 7과 직렬화)
+        # Claude LLM is remote and must never occupy the GPU/renderer lock.
+        # The narrow TTS lock below still protects Fish Speech from Phase 7.
         result = None
-        if gpu_lock.locked():
-            logger.info(
-                "⏳ GPU 사용 중 (렌더링/비디오 생성) — LLM+TTS 대기: post_id=%d", post_id
-            )
-        async with gpu_lock:
-            async with cuda_sem:
-                try:
-                    script, audio_path = await processor.llm_tts_stage(post_id)
-                    result = (post_id, script, audio_path)
-                except Exception as exc:
-                    from ai_worker.llm.transport import LLMContentRefusalError
-                    if isinstance(exc, LLMContentRefusalError):
-                        logger.warning("LLM 콘텐츠 거부: post_id=%d | %s", post_id, exc)
-                        _mark_post_declined(post_id, reason=str(exc))
-                    else:
-                        logger.exception("LLM+TTS 실패: post_id=%d", post_id)
-                        _mark_post_failed(post_id, error=repr(exc))
-                    await asyncio.sleep(5)
+        async with cuda_sem:
+            try:
+                script, audio_path = await processor.llm_tts_stage(post_id, tts_lock=gpu_lock)
+                result = (post_id, script, audio_path)
+            except Exception as exc:
+                from ai_worker.llm.transport import LLMContentRefusalError
+                if isinstance(exc, LLMContentRefusalError):
+                    logger.warning("LLM 콘텐츠 거부: post_id=%d | %s", post_id, exc)
+                    _mark_post_declined(post_id, reason=str(exc))
+                else:
+                    logger.exception("LLM+TTS 실패: post_id=%d", post_id)
+                    _mark_post_failed(post_id, error=repr(exc))
+                await asyncio.sleep(5)
 
         # gpu_lock 해제 후 큐 적재 (데드락 방지: 큐 만석 시 render_worker가 lock 필요)
         if result is not None:
-            await render_queue.put(result)
+            priority = _post_priority(post)
+            await render_queue.put((priority, datetime.now(timezone.utc).timestamp(), *result))
             logger.info("LLM+TTS 완료, 렌더 큐 적재: post_id=%d (큐 크기=%d)",
                         post_id, render_queue.qsize())
 
     logger.info("🛑 _llm_tts_worker 종료")
 
 
-async def _render_worker(render_queue: asyncio.Queue) -> None:
+async def _render_worker(render_queue: asyncio.PriorityQueue) -> None:
     """render_queue에서 꺼내 렌더링 (h264_nvenc GPU 인코딩).
 
     Phase 7(LTX-2 비디오 생성) 포함 시 gpu_lock으로 LLM+TTS와 직렬화.
@@ -169,7 +188,7 @@ async def _render_worker(render_queue: asyncio.Queue) -> None:
 
     while True:
         try:
-            post_id, script, audio_path = await asyncio.wait_for(
+            _priority, _queued_at, post_id, script, audio_path = await asyncio.wait_for(
                 render_queue.get(), timeout=2.0
             )
         except asyncio.TimeoutError:
@@ -270,12 +289,12 @@ async def _upload_loop() -> None:
 # 큐 드레인
 # ---------------------------------------------------------------------------
 
-def _drain_render_queue(render_queue: asyncio.Queue) -> None:
+def _drain_render_queue(render_queue: asyncio.PriorityQueue) -> None:
     """미처리 큐 항목의 포스트를 APPROVED로 복원한다."""
     drained = 0
     while not render_queue.empty():
         try:
-            post_id, _script, _audio = render_queue.get_nowait()
+            _priority, _queued_at, post_id, _script, _audio = render_queue.get_nowait()
             with SessionLocal() as session:
                 post = session.query(Post).filter_by(id=post_id).first()
                 if post is not None and post.status == PostStatus.PROCESSING:
@@ -304,7 +323,7 @@ async def _main_loop() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, request_shutdown)
 
-    render_queue: asyncio.Queue = asyncio.Queue(maxsize=4)
+    render_queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=4)
 
     try:
         await asyncio.gather(

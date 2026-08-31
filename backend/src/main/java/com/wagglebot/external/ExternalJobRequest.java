@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.List;
+import java.time.OffsetDateTime;
 
 /**
  * POST /api/external/jobs 요청 바디.
@@ -39,6 +40,11 @@ public record ExternalJobRequest(
         Integer maxDurationSec,
         /** Layout profile hint: reels_compact | shorts_standard. */
         String platformLayout,
+        /** Queue/SLA controls for time-sensitive external marketing content. */
+        String priority,
+        OffsetDateTime deadlineAt,
+        Boolean preScripted,
+        String renderProfile,
         /**
          * Channel-specific Sibomi insertion plan (role/image_id/caption/beat_index/size/dwell).
          * Accepts camelCase {@code sibomPlan} or snake_case {@code sibom_plan}.

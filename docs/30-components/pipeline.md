@@ -1,6 +1,6 @@
 # WaggleBot — AI 파이프라인 (8-Phase) 컴포넌트
 
-> last-verified: 2026-08-05 · code-ref: `worker/ai_worker/pipeline/content_processor.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/scene/director.py`, `worker/ai_worker/renderer/`
+> last-verified: 2026-08-14 · code-ref: `worker/ai_worker/pipeline/content_processor.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/scene/director.py`, `worker/ai_worker/renderer/`
 > scope: 8-Phase AI 파이프라인 Phase별 책임, LLM 라우팅 — SSOT
 
 ## 개요
@@ -80,6 +80,7 @@ flowchart TD
   - 추가 지시는 `analytics.feedback.build_extra_instructions()`가 조립 (feedback_config.json의 extra_instructions + mood_weights>1.1 선호 힌트 + variant_config). chunk(활성)/generate_script(레거시) 양 경로 공통
 - **system 프롬프트 (정적 캐시 prefix)**: 페르소나 + §0 자연스러움 + §1 자극 수위(순화) + **§2 리텐션 설계(2-1 Hook 강화 ~ 2-7 Closer)** + §3 자막 분할 + §4 블록·댓글·팩트 + 출력형식 + few-shot + 자가점검 + `get_llm_constraints_prompt()`. 동적 요소는 절대 system에 넣지 않음(캐시 무효화 방지)
 - 출력: `raw script dict` (hook/body/closer/title_suggestion/tags/mood)
+- Again Spring의 `variant_config.pre_scripted=true`는 이 원격 LLM 단계를 건너뛰고 제목/본문의 결정적 로컬 분할로 `ScriptData`를 만든다. 긴급 마케팅 경로의 대기열 지연을 줄이기 위한 선택이며, 일반 잡 동작은 변경하지 않는다.
 
 ### Phase 3 — validate_and_fix
 - `MAX_BODY_CHARS`, `MAX_HOOK_CHARS`, `MAX_CAPTION_CHARS` 검증
@@ -139,6 +140,7 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 - **정렬 모델 cache:** alignment가 faster-whisper를 import하기 전에 `HF_HOME`·Hub·Xet·XDG cache를 모두 `WHISPER_DOWNLOAD_ROOT` 하위 writable 경로로 고정하고 Xet을 비활성화한다. 컨테이너 uid 1000의 `/.cache` 권한 오류를 피한다.
 - **길이 검증:** WAV 헤더 파싱으로 초/자 계산, 0.05~0.35 범위 밖이면 재생성(비한국어/잘림 감지)
 - 결과: `scene.text_lines = [{"text": "...", "audio": "/path/to/audio.wav"}]`
+- 댓글 보이스는 작성자 값의 SHA-256으로 풀에서 결정적으로 선택한다. 댓글 chunk WAV는 `voice:text:emotion` 전역 캐시를 사용하므로 같은 댓글을 Reels·Shorts에서 다시 합성하지 않는다.
 - 워밍업 센티널 (`MEDIA_DIR/tmp/fish_warmup_state.json`): 6시간 이내 재시작 시 풀 워밍업 스킵
 - 음성 등록: `python -m tools.prepare_voice`(faster-whisper 자동 전사). 동일 key 재등록 시 fish-speech 재시작 필요(메모리 캐시 스테일)
 

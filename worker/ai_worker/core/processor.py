@@ -10,7 +10,7 @@ import logging
 import shutil
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -18,7 +18,10 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ai_worker.core.gpu_manager import get_gpu_manager, ModelType
-from ai_worker.core.progress import stamp_progress, clear_checkpoint_keep_progress
+from ai_worker.core.progress import (
+    stamp_progress, clear_checkpoint_keep_progress, mark_degraded,
+    load_render_checkpoint, save_render_checkpoint, save_generation_diagnostics, save_failure,
+)
 from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts.fish_client import synthesize as tts_synthesize
@@ -142,6 +145,99 @@ def _resolve_post_outro_text(post_id: int) -> str | None:
     """
     text = _resolve_post_variant_config(post_id).get("outro_text")
     return text if isinstance(text, str) and text.strip() else None
+
+
+def _is_marketing_critical(post_id: int) -> bool:
+    cfg = _resolve_post_variant_config(post_id)
+    return cfg.get("priority") == "MARKETING_CRITICAL" or cfg.get("source") == "again_spring"
+
+
+def _deadline_degraded(post_id: int) -> bool:
+    """Whether a critical job has spent its 10-minute quality budget."""
+    cfg = _resolve_post_variant_config(post_id)
+    if not _is_marketing_critical(post_id):
+        return False
+    raw = cfg.get("deadline_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        deadline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) >= deadline
+    except ValueError:
+        logger.warning("[marketing] invalid deadline_at post_id=%d: %r", post_id, raw)
+        return False
+
+
+def _persist_marketing_duration_diagnostics(
+    post_id: int, scenes: list, narration_audio: Path, video_path: Path,
+) -> None:
+    """Record final media facts without putting mutable diagnostics on contents."""
+    if not _is_marketing_critical(post_id):
+        return
+    from ai_worker.renderer._tts import _get_audio_duration
+    from ai_worker.scene.analyzer import estimate_tts_duration
+    from ai_worker.video.video_utils import get_video_duration
+
+    story_ms = round(_get_audio_duration(narration_audio) * 1000)
+    final_ms = round(get_video_duration(video_path) * 1000)
+    comment_estimate = 0.0
+    outro_estimate = 0.0
+    comment_count = 0
+    for scene in scenes:
+        if getattr(scene, "type", None) == "comments":
+            items = list(getattr(scene, "comment_items", []) or [])
+            comment_count += len(items)
+            comment_estimate += sum(estimate_tts_duration(str(item.get("content", ""))) for item in items)
+        elif getattr(scene, "type", None) == "outro":
+            outro_estimate += estimate_tts_duration(" ".join(getattr(scene, "text_lines", []) or []))
+    tail_ms = max(0, final_ms - story_ms)
+    estimate_total = comment_estimate + outro_estimate
+    outro_ms = round(tail_ms * outro_estimate / estimate_total) if estimate_total else 0
+    comment_ms = max(0, tail_ms - outro_ms)
+    save_generation_diagnostics(post_id, {
+        "story_duration_ms": story_ms,
+        "comment_duration_ms": comment_ms,
+        "outro_duration_ms": outro_ms,
+        "final_duration_ms": final_ms,
+        "comment_count": comment_count,
+        "duration_source": "ffprobe_story_and_final; tail_allocated_by_scene_estimate",
+    })
+
+
+def _deterministic_marketing_script(post: Post, narrator_voice: str) -> ScriptData:
+    """LLM-free safe path for pre-scripted Again Spring marketing jobs."""
+    from ai_worker.scene.again_spring_text import split_story_lines
+
+    source = " ".join((post.content or "").split())
+    lines = split_story_lines(source)
+    hook = (post.title or (lines.pop(0) if lines else "사연을 들려드릴게요")).strip()
+    body = [{"line_count": 1, "lines": [line], "type": "body"} for line in lines if line]
+    return ScriptData(
+        hook=hook[:80], body=body, closer="", title_suggestion=post.title or "",
+        tags=[], mood="daily", narrator_voice=narrator_voice,
+    )
+
+
+async def _with_phase_heartbeat(awaitable, post_id: int, phase: int, phase_name: str):
+    """Keep the external progress heartbeat fresh while a slow remote stage runs."""
+    import asyncio
+
+    async def beat() -> None:
+        while True:
+            await asyncio.sleep(30)
+            stamp_progress(post_id, phase, phase_name)
+
+    task = asyncio.create_task(beat())
+    try:
+        return await awaitable
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 # ===========================================================================
@@ -289,6 +385,7 @@ class RobustProcessor:
                     _scenes,
                     narration_audio=audio_path if audio_path and Path(audio_path).exists() else None,
                 )
+                _persist_marketing_duration_diagnostics(post.id, _scenes, audio_path, video_path)
                 logger.info("[Step 3/3] ✓ 렌더링 완료: %s", video_path)
 
                 # ===== Content 저장 (stale 객체 방지: 세션 갱신 후 re-fetch) =====
@@ -612,6 +709,24 @@ class RobustProcessor:
         post.status = PostStatus.FAILED
         post.last_error = str(last_error)[:1000] if last_error else None
         session.commit()
+        _failure = failure_type or FailureType.UNKNOWN_ERROR
+        _error_text = str(last_error or "").lower()
+        _code = {
+            FailureType.LLM_ERROR: "VARIANT_LLM_ERROR",
+            FailureType.TTS_ERROR: "TTS_GENERATION_FAILED",
+            FailureType.RENDER_ERROR: "RENDER_FAILED",
+            FailureType.NETWORK_ERROR: "NETWORK_ERROR",
+            FailureType.RESOURCE_ERROR: "RESOURCE_EXHAUSTED",
+            FailureType.UNKNOWN_ERROR: "PIPELINE_UNKNOWN_ERROR",
+        }[_failure]
+        if "record has changed since last read" in _error_text or "(1020)" in _error_text:
+            _code = "INFRA_DB_CONFLICT"
+        _stage = "llm" if _failure == FailureType.LLM_ERROR else "tts" if _failure == FailureType.TTS_ERROR else "render"
+        save_failure(
+            _post_id, code=_code, stage=_stage,
+            retryable=_failure != FailureType.LLM_ERROR,
+            error_summary=str(last_error or "pipeline failed"),
+        )
 
         logger.error(
             "⛔ 최종 실패 처리: post_id=%d → FAILED | "
@@ -767,20 +882,17 @@ class RobustProcessor:
 
             # 체크포인트 로드
             checkpoint: VideoCheckpoint | None = None
-            with SessionLocal() as ckpt_sess:
-                _content = ckpt_sess.query(Content).filter_by(post_id=post_id).first()
-                if _content and _content.pipeline_state:
-                    try:
-                        checkpoint = VideoCheckpoint.from_dict(_content.pipeline_state)
-                        logger.info(
-                            "[video] 체크포인트 로드: post=%d, 완료=%d/%d씬",
-                            post_id,
-                            len(checkpoint.video_scenes_done),
-                            checkpoint.total_scenes,
-                        )
-                    except Exception:
-                        logger.warning("[video] 체크포인트 파싱 실패 — 처음부터 시작", exc_info=True)
-                        checkpoint = None
+            _checkpoint_state = load_render_checkpoint(post_id)
+            if _checkpoint_state:
+                try:
+                    checkpoint = VideoCheckpoint.from_dict(_checkpoint_state)
+                    logger.info(
+                        "[video] 체크포인트 로드: post=%d, 완료=%d/%d씬",
+                        post_id, len(checkpoint.video_scenes_done), checkpoint.total_scenes,
+                    )
+                except Exception:
+                    logger.warning("[video] 체크포인트 파싱 실패 — 처음부터 시작", exc_info=True)
+                    checkpoint = None
 
             # 씬 완료 콜백: DB에 즉시 체크포인트 커밋
             _done_scenes: list[int] = list(checkpoint.video_scenes_done) if checkpoint else []
@@ -791,37 +903,12 @@ class RobustProcessor:
             def _on_scene_complete(scene_idx: int, clip_path: str) -> None:
                 _done_scenes.append(scene_idx)
                 _done_clips[str(scene_idx)] = clip_path
-                try:
-                    with SessionLocal() as cb_sess:
-                        ct = cb_sess.query(Content).filter_by(post_id=post_id).first()
-                        if ct is not None:
-                            # 기존 state 읽기 (progress 보존)
-                            state: dict = dict(ct.pipeline_state or {})
-                            # 체크포인트 키 갱신
-                            checkpoint_dict = VideoCheckpoint(
-                                phase=7,
-                                video_scenes_done=list(_done_scenes),
-                                video_clips=dict(_done_clips),
-                                total_scenes=len(scenes),
-                            ).to_dict()
-                            state.update(checkpoint_dict)
-                            # 진행 스탬프 갱신 (단일 쓰기)
-                            from datetime import datetime, timezone
-                            now = datetime.now(timezone.utc).isoformat()
-                            prev_p = state.get("progress") or {}
-                            state["progress"] = {
-                                "current_phase": 7,
-                                "phase_name": "비디오 클립",
-                                "phase_started_at": prev_p.get("phase_started_at", now) if prev_p.get("current_phase") == 7 else now,
-                                "scenes_done": len(_done_scenes),
-                                "total_scenes": len(scenes),
-                                "updated_at": now,
-                                "done": False,
-                            }
-                            ct.pipeline_state = state
-                            cb_sess.commit()
-                except Exception:
-                    logger.warning("[video] 체크포인트 저장 실패 (비치명적)", exc_info=True)
+                checkpoint_dict = VideoCheckpoint(
+                    phase=7, video_scenes_done=list(_done_scenes),
+                    video_clips=dict(_done_clips), total_scenes=len(scenes),
+                ).to_dict()
+                save_render_checkpoint(post_id, checkpoint_dict)
+                stamp_progress(post_id, 7, "비디오 클립", scenes_done=len(_done_scenes), total_scenes=len(scenes))
 
             scenes = await manager.generate_all_clips(
                 scenes=scenes,
@@ -877,7 +964,9 @@ class RobustProcessor:
     # 파이프라인 분리 스테이지 (병렬 처리용)
     # ===========================================================================
 
-    async def llm_tts_stage(self, post_id: int) -> tuple[ScriptData, Path]:
+    async def llm_tts_stage(
+        self, post_id: int, *, tts_lock: "asyncio.Lock | None" = None,
+    ) -> tuple[ScriptData, Path]:
         """LLM 대본 생성 + TTS 합성 (CUDA/GPU 단계).
 
         파이프라인 병렬화에서 독립적으로 호출되는 1단계.
@@ -947,6 +1036,12 @@ class RobustProcessor:
                         logger.debug("기존 summary 재사용 실패 — LLM 재생성", exc_info=True)
                         script = None
                 if script is None:
+                    _variant = _resolve_post_variant_config(post_id)
+                    if post.site_code == "again_spring" and _variant.get("pre_scripted") is True:
+                        script = _deterministic_marketing_script(post, _narrator_voice)
+                        logger.info("[marketing_fast] deterministic pre-scripted path post_id=%d", post_id)
+
+                if script is None:
                     # 활성 경로에도 제목·베스트 댓글·피드백 지시 전달 (레거시 경로와 동일)
                     _best = sorted(post.comments, key=lambda c: c.likes, reverse=True)[:5]
                     _comment_texts = [f"{c.author}: {c.content[:100]}" for c in _best]
@@ -999,12 +1094,27 @@ class RobustProcessor:
                 load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
             )
             stamp_progress(post_id, 5, "TTS 합성")
-            with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                # hook+body만 통합 합성 — render가 장면별 재합성 없이 이 wav를 분할 사용
-                audio_path = await self._safe_generate_tts(
-                    _narration, post_id, post.site_code, post.origin_id,
-                    voice_override=_post_voice,
-                )
+            # Remote Claude work above can proceed while a video job owns GPU.
+            # Only Fish Speech itself takes the shared GPU lock.
+            if tts_lock is not None and tts_lock.locked():
+                logger.info("[resource] video/TTS GPU lock 대기: post_id=%d", post_id)
+            if tts_lock is not None:
+                async with tts_lock:
+                    with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
+                        audio_path = await _with_phase_heartbeat(
+                            self._safe_generate_tts(
+                                _narration, post_id, post.site_code, post.origin_id,
+                                voice_override=_post_voice,
+                            ), post_id, 5, "TTS 합성",
+                        )
+            else:
+                with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
+                    audio_path = await _with_phase_heartbeat(
+                        self._safe_generate_tts(
+                            _narration, post_id, post.site_code, post.origin_id,
+                            voice_override=_post_voice,
+                        ), post_id, 5, "TTS 합성",
+                    )
             stamp_progress(post_id, 5, "TTS 합성", done=True)
             logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
 
@@ -1067,6 +1177,13 @@ class RobustProcessor:
 
             # Phase 4: 씬 배분
             stamp_progress(post_id, 4, "씬 구성")
+            # stamp_progress()는 별도 세션에서 Content.pipeline_state를 갱신한다.
+            # 기존 읽기 스냅샷을 끝내고 최신 행을 다시 읽어 deadline 상태 저장 시
+            # MariaDB errno 1020 충돌이 나지 않게 한다.
+            session.rollback()
+            post = session.query(Post).filter_by(id=post_id).first()
+            if post is None:
+                raise ValueError(f"Post {post_id} 없음")
             _db_cmts2 = sorted(
                 getattr(post, "comments", None) or [],
                 key=lambda c: getattr(c, "likes", 0) or 0,
@@ -1115,6 +1232,7 @@ class RobustProcessor:
                 voice_key=_post_voice,
                 narration_audio=audio_path if audio_path and Path(audio_path).exists() else None,
             )
+            _persist_marketing_duration_diagnostics(post_id, scenes, audio_path, video_path)
 
             # 렌더링 후 트랜잭션 갱신 ─ 장시간 렌더링(15분+) 중 대시보드가
             # contents 레코드를 수정하면 REPEATABLE READ 스냅샷이 오래되어

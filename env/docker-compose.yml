@@ -280,6 +280,7 @@ services:
       - ../config:/app/config
       - ../assets/media:/app/media
       - ../assets/voices:/app/media/voices:ro
+      - ../worker/ai_worker/renderer/settings.yaml:/app/config/renderer-settings.yaml:ro
     environment:
       SPRING_DATASOURCE_URL: "jdbc:mariadb://db:3306/wagglebot"
       SPRING_DATASOURCE_USERNAME: "wagglebot"

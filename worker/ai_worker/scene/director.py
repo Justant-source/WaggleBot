@@ -1355,7 +1355,30 @@ class SceneDirector:
         _use_sibom = self.site_code == "again_spring"
         body_images_for_dir = [] if _use_sibom else list(self._images)
 
-        if director_mode == "llm" and VIDEO_GEN_ENABLED and not _use_sibom:
+        if _use_sibom:
+            from ai_worker.scene.again_spring_text import (
+                build_body_scenes_from_script,
+                pack_undecorated_story_screens,
+            )
+            from ai_worker.scene.sibom_plan import (
+                apply_sibom_plan_to_body,
+                parse_sibom_plan,
+                sibom_cache_dir,
+            )
+
+            body_scenes = build_body_scenes_from_script(
+                self.script,
+                mood=mood,
+                tts_emotion=tts_emotion,
+                narrator_voice=self.narrator_voice,
+            )
+            apply_sibom_plan_to_body(
+                body_scenes,
+                parse_sibom_plan(self.variant_config),
+                sibom_cache_dir(self.post_id),
+            )
+            body_scenes = pack_undecorated_story_screens(body_scenes)
+        elif director_mode == "llm" and VIDEO_GEN_ENABLED:
             body_scenes = self._llm_direct_body(
                 body_items=body_items,
                 body_images=body_images_for_dir,
@@ -1374,18 +1397,6 @@ class SceneDirector:
             body_scenes = distribute_images(
                 body_items, body_images_for_dir, max_body_images,
                 tts_emotion=tts_emotion, mood=mood,
-            )
-
-        if _use_sibom:
-            from ai_worker.scene.sibom_plan import (
-                apply_sibom_plan_to_body,
-                parse_sibom_plan,
-                sibom_cache_dir,
-            )
-            apply_sibom_plan_to_body(
-                body_scenes,
-                parse_sibom_plan(self.variant_config),
-                sibom_cache_dir(self.post_id),
             )
 
         # _images에서 사용된 이미지 소모 추적
@@ -1428,13 +1439,15 @@ class SceneDirector:
         if policy:
             comments_rule = policy.get("scene_rules", {}).get("comments", {})
             if comments_rule.get("enabled", True) and self._db_comments:
-                top_n: int = comments_rule.get("top_n", 5)
+                # Marketing pre-scripted renders always use the top two comments.
+                # Tie-break by stable DB id so retries reproduce the same video.
+                is_marketing_prescripted = self.site_code == "again_spring" and self.variant_config.get("pre_scripted") is True
+                top_n: int = 2 if is_marketing_prescripted else comments_rule.get("top_n", 5)
                 dwell: float = float(comments_rule.get("dwell_sec", 4.0))
                 # likes 내림차순 정렬
                 sorted_cmts = sorted(
                     self._db_comments,
-                    key=lambda c: getattr(c, "likes", 0) or 0,
-                    reverse=True,
+                    key=lambda c: (-(getattr(c, "likes", 0) or 0), getattr(c, "id", 0) or 0),
                 )[:top_n]
                 comment_items: list[dict] = [
                     {
@@ -1469,6 +1482,9 @@ class SceneDirector:
             tts_emotion=tts_emotion,
             voice_override=self.narrator_voice,
         ))
+
+        if self.site_code == "again_spring" and (not scenes or scenes[-1].type != "outro"):
+            raise RuntimeError("LAYOUT_OUTRO_MISSING: Again Spring render must end with outro")
 
         logger.debug(
             "씬 배분: 총 %d개 (%s) [mood=%s, tts_emotion=%s, bgm=%s]",
@@ -1672,7 +1688,8 @@ class SceneDirector:
     def _assign_comment_voice(self, author: str) -> str | None:
         """댓글 작성자별 voice 배정. 동일 작성자=동일 목소리.
 
-        풀에서 내레이터와 겹치지 않는 키를 우선해 랜덤 선택한다 (최대 다양성).
+        풀에서 내레이터와 겹치지 않는 키를 우선해 작성자 기반으로 결정적으로 선택한다.
+        같은 댓글은 Reels/Shorts 재시도에서도 같은 voice/cache key를 사용한다.
         """
         key = author or "익명"
         if key in self._comment_author_voices:
@@ -1681,10 +1698,12 @@ class SceneDirector:
             pool = [v for v in self.comment_voices if v and v != self.narrator_voice]
             if not pool:
                 pool = [v for v in self.comment_voices if v]
-            used = set(self._comment_author_voices.values())
-            unused = [v for v in pool if v not in used]
-            pick_from = unused or pool
-            voice = random.choice(pick_from) if pick_from else self.narrator_voice
+            if pool:
+                import hashlib
+                digest = hashlib.sha256(key.encode("utf-8")).digest()
+                voice = pool[int.from_bytes(digest[:8], "big") % len(pool)]
+            else:
+                voice = self.narrator_voice
         else:
             voice = self.narrator_voice  # type: ignore[assignment]
         self._comment_author_voices[key] = voice

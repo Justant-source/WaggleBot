@@ -1161,6 +1161,8 @@ def _render_image_text_frame(
     out_path: Path,
     content_top: int,
     stage: int | None = None,
+    display_lines: list[str] | None = None,
+    render_profile: str | None = None,
 ) -> Path:
     """씬 image_text — 자막(위) + 자연비율 이미지(좌우 흰여백).
 
@@ -1174,18 +1176,26 @@ def _render_image_text_frame(
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
 
-    if theme == "tone_l":
+    # v2 분기: 마케팅_v2 또는 tone_l 테마일 때 새 캔버스 생성
+    is_v2 = render_profile == "marketing_v2" or theme == "tone_l"
+
+    if is_v2:
         palette = layout["global"].get("palette", {})
         pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
         card_cfg = sc.get("card", {})
         quote_cfg = sc.get("quote", {})
         image_cfg = sc.get("image", {})
 
+        # v2: 새로운 크림 배경 캔버스 (헤더 제거, 앱 크롬 제거)
+        img = Image.new("RGB", (cw, ch), "#EDF1E8")
+
         card_x = pad_x
         card_w = cw - 2 * pad_x
         card_pad = card_cfg.get("pad", 44)
         card_radius = card_cfg.get("radius", 28)
-        card_y = content_top + card_cfg.get("gap_top", 36)
+        # 세이프존: 상단 12% 내에 배치
+        safe_top = int(ch * 0.12)
+        card_y = safe_top + card_cfg.get("gap_top", 36)
 
         q_fs = quote_cfg.get("font_size", 54)
         q_lh = quote_cfg.get("line_height", 68)
@@ -1193,17 +1203,20 @@ def _render_image_text_frame(
         inner_w = card_w - 2 * card_pad
         # max_lines: 문장 1회 등장당 시각 줄 수 상한(길면 wrap). 등장 횟수 제한이 아님.
         q_max_lines = int(quote_cfg.get("max_lines", 8))
-        q_lines = _wrap_korean(text, q_font, inner_w, keep_all=True)[:q_max_lines]
+        if display_lines:
+            q_lines = [line for line in display_lines if line.strip()][: min(q_max_lines, 3)]
+        else:
+            q_lines = _wrap_korean(text, q_font, inner_w, keep_all=True)[:q_max_lines]
 
         img_size = card_w - 2 * card_pad
         img_gap = image_cfg.get("gap_top", 40)
         card_h = card_pad + len(q_lines) * q_lh + img_gap + img_size + card_pad
-        max_card_h = ch - card_y - 140
+        safe_bottom = int(ch * 0.22)
+        max_card_h = ch - card_y - safe_bottom
         if card_h > max_card_h:
             card_h = max_card_h
             img_size = max(200, card_h - card_pad - len(q_lines) * q_lh - img_gap - card_pad)
 
-        img = base_frame.copy()
         img = _draw_card(img, card_x, card_y, card_w, card_h, card_radius, palette)
         draw = ImageDraw.Draw(img)
 
@@ -1278,6 +1291,7 @@ def _render_text_only_frame(
     out_path: Path,
     content_top: int,
     stage: int | None = None,
+    render_profile: str | None = None,
 ) -> Path:
     """씬 text_only — 자막 누적 표시.
 
@@ -1289,10 +1303,15 @@ def _render_text_only_frame(
     theme = _theme_name(layout)
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
-    img = base_frame.copy()
-    draw = ImageDraw.Draw(img)
 
-    if theme == "tone_l":
+    # v2 분기: 마케팅_v2 또는 tone_l 테마일 때 새 캔버스 생성
+    is_v2 = render_profile == "marketing_v2" or theme == "tone_l"
+
+    if is_v2:
+        # v2: 새로운 크림 배경 캔버스 (헤더 제거, 앱 크롬 제거)
+        img = Image.new("RGB", (cw, ch), "#EDF1E8")
+        draw = ImageDraw.Draw(img)
+
         palette = layout["global"].get("palette", {})
         pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
         sc = layout["scenes"]["text_only"]
@@ -1302,7 +1321,9 @@ def _render_text_only_frame(
         lh = bul_cfg.get("line_height", 84)
         font = _load_font(font_dir, _body_font_file(layout), font_size)
 
-        y = content_top + bul_cfg.get("gap_top", 64)
+        # 세이프존: 상단 12%부터 시작
+        safe_top = int(ch * 0.12)
+        y = safe_top + bul_cfg.get("gap_top", 64)
         slot_gap = int(bul_cfg.get("slot_gap", 28))
         last_idx = len(text_history) - 1
         for entry_i, entry in enumerate(text_history):
@@ -1320,6 +1341,10 @@ def _render_text_only_frame(
         _draw_ribbon(draw, cw, ch, layout)
         img.save(str(out_path), "PNG")
         return out_path
+
+    # fast 경로: 기존 base_frame 사용
+    img = base_frame.copy()
+    draw = ImageDraw.Draw(img)
 
     sc = layout["scenes"]["text_only"]
     ta = sc["elements"]["text_area"]
@@ -1391,6 +1416,8 @@ def _render_outro_frame(
     layout: dict,
     font_dir: Path,
     out_path: Path,
+    render_profile: str | None = None,
+    cfg: dict | None = None,
 ) -> Path:
     """씬 outro — 참여유도 질문 + 댓글입력 목업 (구독유도 없음).
 
@@ -1412,10 +1439,14 @@ def _render_outro_frame(
     ch = layout["canvas"]["height"]
     hdr_h: int = hdr.get("height", 150)
 
-    img = header_only_frame.copy()
-    draw = ImageDraw.Draw(img)
+    # v2 분기: 마케팅_v2 또는 tone_l 테마일 때 새 캔버스 생성
+    is_v2 = render_profile == "marketing_v2" or theme == "tone_l"
 
-    if theme == "tone_l":
+    if is_v2:
+        # v2: 새로운 크림 배경 캔버스 (헤더 제거, 앱 크롬 제거)
+        img = Image.new("RGB", (cw, ch), "#EDF1E8")
+        draw = ImageDraw.Draw(img)
+
         palette = g.get("palette", {})
         sprout_cfg = sc.get("sprout_mark", {})
         q_cfg = sc.get("question", {})
@@ -1423,8 +1454,10 @@ def _render_outro_frame(
         pill_cfg = sc.get("input_pill", {})
         domain_cfg = sc.get("domain", {})
 
+        # 세이프존: 상단 12% 내에 배치
+        safe_top = int(ch * 0.12)
         mark_size = sprout_cfg.get("size", 200)
-        y = hdr_h + sprout_cfg.get("gap_top", 48)
+        y = safe_top + sprout_cfg.get("gap_top", 48)
         _draw_sprout_mark(draw, cw // 2, y + mark_size // 2, mark_size, palette)
         y += mark_size
 
@@ -1492,6 +1525,10 @@ def _render_outro_frame(
         _draw_ribbon(draw, cw, ch, layout)
         img.save(str(out_path), "PNG")
         return out_path
+
+    # fast 경로: 기존 header_only_frame 사용
+    img = header_only_frame.copy()
+    draw = ImageDraw.Draw(img)
 
     mascot_cfg = sc.get("mascot", {})
     q_cfg = sc.get("question", {})
@@ -1737,6 +1774,7 @@ def _render_comments_frame(
     reveal_count: int | None = None,
     fade_alpha: float = 1.0,
     stage: int | None = None,
+    render_profile: str | None = None,
 ) -> Path:
     """씬 comments — 정렬바 + 커뮤니티 댓글 세로 리스트.
 
@@ -1758,7 +1796,10 @@ def _render_comments_frame(
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
 
-    if theme == "tone_l":
+    # v2 분기: 마케팅_v2 또는 tone_l 테마일 때 새 캔버스 생성
+    is_v2 = render_profile == "marketing_v2" or theme == "tone_l"
+
+    if is_v2:
         palette = layout["global"].get("palette", {})
         pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
         sort_cfg = sc.get("sort_bar", {})
@@ -1772,13 +1813,16 @@ def _render_comments_frame(
         items = comment_items[:max_items]
         visible = items if reveal_count is None else items[:reveal_count]
 
-        img = base_frame.copy()
+        # v2: 새로운 크림 배경 캔버스 (헤더 제거, 앱 크롬 제거)
+        img = Image.new("RGB", (cw, ch), "#EDF1E8")
         draw = ImageDraw.Draw(img)
 
         sort_fs = sort_cfg.get("font_size", 36)
         sort_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", sort_fs)
         label_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", sort_fs - 8)
-        y = content_top + sort_cfg.get("gap_top", 8)
+        # 세이프존: 상단 12%부터 시작
+        safe_top = int(ch * 0.12)
+        y = safe_top + sort_cfg.get("gap_top", 8)
         draw.text((pad_x, y), "댓글 ", font=sort_font, fill=sort_cfg.get("count_color", "#5C4030"))
         prefix_w = int(_font_w(sort_font, "댓글 "))
         count_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", sort_fs)

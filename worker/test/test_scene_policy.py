@@ -24,7 +24,7 @@ def fail(msg: str) -> None:
 # ---------------------------------------------------------------------------
 def test_scene_policy_json() -> None:
     print("[1] scene_policy.json 검증")
-    policy = json.loads(Path("config/scene_policy.json").read_text())
+    policy = json.loads((Path(__file__).parent.parent / "config" / "scene_policy.json").read_text())
 
     moods = policy.get("moods", {})
     assert len(moods) == 9, f"mood 수 오류: {len(moods)}"
@@ -88,13 +88,13 @@ def test_pick_random_file() -> None:
     from ai_worker.scene.director import pick_random_file
 
     # 존재하지 않는 폴더
-    r = pick_random_file("assets/image/nonexistent", [".jpg"])
+    r = pick_random_file(str(Path(__file__).parent.parent / "assets" / "image" / "nonexistent"), [".jpg"])
     assert r is None
     ok("존재하지 않는 폴더 → None")
 
     # 빈 폴더 (.gitkeep만 있는 경우) — 확장자 필터로 None
     from pathlib import Path as _P
-    test_dir = _P("assets/image/intro/mood/touching")
+    test_dir = Path(__file__).parent.parent / "assets" / "image" / "intro" / "mood" / "touching"
     exts = [".png", ".jpg", ".jpeg", ".webp"]
     result = pick_random_file(str(test_dir), exts)
     if result is not None:
@@ -184,10 +184,11 @@ def test_scene_director_direct() -> None:
 
     # 이미지 있는 경우
     profile2 = ResourceProfile(image_count=2, text_length=100, estimated_sentences=3, ratio=0.5, strategy="balanced")
+    base_path = Path(__file__).parent.parent
     director2 = SceneDirector(
         profile=profile2,
-        images=["assets/image/intro/mood/humor/humor_intro_01.jpg",
-                "assets/image/intro/mood/humor/humor_intro_02.jpg"],
+        images=[str(base_path / "assets" / "image" / "intro" / "mood" / "humor" / "humor_intro_01.jpg"),
+                str(base_path / "assets" / "image" / "intro" / "mood" / "humor" / "humor_intro_02.jpg")],
         script=script,
         mood="shock",
     )
@@ -210,10 +211,11 @@ def test_asset_structure() -> None:
     bgm_exts = {".mp3", ".wav", ".ogg"}
 
     all_ok = True
+    base_path = Path(__file__).parent.parent
     for mood in moods:
-        intro = list((Path(f"assets/image/intro/mood/{mood}")).glob("*"))
-        outro = list((Path(f"assets/image/outro/mood/{mood}")).glob("*"))
-        bgm   = list((Path(f"assets/bgm/mood/{mood}")).glob("*"))
+        intro = list((base_path / "assets" / "image" / "intro" / "mood" / mood).glob("*"))
+        outro = list((base_path / "assets" / "image" / "outro" / "mood" / mood).glob("*"))
+        bgm   = list((base_path / "assets" / "bgm" / "mood" / mood).glob("*"))
 
         intro_files = [f for f in intro if f.suffix.lower() in img_exts]
         outro_files = [f for f in outro if f.suffix.lower() in img_exts]

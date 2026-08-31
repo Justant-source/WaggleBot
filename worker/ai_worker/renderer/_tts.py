@@ -27,6 +27,14 @@ def _is_narrator_sentence(sent: dict) -> bool:
     return sec in ("hook", "body")
 
 
+def _is_reverse_sentence(sent: dict) -> bool:
+    """반전 문장 여부 (상대방 진영)."""
+    if not sent:
+        return False
+    bt = sent.get("block_type") or ""
+    return bt in ("partner_turn", "opponent_turn", "reverse")
+
+
 def _split_narration_at_aligned_starts(
     src: Path,
     starts: list[float],
@@ -496,6 +504,17 @@ def _unpack_line(item) -> tuple[str, str | None]:
     return str(item), None
 
 
+def _comment_cache_path(voice_key: str, text: str, emotion: str) -> Path:
+    """Cross-post cache for deterministic comment voices (Reels/Shorts share it)."""
+    import hashlib
+    from config.settings import MEDIA_DIR
+
+    digest = hashlib.sha256(f"{voice_key}\0{emotion}\0{text}".encode("utf-8")).hexdigest()
+    cache_dir = Path(MEDIA_DIR) / "audio" / "comment_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"{digest}.wav"
+
+
 async def _tts_chunk_async(
     text: str,
     idx: int,
@@ -525,7 +544,7 @@ async def _tts_chunk_async(
             logger.debug("[layout] TTS 재사용: 프레임=%d %s", idx, pre_path.name)
             return _get_audio_duration(out_path)
 
-    # 고정 클로징 멘트 캐시
+    # Fixed closing and deterministic comment speech can be reused across posts.
     cache_path = None
     if scene_type == "outro":
         cache_path = _outro_cache_path(voice_key, text)
@@ -538,6 +557,12 @@ async def _tts_chunk_async(
             except Exception:
                 pass
             logger.info("[layout] outro TTS 캐시 히트(+loudnorm): %s", cache_path.name)
+            return _get_audio_duration(out_path)
+    elif scene_type == "comments":
+        cache_path = _comment_cache_path(voice_key, text, emotion)
+        if cache_path.exists() and cache_path.stat().st_size > 1024:
+            shutil.copy2(cache_path, out_path)
+            logger.info("[layout] comment TTS 캐시 히트: %s", cache_path.name)
             return _get_audio_duration(out_path)
 
     # Fish Speech 신규 생성 (Phase 5 실패 시 폴백 경로)
@@ -567,6 +592,12 @@ async def _tts_chunk_async(
             logger.info("[layout] outro TTS 캐시 저장: %s", cache_path.name)
         except Exception:
             logger.warning("[layout] outro 캐시 저장 실패", exc_info=True)
+    elif scene_type == "comments" and cache_path is not None:
+        try:
+            shutil.copy2(out_path, cache_path)
+            logger.info("[layout] comment TTS 캐시 저장: %s", cache_path.name)
+        except Exception:
+            logger.warning("[layout] comment 캐시 저장 실패", exc_info=True)
 
     return _get_audio_duration(out_path)
 
@@ -683,6 +714,22 @@ async def _generate_tts_chunks(
                 if scene_type in ("comments", "chat"):
                     _loudnorm_inplace(chunk_path)
                 dur = _get_audio_duration(chunk_path)
+
+                # 문장 pause 로직
+                if _is_reverse_sentence(sent):
+                    # 반전 문장(상대방 진영) 앞에 0.6초 pause 삽입
+                    dur = _prepend_silence(chunk_path, 0.6)
+                    logger.info(
+                        "[tts] 반전 문장 앞 0.6s pause 삽입 (frame=%d, block_type=%s)",
+                        frame_idx, sent.get("block_type"),
+                    )
+                elif scene_type not in ("comment", "chat"):
+                    # 일반 문장 뒤에 0.35초 pause 삽입 (댓글/채팅 제외)
+                    dur = _append_silence(chunk_path, 0.35)
+                    logger.debug(
+                        "[tts] 문장 뒤 0.35s pause 삽입 (frame=%d, block_type=%s)",
+                        frame_idx, sent.get("block_type"),
+                    )
 
             if scene_type == "intro" and dur > 0 and _INTRO_PAUSE_SEC > 0:
                 chunk_path = output_dir / f"chunk_{frame_idx:03d}.wav"

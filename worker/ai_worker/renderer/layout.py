@@ -61,8 +61,10 @@ _LAYOUT_CONFIG: dict | None = None
 _STATIC_CONCAT_CFR_ARGS: list[str] = ["-vsync", "cfr", "-r", "30"]
 _STATIC_FINAL_FRAME_HOLD_FILTER: str = "tpad=stop_mode=clone:stop=-1"
 
-# Again Spring(Tone L) 댓글 씬 — 레이아웃·낭독 모두 최대 3개로 고정.
-_AGAIN_SPRING_MAX_COMMENTS = 3
+# Again Spring pre-scripted marketing renders retain only two top comments.
+_AGAIN_SPRING_MAX_COMMENTS = 2
+_OUTRO_MIN_DURATION_SEC = 2.5
+_PROTECTED_TAIL_SCENE_TYPES = frozenset({"outro", "comments"})
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +444,15 @@ def _scenes_to_plan_and_sentences(
             psl = getattr(scene, "pre_split_lines", None)
             if psl:
                 sent_dict["lines"] = psl
+                if len(psl) > 1:
+                    sent_dict["semantic_lines"] = True
+            elif text:
+                from ai_worker.scene.again_spring_text import split_story_lines
+
+                sub = split_story_lines(text)
+                if len(sub) > 1:
+                    sent_dict["lines"] = sub[:3]
+                    sent_dict["semantic_lines"] = True
             sentences.append(sent_dict)
             plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
             _attach_sibom_plan_fields(plan[-1], scene)
@@ -480,6 +491,9 @@ def _scenes_to_plan_and_sentences(
                     "author": getattr(scene, "author", None),
                     "tts_emotion": getattr(scene, "tts_emotion", ""),
                 }
+                if psl:
+                    sent_dict["semantic_lines"] = True
+                    sent_dict["lines"] = [text]
                 sentences.append(sent_dict)
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
 
@@ -701,11 +715,23 @@ def _render_pipeline(
                 )
                 logger.info("[layout] TTS 캐시 저장: %s", save_tts_cache)
 
-        # 0-duration 프레임 제거 — TTS 실패 프레임이 concat에서 빈 세그먼트로 이어지는 것 방지
+        # 0-duration 프레임 제거 — TTS 실패 프레임이 concat에서 빈 세그먼트로 이어지는 것 방지.
+        # outro/comments tail은 마케팅 CTA 계약상 반드시 유지한다.
         if any(d <= 0.0 for d in durations):
             _zero_count = sum(1 for d in durations if d <= 0.0)
             logger.warning("[layout] TTS 실패 프레임 %d개 제거 (dur=0)", _zero_count)
-            _pairs = [(p, d) for p, d in zip(plan, durations) if d > 0.0]
+            _pairs: list[tuple[dict, float]] = []
+            for entry, dur in zip(plan, durations):
+                scene_type = entry.get("type")
+                if dur > 0.0:
+                    _pairs.append((entry, dur))
+                elif scene_type in _PROTECTED_TAIL_SCENE_TYPES:
+                    floor = _OUTRO_MIN_DURATION_SEC if scene_type == "outro" else 0.5
+                    _pairs.append((entry, floor))
+                    logger.warning(
+                        "[layout] tail scene %s TTS 실패 — 최소 %.1fs 유지",
+                        scene_type, floor,
+                    )
             if _pairs:
                 plan, durations = [list(x) for x in zip(*_pairs)]
             else:
@@ -721,6 +747,10 @@ def _render_pipeline(
         keep_word_units = theme == "tone_l"
 
         for sent in sentences:
+            if sent.get("semantic_lines"):
+                if "lines" not in sent:
+                    sent["lines"] = [sent.get("text", "")]
+                continue
             if "lines" in sent:
                 expanded: list[str] = []
                 for line in sent["lines"]:
@@ -760,9 +790,11 @@ def _render_pipeline(
             elif scene_type == "image_text":
                 img_pil = image_cache.get(img_idx) if img_idx is not None else None
                 text = sentences[sent_idx]["text"] if sent_idx is not None else ""
+                sent_data = sentences[sent_idx] if sent_idx is not None else {}
+                display_lines = sent_data.get("lines") if sent_data.get("semantic_lines") else None
                 if img_pil is None:
                     logger.warning("[layout] 프레임 %d: image_text→text_only 폴백 (이미지 없음)", frame_idx)
-                    lines = sentences[sent_idx].get("lines", [text]) if sent_idx is not None else [text]
+                    lines = display_lines or sent_data.get("lines", [text])
                     fallback_entry = {"lines": lines,
                                       "block_type": entry.get("block_type", "body")}
                     _render_text_only_frame(
@@ -772,6 +804,7 @@ def _render_pipeline(
                     # 시봄이도 기존 메타포와 같이 image_text 카드 슬롯에만 넣는다
                     _render_image_text_frame(
                         breadcrumb_frame, img_pil, text, layout, font_dir, frame_path, content_top_body, stage=2,
+                        display_lines=display_lines,
                     )
 
             elif scene_type == "text_only":
@@ -1227,6 +1260,9 @@ def render_layout_video_from_scenes(
         ] = "다시봄"
         if not meta.get("author"):
             meta["author"] = "다시봄"
+
+    if _is_again_spring and not any(entry.get("type") == "outro" for entry in plan):
+        raise RuntimeError("LAYOUT_OUTRO_MISSING: Again Spring plan must include an outro frame")
 
     return _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
