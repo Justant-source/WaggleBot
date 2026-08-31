@@ -12,6 +12,9 @@ DB: MariaDB 11, 데이터베이스명: `wagglebot`
 
 ## ER 다이어그램
 
+<!-- last-verified: 2026-06-25 -->
+<!-- code-ref: worker/db/models.py, worker/db/migrations/, backend/src/main/resources/db/migration/ -->
+
 ```mermaid
 erDiagram
     posts {

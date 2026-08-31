@@ -5,6 +5,9 @@
 
 ## 서비스 레이어 구조
 
+<!-- last-verified: 2026-08-04 -->
+<!-- code-ref: env/docker-compose.yml -->
+
 ```mermaid
 flowchart LR
     subgraph Layer1["수집 레이어"]
@@ -38,6 +41,9 @@ flowchart LR
 
 ## GPU VRAM 배분 (RTX 3090 24GB)
 
+<!-- last-verified: 2026-08-04 -->
+<!-- code-ref: env/docker-compose.yml -->
+
 ```mermaid
 pie title VRAM 사용 배분 (~16.7GB / 24GB)
     "LTX-2 distilled GGUF Q4 UNet" : 12.7
@@ -65,6 +71,9 @@ pie title VRAM 사용 배분 (~16.7GB / 24GB)
 ---
 
 ## 서비스 의존성 그래프
+
+<!-- last-verified: 2026-08-04 -->
+<!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
 graph TD
@@ -243,7 +252,7 @@ graph TD
   FRONTEND_URL=http://frontend:3000
   EXTERNAL_API_KEY=change-me-external   # /api/external/** 인증 키 (app.external.api-key)
   ```
-- **외부 ingest API:** `/api/external/jobs` (Again Spring 등) — `ExternalApiKeyFilter`가 `X-Api-Key` 헤더 강제, 그 외 경로는 무영향. 상세 → [`50-api/rest-spec.md`](../50-api/rest-spec.md#external-jobs-apiexternaljobs--외부-연동-ingestrender)
+- **외부 ingest API:** `/api/external/jobs` (Again Spring 등) — `ExternalApiKeyFilter`가 `X-Api-Key` 헤더 강제, 그 외 경로는 무영향. 상세 → [`50-api/rest-spec.md`](../backend/50-api.md#external-jobs-apiexternaljobs--외부-연동-ingestrender)
 
 ---
 
@@ -328,6 +337,9 @@ graph TD
 ```
 
 ## 시작 순서
+
+<!-- last-verified: 2026-08-04 -->
+<!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
 flowchart LR

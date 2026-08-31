@@ -41,6 +41,7 @@ VALID_DIAGRAM_TYPES = {
     "erDiagram",
     "classDiagram",
     "gantt",
+    "pie",
 }
 
 # Extensions that mark a backtick token as a code path worth verifying.

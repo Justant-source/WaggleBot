@@ -1,11 +1,14 @@
 # WaggleBot — 시스템 컨텍스트 (L1)
 
-> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: 전역
+> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: env/docker-compose.yml, backend/, worker/, frontend/, telegram/
 > scope: 시스템 외부 경계, 행위자, 전체 흐름 — SSOT
 
 커뮤니티 게시글을 자동 크롤링해 LLM 대본 → TTS → LTX-2 비디오 → FFmpeg 렌더링 → YouTube 자동 업로드까지 처리하는 AI 콘텐츠 자동화 파이프라인.
 
 ## 전체 시스템 흐름
+
+<!-- last-verified: 2026-06-12 -->
+<!-- code-ref: env/docker-compose.yml, backend/, worker/, frontend/, telegram/ -->
 
 ```mermaid
 flowchart TD
@@ -85,6 +88,6 @@ flowchart TD
 | YouTube Data API | 최종 영상 업로드, 조회수/성과 데이터 수집 |
 | Telegram Bot API | 운영자 원격 제어 인터페이스 (선택) |
 
-> 상세 배포 구성(포트·볼륨·환경변수) → [`docs/20-containers/topology.md`](../20-containers/topology.md)
-> 8-Phase AI 파이프라인 책임 → [`docs/30-components/pipeline.md`](../30-components/pipeline.md)
-> Post 상태 전이 → [`docs/60-runtime/post-state-machine.md`](../60-runtime/post-state-machine.md)
+> 상세 배포 구성(포트·볼륨·환경변수) → [`docs/shared/20-containers.md`](20-containers.md)
+> 8-Phase AI 파이프라인 책임 → [`docs/worker/30-components/pipeline.md`](../worker/30-components/pipeline.md)
+> Post 상태 전이 → [`docs/shared/60-runtime.md`](60-runtime.md)

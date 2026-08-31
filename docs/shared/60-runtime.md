@@ -1,9 +1,12 @@
 # WaggleBot — Post 상태 전이
 
-> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `worker/db/models.py` PostStatus
+> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `worker/db/models.py`
 > scope: Post 상태 머신 — SSOT
 
 ## 상태 전이 다이어그램
+
+<!-- last-verified: 2026-06-12 -->
+<!-- code-ref: worker/db/models.py -->
 
 ```mermaid
 stateDiagram-v2
@@ -41,4 +44,4 @@ stateDiagram-v2
 - `POST /api/progress/{id}/retry` → `FAILED → APPROVED`, `retryCount++`, `last_error = null`
 - 실패 원인은 `Post.last_error` 컬럼에 저장, Progress 페이지에서 최근 20건 조회 가능
 
-> 처리 루프 동작(폴링 간격·하트비트·실패 처리) → [`docs/60-runtime/pipeline-runtime.md`](pipeline-runtime.md)
+> 처리 루프 동작(폴링 간격·하트비트·실패 처리) → [`docs/worker/60-runtime.md`](../worker/60-runtime.md)
