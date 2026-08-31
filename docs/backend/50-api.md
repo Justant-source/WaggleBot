@@ -93,7 +93,7 @@ LLM 호출. Python `call_llm()` 함수가 이 엔드포인트를 사용.
 
 Spring Actuator 헬스. `ClaudeCliHealthIndicator` 포함 (`claude --version` 30초 캐싱).
 
-> 내부 처리 흐름(sequenceDiagram + JSON Mode flowchart) → [`flows.md`](flows.md)
+> 내부 처리 흐름(sequenceDiagram + JSON Mode flowchart) → [`flows.md`](../worker/50-api.md)
 
 ---
 
