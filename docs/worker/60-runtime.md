@@ -1,6 +1,6 @@
 # WaggleBot — 파이프라인 런타임 동작
 
-> last-verified: 2026-08-14 · code-ref: `worker/ai_worker/core/main.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/`
+> last-verified: 2026-08-31 · code-ref: `worker/ai_worker/core/main.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/`
 > scope: ai_worker 처리 루프, 4단계 폴백, 피드백 루프, Phase5‖6 병렬 시퀀싱 — SSOT
 
 ## 처리 루프
@@ -75,7 +75,7 @@ prepend했다. 최종 MP4의 첫 text→speech silence는 `0.149592s`, outro tex
 
 `video_gen_enabled_for_post(post_id)`가 `true`일 때만 실행. ComfyUI LTX-2 실패 시 순차 폴백:
 
-<!-- last-verified: 2026-08-14 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, worker/ai_worker/renderer/ -->
 
 ```mermaid
@@ -94,7 +94,7 @@ flowchart LR
 
 `VIDEO_GEN_ENABLED=true`일 때 `asyncio.gather(tts_phase(), video_prompt_phase())`로 동시 실행.
 
-<!-- last-verified: 2026-08-14 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, worker/ai_worker/renderer/ -->
 
 ```mermaid
@@ -117,7 +117,7 @@ sequenceDiagram
 
 ## 피드백 루프
 
-<!-- last-verified: 2026-08-14 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, worker/ai_worker/renderer/ -->
 
 ```mermaid

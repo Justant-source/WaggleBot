@@ -1,6 +1,6 @@
 # WaggleBot — AI Agent 개발 플레이북
 
-> last-verified: 2026-06-25 · code-ref: `AGENTS.md`, `CLAUDE.md`, `docs/_index.md`, 코드 전역
+> last-verified: 2026-08-31 · code-ref: `AGENTS.md`, `CLAUDE.md`, `docs/_index.md`, 코드 전역
 > scope: AI agent가 코드 변경을 시작하기 전 읽는 작업 절차, 탐색 경로, 검증 기준
 
 이 문서는 구현 세부의 정본이 아니다. 상세 사실은 작업 유형별 문서와 코드가 정본이며,

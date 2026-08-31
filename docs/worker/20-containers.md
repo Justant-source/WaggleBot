@@ -1,6 +1,6 @@
 # WaggleBot — 설정 레퍼런스
 
-> **last-verified:** 2026-08-05
+> **last-verified:** 2026-08-31
 > **scope:** settings.py 변수, pipeline.json, scene_policy.json, layout.json, .env — SSOT
 
 ## 설정 파일 구조

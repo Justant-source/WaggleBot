@@ -1,11 +1,11 @@
 # WaggleBot — API 요청 흐름
 
-> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `worker/llm/src/main/java/com/wagglebot/llmworker/`
+> last-verified: 2026-08-31 (commit `656dffd`) · code-ref: `worker/llm/src/main/java/com/wagglebot/llmworker/`
 > scope: llm-worker 내부 처리 흐름, JSON Mode 처리 — SSOT
 
 ## llm-worker 내부 동작 흐름
 
-<!-- last-verified: 2026-06-12 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/llm/src/main/java/com/wagglebot/llmworker/ -->
 
 ```mermaid
@@ -29,7 +29,7 @@ sequenceDiagram
 
 ## JSON Mode 처리 흐름
 
-<!-- last-verified: 2026-06-12 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/llm/src/main/java/com/wagglebot/llmworker/ -->
 
 ```mermaid

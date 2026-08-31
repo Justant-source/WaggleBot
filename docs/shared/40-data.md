@@ -1,6 +1,6 @@
 # WaggleBot — 데이터 스키마 (L4)
 
-> last-verified: 2026-06-25 · code-ref: `worker/db/models.py`, `worker/db/migrations/`, `backend/src/main/resources/db/migration/`
+> last-verified: 2026-08-31 · code-ref: `worker/db/models.py`, `worker/db/migrations/`, `backend/src/main/resources/db/migration/`
 > scope: DB 스키마, SQLAlchemy 패턴, ScriptData JSON 구조 — SSOT
 > **authority:** 코드(runtime) > 이 문서. 충돌 시 마이그레이션 코드 우선.
 
@@ -12,7 +12,7 @@ DB: MariaDB 11, 데이터베이스명: `wagglebot`
 
 ## ER 다이어그램
 
-<!-- last-verified: 2026-06-25 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/db/models.py, worker/db/migrations/, backend/src/main/resources/db/migration/ -->
 
 ```mermaid

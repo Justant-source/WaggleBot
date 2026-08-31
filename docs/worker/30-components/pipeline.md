@@ -1,6 +1,6 @@
 # WaggleBot — AI 파이프라인 (8-Phase) 컴포넌트
 
-> last-verified: 2026-08-14 · code-ref: `worker/ai_worker/pipeline/content_processor.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/scene/director.py`, `worker/ai_worker/renderer/`
+> last-verified: 2026-08-31 · code-ref: `worker/ai_worker/pipeline/content_processor.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/scene/director.py`, `worker/ai_worker/renderer/`
 > scope: 8-Phase AI 파이프라인 Phase별 책임, LLM 라우팅 — SSOT
 
 ## 개요
@@ -9,7 +9,7 @@
 
 ## 전체 파이프라인 흐름
 
-<!-- last-verified: 2026-08-14 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/ai_worker/pipeline/content_processor.py, worker/ai_worker/core/processor.py, worker/ai_worker/scene/director.py, worker/ai_worker/renderer/ -->
 
 ```mermaid
@@ -183,7 +183,7 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 
 ## LLM 모델 라우팅
 
-<!-- last-verified: 2026-08-14 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/ai_worker/pipeline/content_processor.py, worker/ai_worker/core/processor.py, worker/ai_worker/scene/director.py, worker/ai_worker/renderer/ -->
 
 ```mermaid

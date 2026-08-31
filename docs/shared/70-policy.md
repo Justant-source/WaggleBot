@@ -1,6 +1,6 @@
 # WaggleBot — 정책 및 하드 제약
 
-> last-verified: 2026-06-25 · code-ref: `CLAUDE.md`, `AGENTS.md`, `worker/ai_worker/`, `docs/shared/90-adr/`
+> last-verified: 2026-08-31 · code-ref: `CLAUDE.md`, `AGENTS.md`, `worker/ai_worker/`, `docs/shared/90-adr/`
 > scope: 하드 제약·코딩 금지·git/배포 금지·ADR 연동 — SSOT (비협상)
 
 ## 하드 제약 (절대 위반 금지)

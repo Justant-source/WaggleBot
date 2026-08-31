@@ -1,11 +1,11 @@
 # WaggleBot — Post 상태 전이
 
-> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: `worker/db/models.py`
+> last-verified: 2026-08-31 (commit `656dffd`) · code-ref: `worker/db/models.py`
 > scope: Post 상태 머신 — SSOT
 
 ## 상태 전이 다이어그램
 
-<!-- last-verified: 2026-06-12 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/db/models.py -->
 
 ```mermaid

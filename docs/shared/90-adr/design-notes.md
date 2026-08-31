@@ -1,6 +1,6 @@
 # WaggleBot 구조 개선 — 설계 컨텍스트
 
-> **last-verified:** 2026-06-12 (commit `656dffd`)
+> **last-verified:** 2026-08-31 (commit `656dffd`)
 > **scope:** WP-1~8 설계 결정 이유 및 변경 내용. 핵심 아키텍처 결정은 [docs/90-adr/](./) 참조.
 
 > 이 문서는 2026-06-10 전수 조사 후 단행한 7개 워크 패키지(WP-1~7)와 P2 보완 작업의

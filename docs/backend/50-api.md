@@ -1,6 +1,6 @@
 # WaggleBot — API 명세 (L5)
 
-> last-verified: 2026-08-14 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/`, `worker/ai_worker/tts/fish_client.py`
+> last-verified: 2026-08-31 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/`, `worker/ai_worker/tts/fish_client.py`
 > scope: llm-worker·backend·Fish Speech·ComfyUI API 엔드포인트 명세 — SSOT
 
 ## 서비스별 Base URL

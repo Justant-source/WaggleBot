@@ -1,13 +1,13 @@
 # WaggleBot — 시스템 컨텍스트 (L1)
 
-> last-verified: 2026-06-12 (commit `656dffd`) · code-ref: env/docker-compose.yml, backend/, worker/, frontend/, telegram/
+> last-verified: 2026-08-31 (commit `656dffd`) · code-ref: env/docker-compose.yml, backend/, worker/, frontend/, telegram/
 > scope: 시스템 외부 경계, 행위자, 전체 흐름 — SSOT
 
 커뮤니티 게시글을 자동 크롤링해 LLM 대본 → TTS → LTX-2 비디오 → FFmpeg 렌더링 → YouTube 자동 업로드까지 처리하는 AI 콘텐츠 자동화 파이프라인.
 
 ## 전체 시스템 흐름
 
-<!-- last-verified: 2026-06-12 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: env/docker-compose.yml, backend/, worker/, frontend/, telegram/ -->
 
 ```mermaid

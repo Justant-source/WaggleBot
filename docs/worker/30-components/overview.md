@@ -1,11 +1,11 @@
 # WaggleBot — 컴포넌트 개요 (L3)
 
-> last-verified: 2026-06-25 · code-ref: `worker/ai_worker/`, `worker/crawlers/`, `worker/uploaders/`, `backend/`, `frontend/`
+> last-verified: 2026-08-31 · code-ref: `worker/ai_worker/`, `worker/crawlers/`, `worker/uploaders/`, `backend/`, `frontend/`
 > scope: 컨테이너 내부 모듈 책임 — SSOT
 
 ## ai_worker 내부 모듈 구조
 
-<!-- last-verified: 2026-06-25 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/ai_worker/, worker/crawlers/, worker/uploaders/, backend/, frontend/ -->
 
 ```mermaid
@@ -87,7 +87,7 @@ flowchart LR
 
 ## 크롤러 / 업로더 플러그인
 
-<!-- last-verified: 2026-06-25 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: worker/ai_worker/, worker/crawlers/, worker/uploaders/, backend/, frontend/ -->
 
 ```mermaid

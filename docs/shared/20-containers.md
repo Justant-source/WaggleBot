@@ -1,11 +1,11 @@
 # WaggleBot — 컨테이너 토폴로지 (L2)
 
-> last-verified: 2026-08-04 · code-ref: `env/docker-compose.yml`
+> last-verified: 2026-08-31 · code-ref: `env/docker-compose.yml`
 > scope: Docker 서비스 포트·볼륨·환경변수·의존성·GPU 배분 — SSOT
 
 ## 서비스 레이어 구조
 
-<!-- last-verified: 2026-08-04 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
@@ -41,7 +41,7 @@ flowchart LR
 
 ## GPU VRAM 배분 (RTX 3090 24GB)
 
-<!-- last-verified: 2026-08-04 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
@@ -72,7 +72,7 @@ pie title VRAM 사용 배분 (~16.7GB / 24GB)
 
 ## 서비스 의존성 그래프
 
-<!-- last-verified: 2026-08-04 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
@@ -338,7 +338,7 @@ graph TD
 
 ## 시작 순서
 
-<!-- last-verified: 2026-08-04 -->
+<!-- last-verified: 2026-08-31 -->
 <!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
