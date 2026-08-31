@@ -1,6 +1,6 @@
 # WaggleBot — API 명세 (L5)
 
-> last-verified: 2026-08-31 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/`, `worker/ai_worker/tts/fish_client.py`
+> last-verified: 2026-08-31 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/`, `worker/ai_worker/tts/fish_client.py`, `worker/ai_worker/core/main.py`, `worker/ai_worker/core/progress.py`
 > scope: llm-worker·backend·Fish Speech·ComfyUI API 엔드포인트 명세 — SSOT
 
 ## 서비스별 Base URL
@@ -327,3 +327,38 @@ GET  /system_stats      - GPU/VRAM 상태 (헬스체크)
 ```
 
 **워크플로우 파일 위치:** `worker/ai_worker/video/workflows/` (ComfyUI와 볼륨 공유)
+
+### 실패 코드·단계 분류 (2026-08-15, `worker/ai_worker/core/main.py::_classify_failure`)
+
+`failureStage`는 `phaseName`을 영문 상수로 매핑해 `WAGGLE:` 접두사를 붙인다(`progress.py::normalize_failure_stage`):
+
+| phaseName | failureStage |
+|---|---|
+| 자원 분석 | `WAGGLE:RESOURCE_ANALYSIS` |
+| 대본 생성 | `WAGGLE:SCRIPT_GENERATION` |
+| 씬 구성 | `WAGGLE:SCENE_COMPOSE` |
+| 비디오 프롬프트 | `WAGGLE:VIDEO_PROMPT` |
+| 비디오 클립 | `WAGGLE:VIDEO_CLIP` |
+| FFmpeg 렌더링 | `WAGGLE:FFMPEG_RENDER` |
+| TTS 합성 | `WAGGLE:TTS_SYNTHESIS` |
+
+매핑 안 되는 phaseName은 `WAGGLE:PHASE_UNKNOWN`으로 폴백한다(빈 값 대신).
+
+`failureCode` 분류(10종)와 `retryable` 여부:
+
+| failureCode | retryable | 의미 |
+|---|---|---|
+| `INFRA_DB_CONFLICT` | true | DB 동시성 충돌 |
+| `INFRA_TIMEOUT` | true | 페이즈 타임아웃 |
+| `INFRA_OOM` | true | 메모리 부족 |
+| `INFRA_GPU_UNAVAILABLE` | true | GPU 사용 불가 |
+| `RENDER_FFMPEG_ERROR` | true | FFmpeg 인코딩 실패 |
+| `RENDER_ASSET_MISSING` | **false** | 입력 자산 누락 (같은 입력=같은 결과) |
+| `RENDER_INVALID_INPUT` | **false** | 입력 데이터 자체가 잘못됨 |
+| `RENDER_UNKNOWN` | true | 미분류 렌더 오류 |
+| `TTS_GENERATION_FAILED` | true | TTS 합성 실패 |
+| `VARIANT_LLM_ERROR` | **false** | LLM 콘텐츠 거부 |
+
+`error`(예외 메시지 원문, 최대 500자)는 절대 비워두지 않는다. ASM `waggle_recovery.py`는
+`failureCode`/`failure_code`, `failureStage`/`failure_stage`, `error`/`error_summary`/`errorSummary`
+키를 모두 방어적으로 읽으므로 camelCase/snake_case 어느 쪽을 보내도 호환된다.

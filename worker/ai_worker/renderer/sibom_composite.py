@@ -1,15 +1,15 @@
-"""시봄이(Sibom) 캡션 합성 + 프레임 배치.
+"""시봄이(Sibom) 캡션 합성 + 프레임 배치 — Phase 2 v2 프로필.
 
 1단계: ``png/{id}.png`` 위에 catalog slot rect 안으로 캡션을 그린다.
 2단계: 그 RGBA 결과를 1080×1920 프레임에 large/small 로 붙인다.
 
 Director 배선은 이 모듈 범위 밖 — 공개 API만 제공한다.
 
-  composite_caption(image_id, caption) -> Image (820×820 or taller RGBA)
-  paste_on_frame(frame, img, size=\"large\"|\"small\") -> Image
+  composite_caption(image_id, caption, render_profile="marketing_fast") -> Image
+  paste_on_frame(frame, img, size="large"|"small", render_profile="marketing_fast") -> Image
 
-small 배치: 스케일 0.40, **우하단** 앵커 (마진 40px).
-large 배치: (90, 550) @ scale 1.0.
+small 배치: 스케일 0.40(fast) / 0.35(v2), **우하단** 앵커 (마진 40px).
+large 배치: (90, 550) @ scale 1.0(fast) / 0.60(v2).
 
 폰트: WaggleBot 기본과 동일하게 ``NotoSansKR-Bold`` 우선
 (``assets/fonts`` → 호스트/시스템 한글 Bold → fc-list).
@@ -28,14 +28,22 @@ from PIL import Image, ImageDraw, ImageFont
 logger = logging.getLogger(__name__)
 
 SizeMode = Literal["large", "small"]
+RenderProfile = Literal["marketing_fast", "marketing_v2"]
 
 # Catalog canvas / frame placement (docs/shared/marketing/sibom-video-insertion.md §6·§9)
 SIBOM_CANVAS = 820
 FRAME_W = 1080
 FRAME_H = 1920
 LARGE_XY = (90, 550)
+
+# 기본값 (fast용, layout.py 호환성)
 LARGE_SCALE = 1.0
 SMALL_SCALE = 0.40
+
+# v2 전용 상수
+LARGE_SCALE_V2 = 0.60
+SMALL_SCALE_V2 = 0.35
+
 SMALL_MARGIN_XY = (40, 40)  # bottom-right inset from frame edges
 DEFAULT_INK = "#5C4030"
 DEFAULT_FONT_SIZE = 80
@@ -49,6 +57,12 @@ BOLD_FONT_CANDIDATES = (
     "NotoSansKR-Bold-renamed.ttf",
     "NanumGothicBold.ttf",
 )
+
+# 진영색 팔레트 (catalog palette 매핑)
+COLOR_AUTHOR = "#E89A72"  # peach_author
+COLOR_PARTNER = "#6FB08A"  # sage_partner
+COLOR_NEUTRAL = "#B8A68A"  # 중립 회색 (새로 정의)
+COLOR_INK = "#5C4030"  # 텍스트색
 
 
 def _candidate_asset_roots() -> list[Path]:
@@ -280,10 +294,61 @@ def _draw_caption_lines(
         cy += th + (line_gap if i < len(metrics) - 1 else 0)
 
 
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert #RRGGBB to (R, G, B)."""
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))  # type: ignore
+
+
+def _draw_rounded_rect(
+    draw: ImageDraw.ImageDraw,
+    xy: list[int] | tuple[int, int, int, int],
+    fill: str,
+    outline: str = "#5C4030",
+    width: int = 3,
+    radius: int = 20,
+) -> None:
+    """Draw a rounded rectangle with optional outline.
+
+    Args:
+        draw: ImageDraw object
+        xy: (x1, y1, x2, y2) bounding box
+        fill: fill color (#RRGGBB)
+        outline: outline color (#RRGGBB)
+        width: outline width in pixels
+        radius: corner radius in pixels
+    """
+    x1, y1, x2, y2 = xy
+    r = radius
+
+    # Draw four corner arcs and four lines
+    # Top-left arc
+    draw.arc([x1, y1, x1 + 2*r, y1 + 2*r], 180, 270, fill=outline, width=width)
+    # Top-right arc
+    draw.arc([x2 - 2*r, y1, x2, y1 + 2*r], 270, 360, fill=outline, width=width)
+    # Bottom-right arc
+    draw.arc([x2 - 2*r, y2 - 2*r, x2, y2], 0, 90, fill=outline, width=width)
+    # Bottom-left arc
+    draw.arc([x1, y2 - 2*r, x1 + 2*r, y2], 90, 180, fill=outline, width=width)
+
+    # Lines
+    draw.line([(x1 + r, y1), (x2 - r, y1)], fill=outline, width=width)  # top
+    draw.line([(x2, y1 + r), (x2, y2 - r)], fill=outline, width=width)  # right
+    draw.line([(x2 - r, y2), (x1 + r, y2)], fill=outline, width=width)  # bottom
+    draw.line([(x1, y2 - r), (x1, y1 + r)], fill=outline, width=width)  # left
+
+    # Fill interior (without outline overlap)
+    if fill:
+        fill_rgb = _hex_to_rgb(fill) + (255,)
+        draw.rectangle([x1 + width//2, y1 + width//2, x2 - width//2, y2 - width//2],
+                      fill=fill_rgb)
+
+
 def composite_caption(
     image_id: str,
     caption: str,
     *,
+    render_profile: RenderProfile = "marketing_fast",
     sprouts_dir: Optional[Path] = None,
     font_dir: Optional[Path] = None,
     catalog: Optional[dict] = None,
@@ -295,6 +360,9 @@ def composite_caption(
     complete composite may be rectangular without scaling, cropping, or
     distorting the character art. Empty caption leaves the PNG unchanged
     (character only) — useful for fallback chain step 2.
+
+    For v2 profile, caption background is rendered with a rounded rectangle
+    and neutral color (진영색 적용 예정 — side 매개변수 필요).
     """
     root = Path(sprouts_dir) if sprouts_dir else default_sprouts_dir()
     cat = catalog if catalog is not None else load_catalog(str(root))
@@ -309,7 +377,12 @@ def composite_caption(
     img = Image.open(png_path).convert("RGBA")
     if caption:
         font_size = int(preset.get("font_size") or DEFAULT_FONT_SIZE)
-        color = str(preset.get("color") or cat.get("palette", {}).get("ink") or DEFAULT_INK)
+        # v2 모드: 진영색 적용 (현재는 중립색으로, side 정보 필요)
+        if render_profile == "marketing_v2":
+            color = COLOR_NEUTRAL  # TODO: side 매개변수로 COLOR_AUTHOR/PARTNER 선택
+        else:
+            color = str(preset.get("color") or cat.get("palette", {}).get("ink") or DEFAULT_INK)
+
         font = _load_font(font_size, font_dir)
         _, _, slot_w, _ = (int(v) for v in preset["rect"])
         lines = _wrap_to_width(caption, font, max(1, slot_w - CAPTION_WRAP_INSET))
@@ -319,32 +392,69 @@ def composite_caption(
             _draw_caption_lines(draw, lines, font, preset["rect"], color)
             return img
 
-        # The PNG itself remains a 1:1 character region at the top.  The
-        # caption extension uses the same padding on left, right, above, and
-        # below, producing a readable rectangular composite for 2–3 lines.
-        # Use cream (not transparent) so later RGB conversion never goes black.
+        # The PNG itself remains a 1:1 character region at the top, pixel-for-
+        # pixel unchanged (including its transparent corners) — the extended
+        # canvas starts fully transparent and only the *new* band below the
+        # original gets cream-filled, so alpha-compositing the character on
+        # top never bleeds cream into its transparent background.
         measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
         _, caption_h, _ = _caption_metrics(measure, lines, font)
         caption_w = img.width - 2 * CAPTION_OUTER_PADDING
-        cream = (255, 248, 240, 255)  # #FFF8F0
-        extended = Image.new(
-            "RGBA",
-            (
-                img.width,
-                img.height + CAPTION_OUTER_PADDING + caption_h + CAPTION_OUTER_PADDING,
-            ),
-            cream,
-        )
-        extended.alpha_composite(img, (0, 0))
-        draw = ImageDraw.Draw(extended)
-        _draw_caption_lines(
-            draw,
-            lines,
-            font,
-            (CAPTION_OUTER_PADDING, img.height + CAPTION_OUTER_PADDING, caption_w, caption_h),
-            color,
-        )
-        return extended
+
+        if render_profile == "marketing_v2":
+            # v2: 진영색 말풍선 배경
+            bg_color = COLOR_NEUTRAL
+            extended = Image.new(
+                "RGBA",
+                (
+                    img.width,
+                    img.height + CAPTION_OUTER_PADDING + caption_h + CAPTION_OUTER_PADDING,
+                ),
+                (0, 0, 0, 0),
+            )
+            extended.paste(img, (0, 0))
+
+            # 말풍선 배경 그리기
+            draw = ImageDraw.Draw(extended)
+            bg_rect = (
+                CAPTION_OUTER_PADDING - 8,
+                img.height + CAPTION_OUTER_PADDING - 8,
+                img.width - CAPTION_OUTER_PADDING + 8,
+                extended.height - CAPTION_OUTER_PADDING + 8,
+            )
+            # 진영색 말풍선 테두리
+            _draw_rounded_rect(draw, bg_rect, fill=bg_color, outline=COLOR_INK, width=2, radius=12)
+
+            _draw_caption_lines(
+                draw,
+                lines,
+                font,
+                (CAPTION_OUTER_PADDING, img.height + CAPTION_OUTER_PADDING, caption_w, caption_h),
+                COLOR_INK,
+            )
+            return extended
+        else:
+            # fast: 기존 크림색 배경
+            cream = (255, 248, 240, 255)  # #FFF8F0
+            extended = Image.new(
+                "RGBA",
+                (
+                    img.width,
+                    img.height + CAPTION_OUTER_PADDING + caption_h + CAPTION_OUTER_PADDING,
+                ),
+                (0, 0, 0, 0),
+            )
+            extended.paste(img, (0, 0))
+            extended.paste(cream, (0, img.height, img.width, extended.height))
+            draw = ImageDraw.Draw(extended)
+            _draw_caption_lines(
+                draw,
+                lines,
+                font,
+                (CAPTION_OUTER_PADDING, img.height + CAPTION_OUTER_PADDING, caption_w, caption_h),
+                color,
+            )
+            return extended
     return img
 
 
@@ -353,15 +463,18 @@ def paste_on_frame(
     img: Image.Image,
     size: SizeMode = "large",
     *,
+    render_profile: RenderProfile = "marketing_fast",
     large_xy: tuple[int, int] = LARGE_XY,
-    large_scale: float = LARGE_SCALE,
-    small_scale: float = SMALL_SCALE,
     small_margin: tuple[int, int] = SMALL_MARGIN_XY,
 ) -> Image.Image:
     """Paste a captioned sibom image onto a (typically 1080×1920) frame.
 
-    - ``large``: top-left at *large_xy* (default 90,550), scale 1.0
-    - ``small``: scale 0.40, **bottom-right** anchor with *small_margin*
+    - ``large``: top-left at *large_xy* (default 90,550)
+      - fast: scale 1.0 (100% = ~76% of frame width)
+      - v2: scale 0.60 (~60% of original = ~46% of frame width)
+    - ``small``: bottom-right anchor with *small_margin*
+      - fast: scale 0.40
+      - v2: scale 0.35
 
     Returns an RGBA frame (converts *frame* if needed). Does not mutate the
     original if mode conversion is required; otherwise pastes onto a copy.
@@ -369,23 +482,35 @@ def paste_on_frame(
     base = frame.convert("RGBA").copy()
     overlay = img.convert("RGBA")
 
+    # Determine scale based on profile
+    if render_profile == "marketing_v2":
+        large_scale = LARGE_SCALE_V2
+        small_scale = SMALL_SCALE_V2
+    else:
+        large_scale = LARGE_SCALE
+        small_scale = SMALL_SCALE
+
     if size == "large":
         scale = large_scale
         if scale != 1.0:
             nw = max(1, int(overlay.width * scale))
             nh = max(1, int(overlay.height * scale))
+            # LANCZOS 필터로 고품질 리사이징 (정수 픽셀 오프셋)
             overlay = overlay.resize((nw, nh), Image.Resampling.LANCZOS)
         xy = large_xy
     elif size == "small":
         scale = small_scale
         nw = max(1, int(overlay.width * scale))
         nh = max(1, int(overlay.height * scale))
+        # LANCZOS 필터로 고품질 리사이징
         overlay = overlay.resize((nw, nh), Image.Resampling.LANCZOS)
         mx, my = small_margin
         xy = (base.width - overlay.width - mx, base.height - overlay.height - my)
     else:
         raise ValueError(f"size must be 'large' or 'small', got {size!r}")
 
+    # 정수 좌표로 정렬 (떨림 제거)
+    xy = (int(xy[0]), int(xy[1]))
     base.alpha_composite(overlay, xy)
     return base
 
@@ -402,19 +527,20 @@ def make_cream_frame(
 # Smoke / CLI
 # ---------------------------------------------------------------------------
 
-def _smoke(out_path: Path | None = None) -> Path:
+def _smoke(out_path: Path | None = None, render_profile: RenderProfile = "marketing_fast") -> Path:
     out = out_path or Path("/tmp/sibom_smoke_frame.png")
     out.parent.mkdir(parents=True, exist_ok=True)
-    captioned = composite_caption("waiting-reply", "읽씹 3일차")
+    captioned = composite_caption("waiting-reply", "읽씹 3일차", render_profile=render_profile)
     frame = make_cream_frame()
-    composed = paste_on_frame(frame, captioned, size="large")
+    composed = paste_on_frame(frame, captioned, size="large", render_profile=render_profile)
     # also stamp a small sticker so both modes are visible
-    small = composite_caption("indignant", "왜 나만")
-    composed = paste_on_frame(composed, small, size="small")
+    small = composite_caption("indignant", "왜 나만", render_profile=render_profile)
+    composed = paste_on_frame(composed, small, size="small", render_profile=render_profile)
     composed.convert("RGB").save(out)
     font_used = resolve_bold_font_path()
     print(f"wrote {out}")
     print(f"font  {font_used}")
+    print(f"profile {render_profile}")
     return out
 
 
@@ -429,5 +555,6 @@ if __name__ == "__main__":
         if s not in sys.path:
             sys.path.insert(0, s)
 
+    profile = "marketing_v2" if len(sys.argv) > 2 and sys.argv[2] == "v2" else "marketing_fast"
     dest = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/tmp/sibom_smoke_frame.png")
-    _smoke(dest)
+    _smoke(dest, render_profile=profile)

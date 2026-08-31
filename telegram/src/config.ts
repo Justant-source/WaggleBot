@@ -49,6 +49,16 @@ export const config = {
   backend: {
     url: optionalEnv("BACKEND_URL", "http://backend:8080"),
   },
+  asm: {
+    // 이 봇 토큰(TELEGRAM_BOT_TOKEN)의 getUpdates는 이 컨테이너가 단독 소비 —
+    // ASM(Again-Spring-Marketing)에는 자체 poller가 없음. redrive:/ignore:
+    // callback_query만 이 URL로 전달 (Tailscale 100.115.252.61:8200).
+    callbackUrl: optionalEnv(
+      "ASM_TELEGRAM_CALLBACK_URL",
+      "http://100.115.252.61:8200/api/v1/telegram/callback",
+    ),
+    bearerToken: optionalEnv("ASM_BEARER_TOKEN", ""),
+  },
   hooks: {
     port: parseInt(optionalEnv("HOOKS_PORT", "3847"), 10),
   },

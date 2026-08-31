@@ -136,7 +136,7 @@ worker/
 │   │       └── i2v_ltx2_distilled.json  ✅ I2V distilled (동일 구성)
 │   └── renderer/
 │       ├── composer.py                  ✅ 진입점
-│       ├── layout.py                    ✅ 오케스트레이터 (concat 후 seg 즉시 정리)
+│       ├── layout.py                    ✅ 오케스트레이터 + 시봄이 등장/루프 모션 (2026-08-21)
 │       ├── _frames.py                   ✅ PNG 프레임 생성 + MD5 오버레이 캐시
 │       ├── _tts.py                      ✅ TTS 오디오 합성
 │       ├── _encode.py                   ✅ 단일 NVENC 인코딩 (filter_complex 통합)
@@ -288,6 +288,17 @@ Claude Design 핸드오프 기반으로 렌더러 전면 교체. 컨테이너 PN
 | **P5 대화 캡처** | `SceneType="chat"` + `_render_chat_frame` (is_mine 기준 좌/우 버블, 아바타, 발신자명) + chunker `chat_messages` 추출 + ScriptData 직렬화 + 전 processor 경로 배선 |
 | **기타** | `_title_block_bottom_y()` 순수헬퍼(가변 제목 높이 일원화) · `_fmt_count`/`_relative_time` 유틸 |
 
+### 시봄이(Sibom) 캐릭터 모션 구현 완료 (2026-08-21)
+
+렌더 파이프라인 Phase 8에서 시봄이 캐릭터 모션을 완전 구현·검증 완료:
+
+- **등장 애니메이션**: 12프레임 punch(ease-out, scale 92→100 + 페이드)
+- **루프 모션**: 사인 기반 5종 — `sway`(숨쉬기 ±3%) · `shake`(잔떨림) · `sob`(세로 들썩임) · `sink`(처짐) · `pop`(크게 숨쉬기)
+- **구현 위치**: `worker/ai_worker/renderer/layout.py`의 `_sibom_variant()` / `_wire_sibom_motion()`. `intro`/`image_text` 씬에서 동작하며 실패 시 정지 프레임으로 graceful degrade.
+- **배선**: 모션 종류는 `assets/sprouts/catalog.json`의 per-image `motion` 필드로 결정. `_frames.py` 수정 불필요(자체 캔버스 내 변형 처리).
+- **검증**: `worker/test/test_sibom_motion.py` 유닛 18개 통과 + `smoke_sibom_motion.py` 실렌더 픽셀 검증
+- **캐릭터 아트 리파인** (동시 진행): 눈 확대·하이라이트, 진영색 전용 밝은 값(`#E89A72`/`#6FB08A`), 외곽선 7→9px, 팔다리 22→28px, 떡잎 bristle 신규. 자산: `assets/sprouts/`
+
 ## 다음 개선 우선순위
 
-현 상태로 전체 파이프라인이 동작 가능. 레이아웃 v3 + P1~P5 씬타입 전부 완료됨.
+현 상태로 전체 파이프라인이 동작 가능. 레이아웃 v3 + P1~P5 씬타입 전부 완료됨. 시봄이 모션 완전 동작 (모션 유닛 테스트 18/18 PASS).

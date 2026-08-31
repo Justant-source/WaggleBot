@@ -1063,6 +1063,105 @@ def _create_header_only_frame(
 # 씬 렌더러 (모두 base_frame.copy()에서 시작)
 # ---------------------------------------------------------------------------
 
+def _blend_over_bg(fg_hex: str, bg_hex: str, alpha: float) -> tuple[int, int, int]:
+    """fg_hex를 bg_hex 위에 alpha로 얹었을 때의 합성 RGB. 텍스트 페이드인용."""
+    fg = tuple(int(fg_hex.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    bg = tuple(int(bg_hex.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    a = max(0.0, min(1.0, alpha))
+    return tuple(int(round(bg[i] + (fg[i] - bg[i]) * a)) for i in range(3))
+
+
+def _render_intro_frame_v2(
+    img_pil: Optional[Image.Image],
+    title_text: str,
+    layout: dict,
+    font_dir: Path,
+    out_path: Path,
+    stage: int | None = None,
+    hook_alpha: float = 1.0,
+) -> Path:
+    """v2 인트로 — 크림 배경 + 제목 + 시봄이 카드 (앱 크롬 없음).
+
+    시봄이는 정사각 일러스트라 cover(잘라 채우기) 대신 contain 으로 넣는다.
+    예전에는 세로로 긴 영역에 cover 를 써서 캐릭터 팔이 좌우로 잘려나갔다.
+
+    2026-08-29 첫 프레임 강화(실측: marketing_v2 발행 0일차 평균 조회 475 =
+    동일 일령 v1의 37%, ffmpeg scene-detect로 첫 6초 장면전환 0회 확인. 반면
+    유지율은 v2 53% > v1 36% — 본문이 아니라 첫 프레임/썸네일이 병목):
+    - 훅 폰트: 56px(title_block.font_size+6 고정값) → 스펙(`settings.yaml`
+      tone_v2.typography.hook_min_font_size_px, 기본 80px)을 실제로 읽어 적용.
+      3줄 wrap을 넘치면 64px까지만 안전하게 축소(문구가 무한정 작아지지 않는다).
+    - 훅 색상: 팔레트 브라운 계열 안에서 더 진한 값(`ink_strong`)으로 대비 강화.
+      검정으로 바꾸지 않는다 — Tone L(편지지 톤)은 의도된 브랜드 결정.
+    - 앱 UI 잔재인 스텝닷(●○○)은 인트로에서만 제거(본문 image_text 씬은 유지).
+    - hook_alpha: 첫 3초 등장 애니메이션에서 캐릭터 punch-in과 같은 진행도로
+      훅 텍스트도 함께 페이드인시킨다(정적 배경만 있던 화면 전체의 변화폭을 키워
+      ffmpeg scene-detect가 실제로 장면전환을 인지하도록). 기본 1.0(완전 불투명).
+    """
+    from ai_worker.renderer.layout import _load_font, _load_renderer_settings
+
+    cw = layout["canvas"]["width"]
+    ch = layout["canvas"]["height"]
+    palette = layout["global"].get("palette", {})
+    pad_x = layout["global"].get("title_block", {}).get("pad_x", 90)
+    sc_it = layout["scenes"]["image_text"]
+    card_cfg = sc_it.get("card", {})
+    card_pad = card_cfg.get("pad", 44)
+    card_radius = card_cfg.get("radius", 28)
+
+    img = Image.new("RGB", (cw, ch), "#EDF1E8")
+    draw = ImageDraw.Draw(img)
+
+    # 훅 — 세이프존(상단 12%) 아래에서 시작
+    safe_top = int(ch * 0.12)
+    max_w = cw - 2 * pad_x
+    try:
+        typography = (_load_renderer_settings().get("tone_v2") or {}).get("typography") or {}
+        hook_target_fs = int(typography.get("hook_min_font_size_px", 80))
+    except Exception:
+        hook_target_fs = 80
+    hook_floor_fs = 64  # 넘쳐도 기존 56px보다는 항상 크게 축소 한도를 둔다
+    t_fs = hook_target_fs
+    t_font = _load_font(font_dir, _body_font_file(layout), t_fs)
+    t_lines = _wrap_korean(title_text or "", t_font, max_w, keep_all=True)
+    while len(t_lines) > 3 and t_fs > hook_floor_fs:
+        t_fs = max(hook_floor_fs, t_fs - 4)
+        t_font = _load_font(font_dir, _body_font_file(layout), t_fs)
+        t_lines = _wrap_korean(title_text or "", t_font, max_w, keep_all=True)
+    t_lines = t_lines[:3]
+    t_lh = int(t_fs * 1.25)
+    hook_color = palette.get("ink_strong", "#3D2A1F")
+    if hook_alpha < 0.999:
+        hook_color = _blend_over_bg(hook_color, "#EDF1E8", hook_alpha)
+    y = safe_top
+    for line in t_lines:
+        draw.text((pad_x, y), line, font=t_font, fill=hook_color)
+        y += t_lh
+
+    # 시봄이 카드 — 정사각, contain(잘림 없음)
+    card_x = pad_x
+    card_w = cw - 2 * pad_x
+    card_y = y + 48
+    inner = card_w - 2 * card_pad
+    safe_bottom = int(ch * 0.22)
+    inner = min(inner, max(120, ch - safe_bottom - card_y - 2 * card_pad))
+    card_h = card_pad * 2 + inner
+    draw.rounded_rectangle(
+        [(card_x, card_y), (card_x + card_w, card_y + card_h)],
+        radius=card_radius, fill="#FFFFFF",
+    )
+    if img_pil is not None:
+        fitted = _fit_contain(img_pil, inner, inner)
+        ox = card_x + card_pad + (inner - fitted.width) // 2
+        oy = card_y + card_pad + (inner - fitted.height) // 2
+        img.paste(fitted, (ox, oy), fitted if fitted.mode == "RGBA" else None)
+
+    # 스텝닷(●○○)은 앱 UI 잔재 — 인트로에서만 제거(본문 image_text 씬은 유지)
+    _draw_ribbon(draw, cw, ch, layout)
+    img.save(str(out_path), "PNG")
+    return out_path
+
+
 def _render_intro_frame(
     base_frame: Image.Image,
     img_pil: Optional[Image.Image],
@@ -1072,6 +1171,9 @@ def _render_intro_frame(
     out_path: Path,
     content_top: int,
     stage: int | None = None,
+    render_profile: str | None = None,
+    title_text: str = "",
+    hook_alpha: float = 1.0,
 ) -> Path:
     """씬 intro — hook 자막(중앙, 굵은 검정) + 자연비율 표지 이미지.
 
@@ -1084,6 +1186,14 @@ def _render_intro_frame(
     sc = layout["scenes"]["intro"]
     cw = layout["canvas"]["width"]
     ch = layout["canvas"]["height"]
+
+    # v2 인트로 — 앱 크롬 없이 크림 캔버스에 제목 + 시봄이 카드.
+    # 본문(image_text) 씬과 같은 구성이라 첫 장면부터 톤이 이어진다.
+    if render_profile == "marketing_v2":
+        return _render_intro_frame_v2(
+            img_pil, title_text or hook_text, layout, font_dir, out_path, stage=stage,
+            hook_alpha=hook_alpha,
+        )
 
     img = base_frame.copy()
     draw = ImageDraw.Draw(img)
@@ -1847,17 +1957,51 @@ def _render_comments_frame(
                        fill=divider_color)
         y += cards_cfg.get("gap_top", 30)
 
-        nick_fs = nick_cfg.get("font_size", 28)
+        # ── v2: 9:16 화면을 채우기 위한 확대 ──────────────────────────────
+        # 기본값(텍스트 36px·아바타 72px)은 앱 화면 기준이라, 세로 1920px 캔버스에서
+        # 짧은 댓글 2장이면 상단 22%만 차지하고 나머지가 빈 크림색으로 남는다.
+        # v2에서만 배율을 올려 카드 자체를 키운다(fast는 그대로).
+        _V2_COMMENT_SCALE = 1.45 if render_profile == "marketing_v2" else 1.0
+
+        def _sc(v: int) -> int:
+            return int(round(v * _V2_COMMENT_SCALE))
+
+        nick_fs = _sc(nick_cfg.get("font_size", 28))
         nick_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", nick_fs)
-        text_fs = text_cfg.get("font_size", 36)
+        text_fs = _sc(text_cfg.get("font_size", 36))
         text_font = _load_font(font_dir, "NotoSansKR-Medium.ttf", text_fs)
-        text_lh = text_cfg.get("line_height", 52)
-        text_max_lines = text_cfg.get("max_lines", 2)
-        footer_font = _load_font(font_dir, "NotoSansKR-Regular.ttf", footer_cfg.get("font_size", 26))
-        av_d = avatar_cfg.get("size", 72)
-        card_pad_x = cards_cfg.get("pad_x", 24)
-        card_pad_y = cards_cfg.get("pad_y", 20)
+        text_lh = _sc(text_cfg.get("line_height", 52))
+        # 확대 시 줄 수도 늘려 카드가 세로로 더 자라게 한다
+        # v2 는 카드를 세로 중앙에 놓아 위아래 여유가 크다. 상한이 낮으면
+        # 조금만 긴 댓글도 문장 중간에서 잘린다 — 세이프존이 감당하는 만큼 올린다.
+        text_max_lines = text_cfg.get("max_lines", 2) + (7 if _V2_COMMENT_SCALE > 1.0 else 0)
+        _ELLIPSIS = "\u2026"
+        footer_font = _load_font(font_dir, "NotoSansKR-Regular.ttf",
+                                 _sc(footer_cfg.get("font_size", 26)))
+        av_d = _sc(avatar_cfg.get("size", 72))
+        card_pad_x = _sc(cards_cfg.get("pad_x", 24))
+        card_pad_y = _sc(cards_cfg.get("pad_y", 20))
         card_w = cw - 2 * pad_x
+
+        # 남는 세로 공간을 카드 사이 간격으로 분배해 화면을 고르게 채운다.
+        # (카드를 키워도 2장뿐이면 하단이 비므로, 간격으로 균형을 맞춘다)
+        _base_gap = cards_cfg.get("gap_between", 24)
+        _v2_gap = _base_gap
+        _safe_bottom = int(ch * 0.78)
+        _est_lines = min(text_max_lines, 4)  # 실제로는 대개 3~4줄이다
+        _est_card_h = card_pad_y * 2 + max(av_d, nick_fs + 10) + 20 + text_lh * _est_lines + int(footer_cfg.get("font_size", 26) * 1.4)
+        if render_profile == "marketing_v2" and len(visible) > 1:
+            _avail = _safe_bottom - y - _est_card_h * len(visible)
+            if _avail > 0:
+                _v2_gap = min(int(_avail / max(1, len(visible) - 1)), _base_gap * 6)
+                _v2_gap = max(_v2_gap, _base_gap)
+        elif render_profile == "marketing_v2" and len(visible) == 1:
+            # 카드가 1장일 때는 나눌 간격이 없어 위쪽에 붙고 아래 절반이 빈다.
+            # 남는 세로 공간의 절반만큼 내려 시각 무게를 가운데로 옮긴다.
+            # (헤더에서 너무 떨어지지 않게 상한을 둔다)
+            _avail = _safe_bottom - y - _est_card_h
+            if _avail > 0:
+                y += min(_avail // 2, int(ch * 0.14))
 
         for item in visible:
             author = _sanitize_comment_display_text(item.get("author") or "익명") or "익명"
@@ -1866,7 +2010,16 @@ def _render_comments_frame(
             likes = item.get("likes", 0) or 0
             is_best = bool(item.get("is_best"))
 
-            text_lines = _wrap_korean(content, text_font, card_w - 2 * card_pad_x - av_d - avatar_cfg.get("gap_right", 16), keep_all=True)[:text_max_lines]
+            _all_lines = _wrap_korean(
+                content, text_font,
+                card_w - 2 * card_pad_x - av_d - avatar_cfg.get("gap_right", 16),
+                keep_all=True,
+            )
+            text_lines = _all_lines[:text_max_lines]
+            if len(_all_lines) > text_max_lines and text_lines:
+                # 잘렸다는 사실을 보이게 한다. 아무 표시 없이 끊기면
+                # 렌더가 깨진 것처럼 보이고, 낭독은 끝까지 나가 귀와 어긋난다.
+                text_lines[-1] = text_lines[-1].rstrip() + _ELLIPSIS
             card_h = card_pad_y + max(av_d, nick_fs + 10) + 10 + len(text_lines) * text_lh + 10 + int(footer_cfg.get("font_size", 26) * 1.4) + card_pad_y
 
             border_color = cards_cfg.get("best_border", "#C9785A") if is_best else cards_cfg.get("border", "#E5DED2")
@@ -1910,7 +2063,7 @@ def _render_comments_frame(
             draw.text((tx, ty + footer_cfg.get("gap_top", 8)), foot_text, font=footer_font,
                       fill=footer_cfg.get("color", "#A08670"))
 
-            y += card_h + cards_cfg.get("gap_between", 24)
+            y += card_h + _v2_gap
 
         _draw_step_dots(draw, cw, stage or 3, layout)
         _draw_ribbon(draw, cw, ch, layout)

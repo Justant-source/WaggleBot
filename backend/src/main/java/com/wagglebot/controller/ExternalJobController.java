@@ -108,7 +108,6 @@ public class ExternalJobController {
             .orElse(null);
     }
 
-    /** Every terminal response has a stable, safe failure envelope for ASM. */
     private void addFailure(Map<String, Object> body, Content content, String lastError) {
         JsonNode failure = runtimeState(content, "failure");
         String fallback = lastError == null || lastError.isBlank() ? "pipeline failed" : lastError;

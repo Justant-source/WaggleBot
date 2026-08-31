@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Literal
 
 from ai_worker.scene.analyzer import ResourceProfile, estimate_tts_duration
-from config.settings import EMOTION_TAGS, get_domain_setting
+from config.settings import EMOTION_TAGS, MEDIA_DIR, get_domain_setting
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,8 @@ class SceneDecision:
     dwell_sec: float = 4.0                   # 무음 체류 시간 (comments/chat 씬)
     # --- 채팅 씬 전용 필드 ---
     chat_messages: list[dict] | None = None  # [{"sender":str,"text":str,"is_mine":bool}]
+    # --- WS4-SFX: 효과음 마커 (d절) ---
+    sfx_events: list[str] | None = None   # [hook_in|turn|section_whoosh|bubble|vote_fill|logo]
     # --- again_spring 시봄이 (sibom_plan) ---
     sibom_role: str | None = None          # intro|peak|punch|soft_fill
     sibom_size: str | None = None          # large|small
@@ -1261,8 +1263,35 @@ class SceneDirector:
                 return result
 
             def _pick_bgm() -> _Path | None:
-                # BGM 폴더가 비어있으면 fallback 없이 None 반환 → BGM 미사용
-                return pick_random_file(preset.get("bgm_dir", ""), supported_bgm_ext)
+                # 관리자가 어드민에서 고른 트랙이 있으면 그것을 쓴다.
+                # 값은 "/api/media/bgm/<emotion>/<file>" 형태(카탈로그 path 그대로).
+                chosen = self.variant_config.get("bgm_track") or self.variant_config.get("bgmTrack")
+                if isinstance(chosen, str) and chosen.strip():
+                    rel = chosen.strip().split("/api/media/", 1)[-1].lstrip("/")
+                    cand = MEDIA_DIR / rel
+                    if cand.is_file():
+                        logger.info("[bgm] 관리자 선택 사용: %s", cand)
+                        return cand
+                    logger.warning("[bgm] 선택한 파일 없음 → 자동 선택으로 폴백: %s", chosen)
+
+                # WS4.2: hook_emotion을 기반한 BGM 선택
+                hook_emotion = self.variant_config.get("hook_emotion") or self.variant_config.get("hookEmotion")
+                if not isinstance(hook_emotion, str) or not hook_emotion.strip():
+                    hook_emotion = "tension"
+                else:
+                    hook_emotion = hook_emotion.strip()
+
+                # BGM 디렉토리: MEDIA_DIR/bgm/<emotion>/ (컨테이너는 assets/media만 마운트됨)
+                bgm_dir = str(MEDIA_DIR / "bgm" / hook_emotion)
+                result = pick_random_file(bgm_dir, supported_bgm_ext)
+
+                # 파일 없으면 tension 폴백
+                if result is None and hook_emotion != "tension":
+                    result = pick_random_file(str(MEDIA_DIR / "bgm" / "tension"), supported_bgm_ext)
+
+                if result:
+                    logger.info("[bgm] emotion=%s file=%s", hook_emotion, result)
+                return result
         else:
             # policy 없을 때 fallback (기존 동작 유지)
             tts_emotion = ""
@@ -1315,6 +1344,7 @@ class SceneDirector:
             tts_emotion=tts_emotion,
             bgm_path=bgm_path,
             voice_override=self.narrator_voice,
+            sfx_events=["hook_in"],  # WS4-SFX: intro는 항상 hook_in
         )
         if intro_sibom_item:
             intro_scene.sibom_role = "intro"
@@ -1417,8 +1447,10 @@ class SceneDirector:
                 for _m in self._chat_messages:
                     _m.setdefault("voice", self._assign_chat_voice(
                         _m.get("sender") or "상대방", bool(_m.get("is_mine", False))))
-                for i in range(0, len(self._chat_messages), per_scene):
-                    batch = self._chat_messages[i : i + per_scene]
+                for i, scene_idx in enumerate(range(0, len(self._chat_messages), per_scene)):
+                    batch = self._chat_messages[scene_idx : scene_idx + per_scene]
+                    # WS4-SFX: 첫 chat 씬은 whoosh+bubble, 이후는 bubble만
+                    sfx_list = ["section_whoosh", "bubble"] if i == 0 else ["bubble"]
                     scenes.append(SceneDecision(
                         type="chat",
                         text_lines=[],
@@ -1427,6 +1459,7 @@ class SceneDirector:
                         tts_emotion="",
                         chat_messages=batch,
                         dwell_sec=chat_dwell,
+                        sfx_events=sfx_list,
                     ))
                 logger.debug(
                     "채팅 씬 추가: %d개 메시지 → %d씬 (dwell=%.1fs)",
@@ -1455,20 +1488,32 @@ class SceneDirector:
                         "content": getattr(c, "content", "") or "",
                         "likes": getattr(c, "likes", 0) or 0,
                         "is_best": (i == 0),  # 추천 1위 → BEST
-                        "voice": self._assign_comment_voice(getattr(c, "author", None) or "익명"),
+                        "side": getattr(c, "side", "neutral"),  # WS3.4: AS 백엔드에서 받은 side 필드
+                        "voice": self._assign_comment_voice(
+                            getattr(c, "author", None) or "익명",
+                            side=getattr(c, "side", None),  # WS3.4: side 기반 고정 매핑 시도
+                        ),
                     }
                     for i, c in enumerate(sorted_cmts)
                 ]
+                # v2도 "comments" 씬을 쓴다. 예전 WS3.3~3.4 분기는 v2를 "chat" 으로
+                # 돌렸지만 chat_messages 를 채우지 않아 화면이 통째로 비었다
+                # (comment=0.0s). v2 전용 확대는 _frames.py comments 렌더러에 있다.
+                scene_type = "comments"
+                # WS4-SFX: 첫 chat 씬은 whoosh+bubble, 이후는 bubble만
+                # 현재는 댓글이 1개 씬이므로 whoosh 포함
                 scenes.append(SceneDecision(
-                    type="comments",
+                    type=scene_type,
                     text_lines=[],
                     image_url=None,
                     mood=mood,
                     tts_emotion="",
-                    comment_items=comment_items,
+                    comment_items=comment_items if scene_type == "comments" else None,
+                    chat_messages=None,  # 댓글 씬은 chat_messages 미사용
                     dwell_sec=dwell,
+                    sfx_events=["section_whoosh", "bubble"],  # WS4-SFX: 첫 댓글 장면은 whoosh+bubble
                 ))
-                logger.debug("댓글 씬 추가: %d개 댓글 (dwell=%.1fs)", len(comment_items), dwell)
+                logger.debug("댓글 씬 추가: %d개 댓글 (dwell=%.1fs, type=%s, sfx=whoosh+bubble)", len(comment_items), dwell, scene_type)
 
         # ── Outro ──────────────────────────────────────────────────────
         outro_asset = _pick_asset("outro_image_dir")
@@ -1481,6 +1526,7 @@ class SceneDirector:
             mood=mood,
             tts_emotion=tts_emotion,
             voice_override=self.narrator_voice,
+            sfx_events=["vote_fill", "logo"],  # WS4-SFX: outro는 투표바+로고
         ))
 
         if self.site_code == "again_spring" and (not scenes or scenes[-1].type != "outro"):
@@ -1685,12 +1731,27 @@ class SceneDirector:
         logger.debug("[director] character '%s' → voice=%s", label, voice)
         return voice
 
-    def _assign_comment_voice(self, author: str) -> str | None:
+    def _assign_comment_voice(self, author: str, side: str | None = None) -> str | None:
         """댓글 작성자별 voice 배정. 동일 작성자=동일 목소리.
 
-        풀에서 내레이터와 겹치지 않는 키를 우선해 작성자 기반으로 결정적으로 선택한다.
+        WS3.4: side가 지정되면 settings.yaml의 comment_voice_mapping으로 고정 매핑.
+        매핑 없으면 풀에서 내레이터와 겹치지 않는 키를 우선해 작성자 기반으로 결정적으로 선택한다.
         같은 댓글은 Reels/Shorts 재시도에서도 같은 voice/cache key를 사용한다.
         """
+        # WS3.4: side 기반 고정 매핑 (settings.yaml comment_voice_mapping)
+        if side:
+            side_mapping = get_domain_setting("scene", "comment_voice_mapping", default={})
+            if side_mapping and side in side_mapping:
+                mapped_voice = side_mapping[side]
+                if mapped_voice and mapped_voice in (self.comment_voices or []):
+                    logger.info("[director] comment side '%s' → voice=%s (mapping)", side, mapped_voice)
+                    return mapped_voice
+                elif mapped_voice == "default":
+                    # "default" → narrator 사용
+                    logger.info("[director] comment side '%s' → narrator (default)", side)
+                    return self.narrator_voice
+
+        # 폴백: 기존 작성자 기반 로직
         key = author or "익명"
         if key in self._comment_author_voices:
             return self._comment_author_voices[key]

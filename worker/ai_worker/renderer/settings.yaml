@@ -13,10 +13,159 @@ fps: 30
 audio:
   bitrate: 192k
   bgm_volume: 0.15
+  bgm_fade_in: 1.5      # BGM 인트로 페이드인 (초)
+  bgm_fade_out: 1.0     # BGM 아웃트로 페이드아웃 (초)
 
+# ── SFX 팔레트 (이벤트 → 파일 경로, 볼륨, 오프셋) ──
+# ── 배경음악 ──
+# false 면 모든 렌더에서 BGM 을 넣지 않는다. 고르는 기능은 그대로 살아 있어
+# (어드민 매핑 · 카탈로그 API · 잡별 bgmTrack) 값만 true 로 바꾸면 즉시 복귀한다.
+bgm:
+  enabled: false
+
+sfx:
+  active:
+    hook_in:
+      file: _library/bell/bell_600.wav
+      volume: 0.75
+      offset: 0.0
+    intro_out:
+      file: _library/paper/paper_1530.wav
+      volume: 0.5
+      offset: -0.1
+    card_in:
+      file: _library/game/game_2072.wav
+      volume: 0.55
+      offset: -0.1
+    sibom_punch:
+      file: _library/game/game_2045.wav
+      volume: 0.4
+      offset: 0.25
+    motion_sway:
+      file: _library/game/game_2058.wav
+      volume: 0.28
+      offset: 0.95
+    motion_sink:
+      file: _library/game/game_2363.wav
+      volume: 0.35
+      offset: 0.95
+    motion_shake:
+      file: _library/game/game_2324.wav
+      volume: 0.45
+      offset: 0.95
+    motion_pop:
+      file: _library/game/game_2313.wav
+      volume: 0.38
+      offset: 0.95
+    motion_sob:
+      file: _library/game/game_2043.wav
+      volume: 0.35
+      offset: 0.95
+    card_out:
+      file: _library/click/click_1117.wav
+      volume: 0.4
+      offset: -0.08
+    page:
+      file: _library/click/click_1660.wav
+      volume: 0.3
+      offset: -0.12
+    text_line:
+      file: _library/click/click_216.wav
+      volume: 0.16
+      offset: 0.0
+    section_whoosh:
+      file: _library/interface/interface_2574.wav
+      volume: 0.65
+      offset: -0.5
+    bubble:
+      file: _library/interface/interface_2574.wav
+      volume: 0.55
+      offset: 0.5
+    best_badge:
+      file: _library/interface/interface_2574.wav
+      volume: 0.35
+      offset: 0.9
+    outro_in:
+      file: _library/notification/notification_2870.wav
+      volume: 0.55
+      offset: -0.1
+    vote_fill:
+      file: _library/interface/interface_2575.wav
+      volume: 0.5
+      offset: 0.6
+  one_per_change: true  # 화면 변화 한 번에 효과음 하나만
+  # 같은 화면에 여러 마커가 붙으면 이 순서대로 앞에 있는 것이 이긴다.
+  # 여기 없는 이벤트는 맨 뒤로 밀린다.
+  priority:
+    - hook_in
+    - section_whoosh
+    - outro_in
+    - motion_shake
+    - motion_sob
+    - motion_pop
+    - motion_sink
+    - motion_sway
+    - sibom_punch
+    - card_in
+    - card_out
+    - intro_out
+    - best_badge
+    - vote_fill
+    - bubble
+    - page
+    - text_line
+  max_per_video: 40
+  min_gap_sec: 2.0      # 같은 소리가 겹치지 않게 하는 마지막 안전장치
+  same_file_gap_sec: 1.5  # 같은 음원은 이 간격 안에 다시 울리지 않는다
+  short_gap_sec: 0.34   # 오프셋으로 이미 시간차를 뒀으므로 규칙은 최소만 건다
+  # 지점별 오프셋이 실제 간격을 정한다. 여기에 없으면 min_gap_sec 이 걸려
+  # 일부러 겹쳐 배치한 소리(카드 착지→캐릭터 등장→모션)가 통째로 버려진다.
+  short_gap_events:
+    - intro_out
+    - card_in
+    - sibom_punch
+    - motion_sway
+    - motion_sink
+    - motion_shake
+    - motion_pop
+    - motion_sob
+    - card_out
+    - page
+    - text_line
+    - section_whoosh
+    - bubble
+    - best_badge
+    - outro_in
+    - vote_fill
 # ── 썸네일 ──
 thumbnail:
   width: 1280
   height: 720
   font_size: 72
   jpeg_quality: 90
+
+# ── V2 테마 (marketing_v2 프로필용) ──
+tone_v2:
+  safe_zone:
+    top_pct: 0.12       # 상단 12% — 플랫폼 UI 세이프존(재생 버튼, 프로필)
+    bottom_pct: 0.22    # 하단 22% — 플랫폼 UI 세이프존(좋아요, 댓글, 공유)
+
+  typography:
+    body_max_chars_per_line: 14    # 본문 줄당 최대 글자 수 (어절 단위)
+    body_min_font_size_px: 56      # 본문 최소 크기
+    hook_min_font_size_px: 80      # 훅 최소 크기
+    wrap_word_boundary: true       # 어절 단위 줄바꿈
+
+  comments:
+    card_min_height_pct: 0.25      # 댓글 카드 최소 높이 (화면 높이 대비)
+
+  outro:
+    vote_bar:
+      height: 80                   # 투표 바 높이 (px)
+      corner_radius: 8             # 모서리 반경
+      padding_x: 30                # 좌우 여백
+      label_font_size: 32          # "A 60% : B 40%" 폰트
+      pct_font_size: 28            # 백분율 숫자
+      gap_top: 60                  # 투표 바 상단 여백
+      color_author: "#C9785A"      # 작성자 A 색상 (피치)
+      color_partner: "#5F8F76"     # 상대방 B 색상 (세이지)

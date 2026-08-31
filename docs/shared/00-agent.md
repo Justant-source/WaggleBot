@@ -48,7 +48,7 @@
 | 변경 영역 | 기본 검증 |
 |-----------|-----------|
 | 문서만 변경 | `python3 scripts/lint_docs.py` |
-| Python worker | `cd worker && python -m pytest` 또는 관련 `python -m pytest test/<파일>.py` |
+| Python worker | `cd worker && PYTHONPATH=<repo>:<repo>/worker ../venv/bin/pytest test/ -m 'not requires_ffmpeg'` ※ config·ffmpeg 의존 테스트는 컨테이너용 (아래 참고) |
 | LLM/파이프라인 | 관련 unit test + `worker/ai_worker/llm/transport.py` call_type 라우팅 확인 |
 | backend | `cd backend && ./gradlew test` 또는 최소 `./gradlew build` |
 | frontend | `cd frontend && npm run lint` 및 영향 페이지 수동 확인 |
@@ -56,6 +56,58 @@
 | Docker/운영 | `docker compose -f env/docker-compose.yml ps`, 필요한 서비스 로그는 `--tail 50` |
 
 테스트가 환경 의존성 때문에 실패하거나 실행 불가하면, 실패 원인과 미검증 위험을 완료 보고에 적는다.
+
+### pytest 환경 설정 (Python worker 테스트)
+
+**문제**: 테스트 코드가 `_PROJECT_ROOT = Path(__file__).resolve().parent.parent`로 설정 파일 경로를 계산하므로,  
+`worker/` 디렉토리를 기준으로 `config/` 디렉토리를 찾는다. 그러나 실제로는 저장소 루트의 `config/` 디렉토리가 대상이다.
+
+즉 테스트는 **컨테이너 레이아웃**(`/app/ai_worker/…` + `/app/config`)을 전제로 쓰였다.
+호스트는 `worker/ai_worker/…` + `<repo>/config` 라 한 단계 어긋난다.
+
+**호스트에서 (대부분의 테스트)**
+
+```bash
+cd ~/Data/WaggleBot/worker
+PYTHONPATH=/home/justant/Data/WaggleBot:/home/justant/Data/WaggleBot/worker \
+  ../venv/bin/pytest test/ -m 'not requires_ffmpeg'
+```
+
+- 호스트 python에는 pytest·dotenv가 없다. 반드시 `../venv/bin/pytest`.
+- `-m 'not requires_ffmpeg'`: ffmpeg는 컨테이너(`env-ai_worker-1`)에만 있다.
+- 약 283개 통과. 아래 두 부류는 **호스트에서 실패하는 게 정상**이다:
+  - `config/` 의존: `test_layout.py` · `test_layout_chars.py` · `test_scene_policy.py` · `test_progressive_comments.py`
+  - ffmpeg 의존: `test_loudnorm_*.py`
+
+**컨테이너에서 (config·ffmpeg 의존 테스트)**
+
+컨테이너는 경로가 맞고 ffmpeg도 있다. 다만 pytest가 없으므로, pytest 없이 도는
+스모크 스크립트를 쓰거나 필요할 때만 컨테이너에 pytest를 넣어 돌린다.
+
+```bash
+docker exec env-ai_worker-1 python3 /app/test/smoke_tonel.py
+docker exec env-ai_worker-1 python3 /app/test/smoke_sibom_motion.py
+docker exec env-ai_worker-1 python3 /app/test/smoke_intro_v2.py  # v2 인트로 폰트/대비/스텝닷/등장모션(2026-08-29)
+```
+
+> 🚨 **`worker/config` (root 소유 빈 디렉토리)를 지우거나 바꾸지 말 것.**
+> 컴포즈가 `worker → /app` 위에 `config → /app/config` 를 **중첩 마운트**하기 때문에,
+> Docker가 컨테이너 기동 시 마운트 지점으로 `worker/config` 를 root 권한으로 만든다.
+> 호스트에서는 비어 보이지만 **컨테이너에서 설정 파일이 보이려면 반드시 있어야 하는
+> 자리**다. 지우면 `/app/config` 가 통째로 사라진다(빈 디렉토리라 git에도 안 잡혀
+> 지운 흔적이 남지 않는다). 복구는 `docker restart env-ai_worker-1`.
+>
+> 🚨 **`worker/` 안에 `config` 심볼릭 링크를 만들지 말 것.**
+> `worker/`는 컨테이너에 `/app`으로 bind mount된다. 거기에 `config` 심볼릭 링크를
+> 만들면 별도 bind mount인 `/app/config`를 가려서 **컨테이너에서 설정 파일이
+> 통째로 사라진다**(2026-08-21 실제로 발생 — 마운트 지점을 링크로 덮었다가
+> 그 링크를 지우면서 마운트 지점까지 사라졌다. 컨테이너 재기동으로 복구). 
+> 같은 계열의 사고 전례가 또 있다(테스트용 심볼릭 링크 → 재시작 시 크래시루프).
+> 호스트에서 그 테스트들을 꼭 돌려야 한다면 심볼릭 링크 대신 **저장소 사본**에서 돌려라.
+>
+> 🚨 **정리한다고 `git checkout .` / `git restore .` 을 쓰지 말 것.**
+> 추적 중인 파일의 **미커밋 변경을 전부 지운다.** 다른 세션의 진행 중 작업이
+> 함께 날아간다. 만든 파일만 이름을 지정해 지울 것.
 
 ## 완료 보고
 

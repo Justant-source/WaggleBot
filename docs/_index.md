@@ -73,6 +73,7 @@ last_updated: 2026-08-31
 | 17 | `worker/ai_worker/core/processor.py` | `docs/worker/60-runtime.md` | M |
 | 18 | `worker/crawlers/**` | `docs/worker/30-components/overview.md` · `docs/worker/30-components/implementation-status.md` | C |
 | 19 | 하드 제약 추가·변경 | `docs/shared/90-adr/` · `docs/shared/70-policy.md` | M |
+| 20 | `worker/ai_worker/core/main.py` · `worker/ai_worker/core/progress.py` | `docs/worker/60-runtime.md` · `docs/backend/50-api.md` | M |
 
 ## §6. Code → Docs 역인덱스
 

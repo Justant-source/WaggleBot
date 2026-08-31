@@ -22,10 +22,11 @@ import logging
 import shutil
 import subprocess
 import time
+import yaml
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 from config.settings import (
     ASSETS_DIR,
@@ -33,6 +34,26 @@ from config.settings import (
     TTS_TEXT_LEAD_SEC,
 )
 
+# resolve_render_profile 동적 임포트 (순환 참조 방지)
+def _resolve_render_profile(post_id: int) -> str:
+    """렌더 프로필 해석 (processor.py 위임)."""
+    try:
+        from ai_worker.core.processor import resolve_render_profile
+        return resolve_render_profile(post_id)
+    except Exception as e:
+        logger.warning("[layout] resolve_render_profile 실패 (post_id=%d): %s", post_id, e)
+        return "default"
+
+
+# variant_config 조회 (processor 위임)
+def _resolve_post_variant_config(post_id: int) -> dict:
+    """게시글 variant_config 조회 (외부 ingest 데이터 포함, empathy_ratio 포함)."""
+    try:
+        from ai_worker.core.processor import _resolve_post_variant_config as get_config
+        return get_config(post_id)
+    except Exception as e:
+        logger.warning("[layout] variant_config 조회 실패 (post_id=%d): %s", post_id, e)
+        return {}
 # ── 내부 모듈 re-import (기존 import 경로 호환) ──
 from ai_worker.renderer._frames import (
     CANVAS_W, CANVAS_H, HEADER_H, HEADER_COLOR,
@@ -58,6 +79,7 @@ from ai_worker.renderer._encode import (
 logger = logging.getLogger(__name__)
 
 _LAYOUT_CONFIG: dict | None = None
+_SIBOM_CATALOG: dict | None = None
 _STATIC_CONCAT_CFR_ARGS: list[str] = ["-vsync", "cfr", "-r", "30"]
 _STATIC_FINAL_FRAME_HOLD_FILTER: str = "tpad=stop_mode=clone:stop=-1"
 
@@ -65,6 +87,41 @@ _STATIC_FINAL_FRAME_HOLD_FILTER: str = "tpad=stop_mode=clone:stop=-1"
 _AGAIN_SPRING_MAX_COMMENTS = 2
 _OUTRO_MIN_DURATION_SEC = 2.5
 _PROTECTED_TAIL_SCENE_TYPES = frozenset({"outro", "comments"})
+
+
+def _bgm_allowed_for_profile(render_profile: str | None) -> bool:
+    """BGM/SFX는 marketing_v2에서만. 승인 전까지 운영 경로(marketing_fast)는 무음 유지.
+
+    director는 프로필과 무관하게 bgm_path를 채우므로, 소비 지점인 여기서 막지 않으면
+    현재 발행되는 영상에 BGM이 그대로 들어간다(Phase 1 게이트 미통과 상태).
+    """
+    # 전역 차단 스위치 — settings.yaml 의 bgm.enabled 가 false 면 어떤 렌더에도
+    # BGM 을 넣지 않는다. 고르는 기능(어드민 매핑·카탈로그·잡별 bgmTrack)은
+    # 그대로 두고 소비 지점만 막는다. 다시 켜려면 값을 true 로 바꾸면 된다.
+    try:
+        if not bool((_load_renderer_settings().get("bgm") or {}).get("enabled", True)):
+            return False
+    except Exception:
+        pass
+    return render_profile == "marketing_v2"
+
+
+def _sfx_config_for_profile(layout: dict, render_profile: str | None) -> dict:
+    """SFX 설정을 프로필별로 준다. marketing_v2가 아니면 빈 dict = 효과음 없음.
+
+    BGM과 같은 이유: director는 프로필과 무관하게 sfx_events 마커를 찍으므로,
+    소비 지점에서 막지 않으면 승인 전에 운영 영상으로 효과음이 나간다.
+    """
+    if render_profile != "marketing_v2":
+        return {}
+    # sfx 설정은 layout config가 아니라 renderer/settings.yaml에 있다.
+    # layout dict에는 canvas/constraints/global/layout_algorithm/scenes/themes만
+    # 들어 있어, 여기서 찾으면 항상 빈 dict가 되어 효과음이 0개가 된다.
+    settings = _load_renderer_settings()
+    cfg = (settings.get("sfx") or {}).get("active") or {}
+    if not cfg:
+        cfg = (layout.get("sfx") or {}).get("active") or {}
+    return cfg
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +135,38 @@ def _load_layout() -> dict:
         with open(cfg_path, encoding="utf-8") as f:
             _LAYOUT_CONFIG = json.load(f)
     return _LAYOUT_CONFIG
+
+
+def _load_sibom_catalog() -> dict:
+    """시봄이 카탈로그 로드 (motion 필드 포함)."""
+    global _SIBOM_CATALOG
+    if _SIBOM_CATALOG is None:
+        catalog_path = ASSETS_DIR / "sprouts" / "catalog.json"
+        if catalog_path.exists():
+            with open(catalog_path, encoding="utf-8") as f:
+                _SIBOM_CATALOG = json.load(f)
+        else:
+            _SIBOM_CATALOG = {}
+    return _SIBOM_CATALOG
+
+
+def _load_renderer_settings() -> dict:
+    """렌더러 설정 로드 (settings.yaml)."""
+    cfg_path = Path(__file__).resolve().parent / "settings.yaml"
+    if cfg_path.exists():
+        with open(cfg_path, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+
+def _get_sibom_motion_for_image_id(image_id: str) -> str:
+    """이미지 ID로 motion 타입 조회. 기본: 'sway'."""
+    catalog = _load_sibom_catalog()
+    images = catalog.get("images", [])
+    for img_info in images:
+        if img_info.get("id") == image_id:
+            return img_info.get("motion", "sway")
+    return "sway"
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +275,8 @@ def _build_visual_timeline(
     static filter's ``tpad`` holds the final still until the audio-capped mux
     ends, avoiding the ffconcat terminal-entry edge case.
 
-    Sibom punch scenes prepend ~1.2s pop frames, then hold the final still
-    for the remainder of the beat duration.
+    Sibom punch scenes prepend ~1.2s pop frames, then tile loop/hold for
+    the remainder of the beat duration.
     """
     visual: list[tuple[Path, float]] = []
     for index, (frame_path, duration) in enumerate(zip(frame_paths, durations)):
@@ -198,6 +287,8 @@ def _build_visual_timeline(
 
         punch_raw = plan[index].get("sibom_punch_paths") if index < len(plan) else None
         punch_paths = [Path(p) for p in punch_raw] if punch_raw else []
+        loop_raw = plan[index].get("sibom_loop_paths") if index < len(plan) else None
+        loop_paths = [Path(p) for p in loop_raw] if loop_raw else []
 
         if punch_paths and current_duration > 0:
             punch_budget = min(_SIBOM_PUNCH_SEC, current_duration)
@@ -206,7 +297,7 @@ def _build_visual_timeline(
                 visual.append((pp, per))
             hold = current_duration - punch_budget
             if hold > 0.001:
-                visual.append((punch_paths[-1], hold))
+                visual.extend(_sibom_hold_segments(loop_paths or [punch_paths[-1]], hold))
         elif current_duration > 0:
             visual.append((frame_path, current_duration))
 
@@ -311,7 +402,15 @@ def _plan_sequence(
 # ---------------------------------------------------------------------------
 
 def _attach_sibom_plan_fields(entry: dict, scene) -> None:
-    """Copy again_spring sibom metadata onto a plan entry (if present)."""
+    """Copy again_spring sibom metadata onto a plan entry (if present).
+
+    sfx_events(효과음 마커)는 시봄이 유무와 무관하므로 조기 return 앞에서 복사한다
+    — outro·comments 씬은 sibom_role이 없어 예전엔 마커가 통째로 유실됐다.
+    """
+    events = getattr(scene, "sfx_events", None)
+    if events:
+        entry["sfx_events"] = list(events)
+
     role = getattr(scene, "sibom_role", None)
     if not role:
         return
@@ -340,9 +439,9 @@ def _compose_sibom_onto_base(
     )
 
     if size == "small" and scale == 1.0 and alpha >= 0.999:
-        return paste_on_frame(base, sibom_pil, size="small")
+        return paste_on_frame(base, sibom_pil, size="small", render_profile=render_profile)
     if size == "large" and scale == 1.0 and alpha >= 0.999:
-        return paste_on_frame(base, sibom_pil, size="large")
+        return paste_on_frame(base, sibom_pil, size="large", render_profile=render_profile)
 
     frame = base.convert("RGBA").copy()
     if size == "small":
@@ -375,33 +474,430 @@ def _compose_sibom_onto_base(
     return frame
 
 
-_SIBOM_PUNCH_POP_FRAMES = 8
-_SIBOM_PUNCH_SEC = 1.2
+_SIBOM_PUNCH_POP_FRAMES = 24          # fps 10→15로 업그레이드 (프레임 수 2배)
+_SIBOM_PUNCH_SEC = 1.2                # spec §9
+_SIBOM_PUNCH_START_SCALE = 0.92       # spec §6: scale 92 → 100
+_SIBOM_PUNCH_START_ALPHA = 0.35
+_SIBOM_INTRO_START_ALPHA = 0.60       # intro는 첫 프레임이 썸네일 후보라 더 밝게 시작
+
+_SIBOM_BREATHE_FRAMES = 24            # fps 10→15로 업그레이드 (프레임 수 2배)
+_SIBOM_BREATHE_CYCLE_SEC = 2.0        # 벤치마크 관찰: ~1.5–2.0s 주기
+_SIBOM_BREATHE_AMPLITUDE = 0.03       # ±3% scale
+
+_SIBOM_SHAKE_CYCLES = 2.5             # 1.2s 동안 2.5사이클 ≈ 2.1Hz
+_SIBOM_SHAKE_AMP_RATIO = 0.012        # 슬롯 폭의 1.2% 기준
+_SIBOM_SHAKE_VERTICAL_RATIO = 0.5
+
+_SIBOM_SINK_FRAMES = 32               # 저속 드리프트 프레임 (2배 주기)
+_SIBOM_SINK_AMPLITUDE = -0.08         # 아래로 처지는 -8% scale
+_SIBOM_SOB_FRAMES = 24                # 들썩임 프레임 (1.5배 주기)
+_SIBOM_SOB_AMPLITUDE = 0.04           # ±4% 세로 진동
+
+
+def _sibom_pop_progress(i: int, n: int) -> float:
+    """엔트런스 진행도 — 빠르게 시작해 부드럽게 정착(ease-out, 이차)."""
+    t = i / max(1, n - 1)
+    return 1.0 - (1.0 - t) ** 2
+
+
+def _sibom_breathe_scale(i: int, n: int, amplitude: float = _SIBOM_BREATHE_AMPLITUDE) -> float:
+    """숨쉬기 한 사이클의 스케일. i=0에서 정확히 1.0."""
+    import math
+    return 1.0 + amplitude * math.sin(2.0 * math.pi * i / n)
+
+
+def _sibom_sink_scale(i: int, n: int, amplitude: float = _SIBOM_SINK_AMPLITUDE) -> float:
+    """지침 느린 드리프트. i=0에서 1.0, 끝으로 갈수록 내려간다."""
+    return 1.0 + amplitude * (i / max(1, n - 1))
+
+
+def _sibom_sob_vertical(i: int, n: int, amplitude: float = _SIBOM_SOB_AMPLITUDE) -> float:
+    """울음 세로 진동(offset). i=0에서 0, 사인 파형."""
+    import math
+    return amplitude * math.sin(2.0 * math.pi * i / n)
+
+
+def _sibom_shake_offset(t: float, amp_px: int) -> tuple[int, int]:
+    """감쇠하는 타원형 떨림. t=1.0에서 정확히 (0, 0)."""
+    import math
+    env = (1.0 - t) ** 1.5
+    phase = 2.0 * math.pi * _SIBOM_SHAKE_CYCLES * t
+    dx = round(amp_px * env * math.sin(phase))
+    dy = round(amp_px * _SIBOM_SHAKE_VERTICAL_RATIO * env * math.cos(phase))
+    return int(dx), int(dy)
+
+
+def _sibom_hold_segments(loop_paths: list[Path], hold: float) -> list[tuple[Path, float]]:
+    """숨쉬기 한 사이클을 hold 길이만큼 반복 재생."""
+    if not loop_paths or hold <= 0.001:
+        return []
+    if len(loop_paths) == 1:
+        return [(loop_paths[0], hold)]
+    per = _SIBOM_BREATHE_CYCLE_SEC / len(loop_paths)
+    segments: list[tuple[Path, float]] = []
+    remaining = hold
+    i = 0
+    while remaining > 0.001:
+        step = min(per, remaining)
+        segments.append((loop_paths[i % len(loop_paths)], step))
+        remaining -= step
+        i += 1
+    return segments
+
+
+def _sibom_variant(
+    sibom_pil: "Image.Image",
+    scale: float = 1.0,
+    dx: int = 0,
+    dy: int = 0,
+    alpha: float = 1.0,
+) -> "Image.Image":
+    """캐릭터를 **자기 캔버스 안에서** 변형한다.
+
+    프레임 렌더러(`_render_intro_frame`/`_render_image_text_frame`)는 이미지를
+    미디어 박스에 contain으로 맞춘다. 따라서 캔버스 크기를 유지한 채 내용만
+    확대·이동하면 **렌더러를 전혀 건드리지 않고** 모션을 만들 수 있다.
+    (슬롯 rect를 밖에서 재계산하려던 접근은 캡션 줄수에 따라 rect가 달라져 실패한다.)
+    """
+    w, h = sibom_pil.size
+    canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    nw = max(1, int(round(w * scale)))
+    nh = max(1, int(round(h * scale)))
+    ov = sibom_pil.convert("RGBA").resize((nw, nh), Image.Resampling.LANCZOS)
+    if alpha < 0.999:
+        ov.putalpha(ov.getchannel("A").point(lambda v: int(v * alpha)))
+    canvas.paste(ov, ((w - nw) // 2 + dx, (h - nh) // 2 + dy), ov)
+    return canvas
+
+
+def _sibom_motion_sequences(
+    render_frame,
+    sibom_pil: "Image.Image",
+    motion: str,
+    tmp_dir: Path,
+    frame_idx: int,
+    start_alpha: float = _SIBOM_PUNCH_START_ALPHA,
+) -> tuple[list[Path], list[Path]]:
+    """등장(punch) + dwell 루프 프레임을 굽고 경로를 돌려준다.
+
+    render_frame(img, out_path) — 프레임 한 장을 그리는 콜러블.
+    루프는 **i=0과 i=n이 이어지도록** 사인 기반으로 만든다(타일링 시 튀지 않게).
+    """
+    import math
+
+    amp_px = max(2, int(round(sibom_pil.size[0] * _SIBOM_SHAKE_AMP_RATIO)))
+    h_px = sibom_pil.size[1]
+
+    punch: list[Path] = []
+    n = _SIBOM_PUNCH_POP_FRAMES
+    for i in range(n):
+        p = _sibom_pop_progress(i, n)
+        scale = _SIBOM_PUNCH_START_SCALE + (1.0 - _SIBOM_PUNCH_START_SCALE) * p
+        alpha = start_alpha + (1.0 - start_alpha) * p
+        dx, dy = _sibom_shake_offset(p, amp_px) if motion == "shake" else (0, 0)
+        out = tmp_dir / f"frame_{frame_idx:03d}_sibom_punch_{i:02d}.png"
+        render_frame(_sibom_variant(sibom_pil, scale, dx, dy, alpha), out)
+        punch.append(out)
+
+    ln = {"sink": _SIBOM_SINK_FRAMES,
+          "sob": _SIBOM_SOB_FRAMES}.get(motion, _SIBOM_BREATHE_FRAMES)
+
+    loop: list[Path] = []
+    for i in range(ln):
+        scale, dx, dy = 1.0, 0, 0
+        ph = 2.0 * math.pi * i / ln
+        if motion == "sink":          # 아래로 처졌다 돌아옴 (i=0에서 1.0)
+            scale = 1.0 + _SIBOM_SINK_AMPLITUDE * (1.0 - math.cos(ph)) * 0.5
+            dy = int(round(h_px * (1.0 - scale) * 0.5))
+        elif motion == "sob":         # 세로 들썩임
+            dy = int(round(h_px * _sibom_sob_vertical(i, ln)))
+        elif motion == "shake":       # 잔떨림 (등장 때의 감쇠 떨림과 달리 지속)
+            dx = int(round(amp_px * math.sin(ph)))
+            dy = int(round(amp_px * _SIBOM_SHAKE_VERTICAL_RATIO * math.cos(ph)))
+            scale = _sibom_breathe_scale(i, ln, _SIBOM_BREATHE_AMPLITUDE * 0.5)
+        elif motion == "pop":         # 안도·화해 — 숨쉬기를 크게
+            scale = _sibom_breathe_scale(i, ln, _SIBOM_BREATHE_AMPLITUDE * 1.6)
+        else:                         # sway — 기본 숨쉬기
+            # TODO(sibom): 눈 깜빡임은 감은 눈 PNG 자산(`blink`)이 렌더되면 추가한다.
+            #   현재는 scale/offset 기반 모션만 구현돼 있다.
+            scale = _sibom_breathe_scale(i, ln)
+        out = tmp_dir / f"frame_{frame_idx:03d}_sibom_loop_{i:02d}.png"
+        render_frame(_sibom_variant(sibom_pil, scale, dx, dy), out)
+        loop.append(out)
+
+    return punch, loop
+
+
+def _intro_entrance_sequences(
+    render_frame,
+    sibom_pil: "Image.Image",
+    tmp_dir: Path,
+    frame_idx: int,
+    start_alpha: float = _SIBOM_PUNCH_START_ALPHA,
+) -> tuple[list[Path], list[Path]]:
+    """인트로 표지(시봄이 role 없는 일반 사진)용 등장(punch) + sway 루프.
+
+    _sibom_motion_sequences와 동일한 ease-out 진행도(_sibom_pop_progress)를
+    쓰되, render_frame(img, out_path, hook_alpha)로 훅 텍스트 알파도 같이
+    넘긴다 — 캐릭터만 움직이면 화면 전체 변화폭이 작아 ffmpeg scene-detect가
+    장면전환을 못 잡는다(실측). 새 모션 곡선을 만들지 않고 기존 진행도를
+    텍스트에도 그대로 적용한다.
+    """
+    punch: list[Path] = []
+    n = _SIBOM_PUNCH_POP_FRAMES
+    for i in range(n):
+        p = _sibom_pop_progress(i, n)
+        scale = _SIBOM_PUNCH_START_SCALE + (1.0 - _SIBOM_PUNCH_START_SCALE) * p
+        alpha = start_alpha + (1.0 - start_alpha) * p
+        out = tmp_dir / f"frame_{frame_idx:03d}_intro_punch_{i:02d}.png"
+        render_frame(_sibom_variant(sibom_pil, scale, 0, 0, alpha), out, hook_alpha=alpha)
+        punch.append(out)
+
+    loop: list[Path] = []
+    ln = _SIBOM_BREATHE_FRAMES
+    for i in range(ln):
+        scale = _sibom_breathe_scale(i, ln)
+        out = tmp_dir / f"frame_{frame_idx:03d}_intro_loop_{i:02d}.png"
+        render_frame(_sibom_variant(sibom_pil, scale, 0, 0), out, hook_alpha=1.0)
+        loop.append(out)
+
+    return punch, loop
+
+
+def _wire_sibom_motion(
+    entry: dict,
+    render_frame,
+    sibom_pil: "Image.Image",
+    tmp_dir: Path,
+    frame_idx: int,
+    start_alpha: float = _SIBOM_PUNCH_START_ALPHA,
+) -> None:
+    """시봄이 씬이면 모션 프레임을 굽고 entry에 경로를 심는다(아니면 무동작)."""
+    image_id = entry.get("sibom_image_id")
+    if not entry.get("sibom_role") or not image_id or sibom_pil is None:
+        return
+    motion = _get_sibom_motion_for_image_id(image_id)
+    try:
+        punch, loop = _sibom_motion_sequences(
+            render_frame, sibom_pil, motion, tmp_dir, frame_idx, start_alpha,
+        )
+    except Exception:
+        logger.warning("[sibom] 모션 프레임 생성 실패 — 정지 프레임으로 진행 (id=%s)",
+                       image_id, exc_info=True)
+        entry.pop("sibom_punch_paths", None)
+        entry.pop("sibom_loop_paths", None)
+        return
+    entry["sibom_punch_paths"] = [str(p) for p in punch]
+    if (entry.get("sibom_dwell") or "hold") == "hold":
+        entry["sibom_loop_paths"] = [str(p) for p in loop]
+    else:
+        entry.pop("sibom_loop_paths", None)
+    logger.info("[sibom] 모션 배선: frame=%d id=%s motion=%s punch=%d loop=%d",
+                frame_idx, image_id, motion, len(punch),
+                len(entry.get("sibom_loop_paths") or []))
+
+
+def _compose_sibom_into_slot(
+    plate: Image.Image,
+    sibom_pil: Image.Image,
+    rect: tuple[int, int, int, int],
+    radius: int,
+    *,
+    scale: float = 1.0,
+    alpha: float = 1.0,
+    dx: int = 0,
+    dy: int = 0,
+) -> Image.Image:
+    """plate(캐릭터 없이 렌더된 프레임)의 슬롯 rect 안에 캐릭터를 합성한다."""
+    x, y, w, h = rect
+    tile = plate.convert("RGB").crop((x, y, x + w, y + h))
+    cw = max(1, round(w * scale))
+    ch_ = max(1, round(h * scale))
+    content = _fit_contain(sibom_pil, cw, ch_)
+    ox = (w - content.width) // 2 + dx
+    oy = (h - content.height) // 2 + dy
+    tile.paste(content, (ox, oy))
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([(0, 0), (w - 1, h - 1)], radius=radius, fill=255)
+    if alpha < 0.999:
+        a = max(0.0, min(1.0, alpha))
+        mask = mask.point(lambda p: int(p * a))
+    out = plate.convert("RGB").copy()
+    out.paste(tile, (x, y), mask)
+    return out
 
 
 def _write_sibom_punch_frames(
-    base: Image.Image,
+    plate: Image.Image,
     sibom_pil: Image.Image,
-    size: str,
+    rect: tuple[int, int, int, int],
+    radius: int,
     tmp_dir: Path,
     frame_idx: int,
+    *,
     shake: bool = False,
+    start_alpha: float = _SIBOM_PUNCH_START_ALPHA,
 ) -> list[Path]:
-    """Pop scale 92→100 + fade over ~1.2s. Shake ids: TODO hook (flag only)."""
-    if shake:
-        # TODO(sibom): light bounce/shake for indignant/stunned/burst-crying/two-argue
-        pass
+    """엔트런스 — scale 92%→100% + alpha 시작값→100%, ease-out, ~1.2초."""
     paths: list[Path] = []
     n = _SIBOM_PUNCH_POP_FRAMES
+    amp = max(2, round(rect[2] * _SIBOM_SHAKE_AMP_RATIO)) if shake else 0
     for i in range(n):
         t = i / max(1, n - 1)
-        scale = 0.92 + 0.08 * t
-        alpha = min(1.0, 0.35 + 0.65 * t)
-        composed = _compose_sibom_onto_base(base, sibom_pil, size, scale=scale, alpha=alpha)
+        e = _sibom_pop_progress(i, n)
+        scale = _SIBOM_PUNCH_START_SCALE + (1.0 - _SIBOM_PUNCH_START_SCALE) * e
+        alpha = min(1.0, start_alpha + (1.0 - start_alpha) * e)
+        dx, dy = _sibom_shake_offset(t, amp) if shake else (0, 0)
+        composed = _compose_sibom_into_slot(
+            plate, sibom_pil, rect, radius, scale=scale, alpha=alpha, dx=dx, dy=dy,
+        )
         out = tmp_dir / f"frame_{frame_idx:03d}_punch_{i:02d}.png"
-        composed.convert("RGB").save(str(out), "PNG")
+        composed.save(str(out), "PNG")
         paths.append(out)
     return paths
+
+
+def _write_sibom_breathe_frames(
+    plate: Image.Image,
+    sibom_pil: Image.Image,
+    rect: tuple[int, int, int, int],
+    radius: int,
+    tmp_dir: Path,
+    frame_idx: int,
+) -> list[Path]:
+    """홀드 동안 정지 대신 계속 맥동시킬 숨쉬기 한 사이클."""
+    paths: list[Path] = []
+    n = _SIBOM_BREATHE_FRAMES
+    for i in range(n):
+        composed = _compose_sibom_into_slot(
+            plate, sibom_pil, rect, radius, scale=_sibom_breathe_scale(i, n), alpha=1.0,
+        )
+        out = tmp_dir / f"frame_{frame_idx:03d}_breathe_{i:02d}.png"
+        composed.save(str(out), "PNG")
+        paths.append(out)
+    return paths
+
+
+def _write_sibom_loop_frames(
+    plate: Image.Image,
+    sibom_pil: Image.Image,
+    rect: tuple[int, int, int, int],
+    radius: int,
+    tmp_dir: Path,
+    frame_idx: int,
+    motion_type: str = "sway",
+) -> list[Path]:
+    """Dwell 구간 idle 루프 프레임 생성. motion_type에 따라 다른 애니메이션."""
+    paths: list[Path] = []
+
+    if motion_type == "sway":
+        # 기본: 숨쉬기와 동일
+        n = _SIBOM_BREATHE_FRAMES
+        for i in range(n):
+            composed = _compose_sibom_into_slot(
+                plate, sibom_pil, rect, radius, scale=_sibom_breathe_scale(i, n), alpha=1.0,
+            )
+            out = tmp_dir / f"frame_{frame_idx:03d}_loop_{i:02d}.png"
+            composed.save(str(out), "PNG")
+            paths.append(out)
+
+    elif motion_type == "shake":
+        # 좌우 떨림 (감쇠)
+        n = _SIBOM_PUNCH_POP_FRAMES  # 펀치와 동일 길이
+        amp = max(2, round(rect[2] * _SIBOM_SHAKE_AMP_RATIO))
+        for i in range(n):
+            t = i / max(1, n - 1)
+            dx, dy = _sibom_shake_offset(t, amp)
+            composed = _compose_sibom_into_slot(
+                plate, sibom_pil, rect, radius, scale=1.0, alpha=1.0, dx=dx, dy=dy,
+            )
+            out = tmp_dir / f"frame_{frame_idx:03d}_loop_{i:02d}.png"
+            composed.save(str(out), "PNG")
+            paths.append(out)
+
+    elif motion_type == "sink":
+        # 아래로 처지는 드리프트 (y offset과 scale)
+        n = _SIBOM_SINK_FRAMES
+        for i in range(n):
+            scale = _sibom_sink_scale(i, n)
+            dy = round(rect[3] * 0.1 * (i / max(1, n - 1)))  # 아래로 점진적
+            composed = _compose_sibom_into_slot(
+                plate, sibom_pil, rect, radius, scale=scale, alpha=1.0, dx=0, dy=dy,
+            )
+            out = tmp_dir / f"frame_{frame_idx:03d}_loop_{i:02d}.png"
+            composed.save(str(out), "PNG")
+            paths.append(out)
+
+    elif motion_type == "sob":
+        # 세로 들썩임
+        n = _SIBOM_SOB_FRAMES
+        for i in range(n):
+            dy = round(rect[3] * _sibom_sob_vertical(i, n))
+            composed = _compose_sibom_into_slot(
+                plate, sibom_pil, rect, radius, scale=1.0, alpha=1.0, dx=0, dy=dy,
+            )
+            out = tmp_dir / f"frame_{frame_idx:03d}_loop_{i:02d}.png"
+            composed.save(str(out), "PNG")
+            paths.append(out)
+
+    elif motion_type == "pop":
+        # 살짝 튀어오름 (breathe와 반대 진행)
+        n = _SIBOM_BREATHE_FRAMES
+        for i in range(n):
+            scale = _sibom_breathe_scale(n - 1 - i, n)  # 역순
+            composed = _compose_sibom_into_slot(
+                plate, sibom_pil, rect, radius, scale=scale, alpha=1.0,
+            )
+            out = tmp_dir / f"frame_{frame_idx:03d}_loop_{i:02d}.png"
+            composed.save(str(out), "PNG")
+            paths.append(out)
+
+    else:
+        # 알 수 없는 모션: breathe 폴백
+        n = _SIBOM_BREATHE_FRAMES
+        for i in range(n):
+            composed = _compose_sibom_into_slot(
+                plate, sibom_pil, rect, radius, scale=_sibom_breathe_scale(i, n), alpha=1.0,
+            )
+            out = tmp_dir / f"frame_{frame_idx:03d}_loop_{i:02d}.png"
+            composed.save(str(out), "PNG")
+            paths.append(out)
+
+    return paths
+
+
+def _attach_sibom_motion(
+    entry: dict,
+    plate: Image.Image,
+    sibom_pil: Image.Image,
+    rect: tuple[int, int, int, int],
+    radius: int,
+    tmp_dir: Path,
+    frame_idx: int,
+    *,
+    motion_type: str = "sway",
+    start_alpha: float = _SIBOM_PUNCH_START_ALPHA,
+) -> None:
+    """엔트런스 + 모션 루프를 렌더해 entry에 경로를 기록한다."""
+    try:
+        punch = _write_sibom_punch_frames(
+            plate, sibom_pil, rect, radius, tmp_dir, frame_idx,
+            shake=bool(entry.get("sibom_shake")), start_alpha=start_alpha,
+        )
+        entry["sibom_punch_paths"] = [str(p) for p in punch]
+
+        loop = _write_sibom_loop_frames(
+            plate, sibom_pil, rect, radius, tmp_dir, frame_idx,
+            motion_type=motion_type,
+        )
+        entry["sibom_loop_paths"] = [str(p) for p in loop]
+    except Exception:
+        logger.warning(
+            "[sibom] motion frame 생성 실패(frame=%d, motion=%s) — 정지 프레임으로 폴백",
+            frame_idx, motion_type, exc_info=True,
+        )
+        entry.pop("sibom_punch_paths", None)
+        entry.pop("sibom_loop_paths", None)
 
 
 def _scenes_to_plan_and_sentences(
@@ -414,6 +910,25 @@ def _scenes_to_plan_and_sentences(
     """
     sentences: list[dict] = []
     plan: list[dict] = []
+    # 효과음 마커 상태 — 본문이 시작됐는지, 방금 시봄이 카드였는지,
+    # 본문 줄이 몇 번째인지(3줄마다 화면이 비워진다)
+    _sfx_body_seen = False
+    _sfx_after_card = False
+    _sfx_line_no = 0
+    # 이 함수에는 layout 이 없다(변환 단계라 렌더 설정을 받지 않는다).
+    # 설정에서 직접 읽되, 못 읽으면 렌더러 기본값 3을 쓴다.
+    try:
+        _sfx_max_slots = int(
+            _load_renderer_settings()
+            .get("scenes", {})
+            .get("text_only", {})
+            .get("elements", {})
+            .get("text_area", {})
+            .get("max_slots", 3)
+        )
+    except Exception:
+        _sfx_max_slots = 3
+    _sfx_max_slots = max(1, _sfx_max_slots)
     images: list[str] = []
 
     for scene_i, scene in enumerate(scenes):
@@ -456,6 +971,17 @@ def _scenes_to_plan_and_sentences(
             sentences.append(sent_dict)
             plan.append({"type": "image_text", "sent_idx": sent_idx, "img_idx": img_idx, "scene_idx": scene_i})
             _attach_sibom_plan_fields(plan[-1], scene)
+            if not plan[-1].get("sfx_events"):
+                # 카드가 착지하고(card_in) → 캐릭터가 떠오르고(sibom_punch)
+                # → 캐릭터가 제 감정대로 움직인다(motion_*). 셋을 오프셋으로
+                # 벌려 하나의 연출처럼 들리게 한다.
+                _img_id = getattr(scene, "sibom_image_id", None) or plan[-1].get("sibom_image_id")
+                _motion = _get_sibom_motion_for_image_id(_img_id) if _img_id else "sway"
+                plan[-1]["sfx_events"] = [
+                    "card_in", "sibom_punch", f"motion_{_motion}",
+                ]
+            _sfx_after_card = True
+            _sfx_body_seen = True
 
         elif scene.type == "video_text":
             # Pre-split editor lines are individual narration/display entries:
@@ -496,6 +1022,23 @@ def _scenes_to_plan_and_sentences(
                     sent_dict["lines"] = [text]
                 sentences.append(sent_dict)
                 plan.append({"type": "text_only", "sent_idx": sent_idx, "img_idx": None, "scene_idx": scene_i})
+                _ev: list[str] = []
+                # 인트로 직후 첫 본문 — 표지에서 이야기로 넘어가는 지점
+                if not _sfx_body_seen:
+                    _ev.append("intro_out")
+                # 시봄이 카드 다음 첫 본문 — 카드가 걷히는 지점
+                elif _sfx_after_card:
+                    _ev.append("card_out")
+                # 3줄이 차면 화면이 비워지고 새 장이 시작된다
+                # (_append_text_only_line 이 max_slots 에서 history 를 리셋한다)
+                if _sfx_body_seen and _sfx_line_no % _sfx_max_slots == 0:
+                    _ev.append("page")
+                # 줄이 하나 새로 나타나는 것 자체 — 가장 잦다
+                _ev.append("text_line")
+                plan[-1].setdefault("sfx_events", _ev)
+                _sfx_body_seen = True
+                _sfx_after_card = False
+                _sfx_line_no += 1
 
         elif scene.type == "image_only":
             text, audio = _unpack_line(scene.text_lines[0]) if scene.text_lines else ("", None)
@@ -515,6 +1058,13 @@ def _scenes_to_plan_and_sentences(
                                   "voice_override": getattr(scene, "voice_override", None),
                                   "tts_emotion": getattr(scene, "tts_emotion", "")})
             plan.append({"type": "outro", "sent_idx": sent_idx_val, "img_idx": img_idx, "scene_idx": scene_i})
+            # outro 씬의 sfx_events(vote_fill·logo)를 plan에 실어야 효과음이 발화한다
+            _attach_sibom_plan_fields(plan[-1], scene)
+            # 마무리 화면으로 넘어가는 소리를 투표 소리 앞에 둔다
+            _evo = list(plan[-1].get("sfx_events") or [])
+            if "outro_in" not in _evo:
+                _evo.insert(0, "outro_in")
+            plan[-1]["sfx_events"] = _evo
 
         elif scene.type == "comments":
             # 항목당 1개 TTS 엔트리 — text_only 패턴과 동일하게 점진적 낭독
@@ -543,6 +1093,16 @@ def _scenes_to_plan_and_sentences(
                     "scene_idx": scene_i,
                     "item_idx": k,  # 0..k 누적 공개 인덱스 (전체 리스트 기준)
                 })
+                # 말풍선 효과음은 댓글마다 1회(설계 의도). 첫 항목만 전환음과
+                # BEST 배지 소리를 함께 받는다 — 배지는 추천 1위 카드에 붙는다.
+                if k == 0:
+                    _attach_sibom_plan_fields(plan[-1], scene)
+                    _ev0 = list(plan[-1].get("sfx_events") or [])
+                    if "best_badge" not in _ev0:
+                        _ev0.append("best_badge")
+                    plan[-1]["sfx_events"] = _ev0
+                else:
+                    plan[-1]["sfx_events"] = ["bubble"]
 
         elif scene.type == "chat":
             # 항목당 1개 TTS 엔트리 — 시간 순서대로 점진적 낭독
@@ -602,6 +1162,24 @@ def _get_scene_for_entry(
     return None
 
 
+def _attach_sfx_events(plan: list[dict], sentences: list[dict], scenes_list: list | None) -> int:
+    """SceneDecision.sfx_events를 plan 항목으로 복사한다.
+
+    plan은 sentence 단위 dict라 director의 씬 메타를 그대로 갖고 있지 않다.
+    이 다리가 없으면 _build_layout_sfx_filter가 마커를 못 읽어 효과음이 0개가 된다.
+    """
+    if not scenes_list:
+        return 0
+    attached = 0
+    for entry in plan:
+        scene = _get_scene_for_entry(entry, sentences, scenes_list)
+        events = getattr(scene, "sfx_events", None) if scene is not None else None
+        if events:
+            entry["sfx_events"] = list(events)
+            attached += len(events)
+    return attached
+
+
 # ---------------------------------------------------------------------------
 # 공통 렌더링 파이프라인 (Steps 2 / 4 – 11)
 # ---------------------------------------------------------------------------
@@ -627,11 +1205,24 @@ def _render_pipeline(
     meta: dict | None = None,
     narration_audio: Path | None = None,
     comments_fade_enabled: bool = False,
-) -> Path:
+    render_profile: str | None = None,
+) -> tuple[Path, dict]:
     """sentences / plan / images 를 받아 mp4를 생성한다."""
     _ = comments_fade_enabled  # reserved (Tone L comment fade; keep signature parity)
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    # variant_config 조회 (외부 ingest 데이터)  
+    variant_config = _resolve_post_variant_config(post_id)
+
+    # ── 진단 정보 수집 ────────────────────────────────────────
+    generation_diagnostics: dict = {
+        "story_duration_sec": 0.0,
+        "comment_duration_sec": 0.0,
+        "outro_duration_sec": 0.0,
+        "bgm": None,
+        "sfx_count": 0,
+    }
 
     try:
         # ── Step 2: 베이스 프레임 베이킹 ──────────────────────
@@ -737,6 +1328,23 @@ def _render_pipeline(
             else:
                 raise RuntimeError("모든 TTS 프레임 실패 — 렌더링 불가")
 
+        # ── 진단 정보 업데이트: 섹션별 듀레이션 계산 ────────────
+        for entry, dur in zip(plan, durations):
+            scene_type = entry.get("type")
+            if scene_type == "outro":
+                generation_diagnostics["outro_duration_sec"] += dur
+            elif scene_type == "comments":
+                generation_diagnostics["comment_duration_sec"] += dur
+            else:
+                generation_diagnostics["story_duration_sec"] += dur
+
+        logger.info(
+            "[layout] 진단 정보: story=%.1fs, comment=%.1fs, outro=%.1fs",
+            generation_diagnostics["story_duration_sec"],
+            generation_diagnostics["comment_duration_sec"],
+            generation_diagnostics["outro_duration_sec"],
+        )
+
         # ── Step 7: text_only용 줄바꿈 사전 계산 ──────────────
         sc_to = layout["scenes"]["text_only"]
         to_ta = sc_to["elements"]["text_area"]
@@ -746,10 +1354,50 @@ def _render_pipeline(
         to_max_chars = sc_to.get("text_max_chars", 0)
         keep_word_units = theme == "tone_l"
 
-        for sent in sentences:
+        # v2(tone_l)는 위 기본값과 다른 폰트·폭으로 그린다. 계산과 렌더가 어긋나면
+        # "한 줄에 들어간다"고 판단한 줄이 화면 밖으로 잘려나간다 — 실제 렌더 기준을 쓴다.
+        _is_v2_text = render_profile == "marketing_v2" or theme == "tone_l"
+
+        def _wrap_metrics_for(scene_type: str):
+            """(font, max_width) — 해당 씬을 실제로 그릴 때의 값."""
+            if not _is_v2_text:
+                return to_font, to_max_w
+            from ai_worker.renderer._frames import _body_font_file
+
+            cw_ = layout["canvas"]["width"]
+            pad_x_ = layout["global"].get("title_block", {}).get("pad_x", 90)
+            body_font_file = _body_font_file(layout)
+            if scene_type == "image_text":
+                q_cfg = layout["scenes"]["image_text"].get("quote", {})
+                card_pad = layout["scenes"]["image_text"].get("card", {}).get("pad", 44)
+                fnt = _load_font(font_dir, body_font_file, q_cfg.get("font_size", 54))
+                return fnt, (cw_ - 2 * pad_x_) - 2 * card_pad
+            bul_cfg = sc_to.get("bullets", {})
+            fnt = _load_font(font_dir, body_font_file, bul_cfg.get("font_size", 52))
+            return fnt, cw_ - 2 * pad_x_
+
+        # 문장 → 실제 배치될 씬 종류
+        _sent_scene_type: dict[int, str] = {}
+        for _entry in plan:
+            _si = _entry.get("sent_idx")
+            if _si is not None:
+                _sent_scene_type[_si] = _entry.get("type", "text_only")
+
+        for _sent_i, sent in enumerate(sentences):
+            to_font, to_max_w = _wrap_metrics_for(
+                _sent_scene_type.get(_sent_i, "text_only")
+            )
             if sent.get("semantic_lines"):
-                if "lines" not in sent:
-                    sent["lines"] = [sent.get("text", "")]
+                # semantic 이어도 폭에 맞춘다. 의미 분리는 "어디서 끊을지"를 정하고
+                # 줄바꿈은 "화면에 어떻게 담을지"를 정한다 — 서로 대체 관계가 아니다.
+                # 예전엔 여기서 그냥 continue 해서, 긴 줄이 캔버스 밖으로 잘려나갔다.
+                raw_lines = sent.get("lines") or [sent.get("text", "")]
+                wrapped: list[str] = []
+                for line in raw_lines:
+                    wrapped.extend(
+                        _wrap_korean(line, to_font, to_max_w, keep_all=keep_word_units)
+                    )
+                sent["lines"] = wrapped or [sent.get("text", "")]
                 continue
             if "lines" in sent:
                 expanded: list[str] = []
@@ -785,7 +1433,40 @@ def _render_pipeline(
                 _render_intro_frame(
                     base_frame, img_pil, hook_text,
                     layout, font_dir, frame_path, content_top, stage=1,
+                    render_profile=render_profile, title_text=title,
                 )
+                if (theme == "tone_l" or render_profile == "marketing_v2") and img_pil is not None:
+                    def _rf_intro(_img, _out, _txt=hook_text, hook_alpha=1.0):
+                        _render_intro_frame(
+                            base_frame, _img, _txt,
+                            layout, font_dir, _out, content_top, stage=1,
+                            render_profile=render_profile, title_text=title,
+                            hook_alpha=hook_alpha,
+                        )
+                    # intro 첫 프레임은 썸네일 후보라 더 밝게 시작한다
+                    if entry.get("sibom_role"):
+                        _wire_sibom_motion(entry, _rf_intro, img_pil, tmp_dir, frame_idx,
+                                           start_alpha=_SIBOM_INTRO_START_ALPHA)
+                    else:
+                        # 2026-08-29: 실측(ffmpeg scene-detect) — 시봄이가 아닌 표지
+                        # 사진일 때는 인트로가 완전 정지 화면이라 첫 6초 장면전환 0회.
+                        # 새 모션 시스템을 만들지 않고 기존 등장(punch-in) 프리미티브를
+                        # 재사용하되, 캐릭터만으로는 화면 변화폭이 작아 훅 텍스트도
+                        # 같은 진행도로 페이드인시킨다(_intro_entrance_sequences).
+                        try:
+                            punch, loop = _intro_entrance_sequences(
+                                _rf_intro, img_pil, tmp_dir, frame_idx,
+                                start_alpha=_SIBOM_INTRO_START_ALPHA,
+                            )
+                            entry["sibom_punch_paths"] = [str(p) for p in punch]
+                            entry["sibom_loop_paths"] = [str(p) for p in loop]
+                        except Exception:
+                            logger.warning(
+                                "[intro] 표지 이미지 등장 모션 생성 실패 — 정지 프레임으로 진행",
+                                exc_info=True,
+                            )
+                            entry.pop("sibom_punch_paths", None)
+                            entry.pop("sibom_loop_paths", None)
 
             elif scene_type == "image_text":
                 img_pil = image_cache.get(img_idx) if img_idx is not None else None
@@ -806,6 +1487,13 @@ def _render_pipeline(
                         breadcrumb_frame, img_pil, text, layout, font_dir, frame_path, content_top_body, stage=2,
                         display_lines=display_lines,
                     )
+                    if theme == "tone_l":
+                        def _rf_it(_img, _out, _txt=text, _dl=display_lines):
+                            _render_image_text_frame(
+                                breadcrumb_frame, _img, _txt, layout, font_dir, _out,
+                                content_top_body, stage=2, display_lines=_dl,
+                            )
+                        _wire_sibom_motion(entry, _rf_it, img_pil, tmp_dir, frame_idx)
 
             elif scene_type == "text_only":
                 # v3: 이전 슬롯 흐림(greying) 제거 — 전 슬롯 동일 검정
@@ -826,6 +1514,10 @@ def _render_pipeline(
                 _render_text_only_frame(
                     breadcrumb_frame, text_only_history, layout, font_dir, frame_path, content_top_body, stage=2,
                 )
+                # text_only에는 미디어 슬롯 자체가 없다 — 시봄이가 화면에 안 나오므로
+                # 모션도 없다. (시봄이 비트는 image_text 카드로 배정된다.)
+                if entry.get("sibom_role"):
+                    logger.debug("[sibom] text_only 씬이라 모션 없음: frame=%d", frame_idx)
 
             elif scene_type == "image_only":
                 img_pil = image_cache.get(img_idx) if img_idx is not None else None
@@ -838,6 +1530,8 @@ def _render_pipeline(
                 outro_text = sentences[sent_idx]["text"] if sent_idx is not None else ""
                 _render_outro_frame(
                     header_only_frame, outro_text, layout, font_dir, frame_path,
+                    render_profile=render_profile,
+                    cfg=_resolve_post_variant_config(post_id),
                 )
 
             elif scene_type == "comments":
@@ -847,7 +1541,7 @@ def _render_pipeline(
                 reveal = entry.get("item_idx")
                 _render_comments_frame(
                     breadcrumb_frame_no_title, items or [], layout, font_dir, frame_path, content_top_comments,
-                    reveal_count=(reveal + 1) if reveal is not None else None, stage=3,
+                    reveal_count=(reveal + 1) if reveal is not None else None, stage=3, render_profile=render_profile,
                 )
 
             elif scene_type == "chat":
@@ -873,7 +1567,9 @@ def _render_pipeline(
                 for s in scenes_list
             )
 
-        if has_video_scenes:
+        # marketing_v2 프로필이거나 비디오 씬이 있으면 세그먼트 경로 실행
+        use_segments = render_profile == "marketing_v2" or has_video_scenes
+        if use_segments:
             # ── Step 8.5: 하이브리드 세그먼트 생성 ─────────────────
             logger.info("[layout] 하이브리드 렌더링: 비디오 씬 포함")
             segment_paths: list[Path] = []
@@ -955,33 +1651,86 @@ def _render_pipeline(
             extra_inputs, sfx_filter = _build_layout_sfx_filter(
                 plan, timings, audio_dir, layout,
                 tts_input_idx=1, sfx_offset=sfx_offset,
+                sfx_config=_sfx_config_for_profile(layout, render_profile),
             )
 
+            # 진단: SFX 개수 (extra_inputs는 "-i", "path" 쌍으로 구성)
+            sfx_count = len([x for x in extra_inputs if x.startswith("-i")]) if extra_inputs else 0
+            generation_diagnostics["sfx_count"] = sfx_count
+            if sfx_count > 0:
+                logger.info("[layout] SFX 삽입: %d개", sfx_count)
+
             effective_bgm: Path | None = None
-            if bgm_path is not None and Path(bgm_path).exists():
+            _bgm_ok = _bgm_allowed_for_profile(render_profile)
+            if not _bgm_ok and bgm_path is not None:
+                logger.info("[layout] BGM 건너뜀 (profile=%s, v2에서만 사용)", render_profile)
+            if _bgm_ok and bgm_path is not None and Path(bgm_path).exists():
                 effective_bgm = Path(bgm_path)
                 logger.info("[layout] BGM 사용 (bgm_path): %s", effective_bgm.name)
-            elif bgm_path is not None:
+                generation_diagnostics["bgm"] = effective_bgm.name
+            elif _bgm_ok and bgm_path is not None:
                 logger.warning("[layout] bgm_path 파일 없음: %s — BGM 없이 인코딩", bgm_path)
+            else:
+                generation_diagnostics["bgm"] = "None"
 
             if effective_bgm is not None:
-                bgm_audio_filter = (
-                    f"[1:a]anull[tts_pad];"
-                    f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout]"
-                )
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", str(video_only),
-                    "-i", str(merged_tts),
-                    "-stream_loop", "-1", "-i", str(effective_bgm),
-                    "-filter_complex", bgm_audio_filter,
-                    "-map", "0:v", "-map", "[aout]",
-                    "-c:v", "copy",
-                    "-c:a", "aac", "-b:a", "192k",
-                    str(output_path),
-                ]
+                # BGM이 있는 경우: SFX 유무에 따라 필터 그래프 선택
+                if sfx_count > 0:
+                    # ─── BGM + SFX + TTS 병합 ───────────────────────────────
+                    # TTS + SFX → [voice]
+                    # [voice] → asplit → [v_key][v_mix]
+                    # BGM → volume → [bgm]
+                    # [bgm][v_key] → sidechaincompress → [bgm_ducked]
+                    # [v_mix][bgm_ducked] → amix → loudnorm → [aout]
+                    extra_inputs_bgm, voice_filter = _build_layout_sfx_filter(
+                        plan, timings, audio_dir, layout,
+                        tts_input_idx=1, sfx_offset=sfx_offset,
+                        sfx_config=_sfx_config_for_profile(layout, render_profile),
+                        sfx_start_idx=3,  # BGM이 입력 2를 차지하므로 SFX는 3부터 시작
+                        output_label="[voice]",  # TTS+SFX 결과를 [voice]로 명명
+                    )
+                    bgm_sfx_filter = (
+                        f"{voice_filter};"
+                        f"[voice]asplit=2[v_key][v_mix];"
+                        f"[2:a]volume=0.40,aloop=loop=-1:size=2e+09[bgm];"
+                        f"[bgm][v_key]sidechaincompress=threshold=0.10:ratio=4:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[v_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                        f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", str(video_only),
+                        "-i", str(merged_tts),
+                        "-stream_loop", "-1", "-i", str(effective_bgm),
+                        *extra_inputs_bgm,
+                        "-filter_complex", bgm_sfx_filter,
+                        "-map", "0:v", "-map", "[aout]",
+                        "-c:v", "copy",
+                        "-c:a", "aac", "-b:a", "192k",
+                        str(output_path),
+                    ]
+                else:
+                    # ─── BGM만 있는 경우 (기존 그래프 유지) ───────────────
+                    bgm_audio_filter = (
+                        f"[1:a]asplit=2[tts_key][tts_mix];"
+                        f"[2:a]volume=0.40,aloop=loop=-1:size=2e+09[bgm_loop];"
+                        f"[bgm_loop][tts_key]sidechaincompress=threshold=0.10:ratio=4:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                        f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-i", str(video_only),
+                        "-i", str(merged_tts),
+                        "-stream_loop", "-1", "-i", str(effective_bgm),
+                        "-filter_complex", bgm_audio_filter,
+                        "-map", "0:v", "-map", "[aout]",
+                        "-c:v", "copy",
+                        "-c:a", "aac", "-b:a", "192k",
+                        str(output_path),
+                    ]
             else:
+                # BGM이 없는 경우 (SFX는 있을 수도 없을 수도)
                 cmd = [
                     "ffmpeg", "-y",
                     "-i", str(video_only),
@@ -1014,7 +1763,15 @@ def _render_pipeline(
             extra_inputs, sfx_filter = _build_layout_sfx_filter(
                 plan, timings, audio_dir, layout,
                 tts_input_idx=1, sfx_offset=sfx_offset,
+                sfx_config=_sfx_config_for_profile(layout, render_profile),
             )
+
+            # 진단: SFX 개수 (extra_inputs는 "-i", "path" 쌍으로 구성)
+            if "sfx_count" not in generation_diagnostics or generation_diagnostics["sfx_count"] == 0:
+                sfx_count = len([x for x in extra_inputs if x.startswith("-i")]) if extra_inputs else 0
+                generation_diagnostics["sfx_count"] = sfx_count
+                if sfx_count > 0:
+                    logger.info("[layout] SFX 삽입: %d개", sfx_count)
 
             # ── Step 11: FFmpeg 인코딩 ─────────────────────────────
             codec = _resolve_codec()
@@ -1026,50 +1783,60 @@ def _render_pipeline(
             )
 
             effective_bgm = None
-            if bgm_path is not None and Path(bgm_path).exists():
+            _bgm_ok = _bgm_allowed_for_profile(render_profile)
+            if not _bgm_ok and bgm_path is not None:
+                logger.info("[layout] BGM 건너뜀 (profile=%s, v2에서만 사용)", render_profile)
+            if _bgm_ok and bgm_path is not None and Path(bgm_path).exists():
                 effective_bgm = Path(bgm_path)
                 logger.info("[layout] BGM 사용 (bgm_path): %s", effective_bgm.name)
-            elif bgm_path is not None:
+                generation_diagnostics["bgm"] = effective_bgm.name
+            elif _bgm_ok and bgm_path is not None:
                 logger.warning("[layout] bgm_path 파일 없음: %s — BGM 없이 인코딩", bgm_path)
+            else:
+                generation_diagnostics["bgm"] = "None"
 
             if effective_bgm is not None:
-                bgm_sfx_extra, bgm_sfx_filter = _build_layout_sfx_filter(
-                    plan, timings, audio_dir, layout,
-                    tts_input_idx=1, sfx_offset=sfx_offset,
-                )
-                bgm_audio_filter = (
-                    f"[1:a]anull[tts_pad];"
-                    f"[2:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm_loop];"
-                    f"[tts_pad][bgm_loop]amix=inputs=2:duration=first:normalize=0[aout_premix]"
-                )
-                if bgm_sfx_extra:
-                    bgm_extra_sfx, bgm_sfx_str = _build_layout_sfx_filter(
+                # BGM이 있는 경우: SFX 유무에 따라 필터 그래프 선택
+                if sfx_count > 0:
+                    # ─── BGM + SFX + TTS 병합 (concat 경로) ────────────────
+                    extra_inputs_bgm, voice_filter = _build_layout_sfx_filter(
                         plan, timings, audio_dir, layout,
                         tts_input_idx=1, sfx_offset=sfx_offset,
+                        sfx_config=_sfx_config_for_profile(layout, render_profile),
+                        sfx_start_idx=3,  # BGM이 입력 2를 차지하므로 SFX는 3부터 시작
+                        output_label="[voice]",  # TTS+SFX 결과를 [voice]로 명명
                     )
-                    bgm_sfx_str_patched = bgm_sfx_str.replace(
-                        f"[1:a]acopy[aout]", "[aout_premix]acopy[aout]"
-                    ).replace(
-                        f"[1:a]", "[aout_premix]"
+                    bgm_sfx_filter = (
+                        f"{video_filter};"
+                        f"{voice_filter};"
+                        f"[voice]asplit=2[v_key][v_mix];"
+                        f"[2:a]volume=0.40,aloop=loop=-1:size=2e+09[bgm];"
+                        f"[bgm][v_key]sidechaincompress=threshold=0.10:ratio=4:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[v_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                        f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                     )
-                    filter_complex = f"{video_filter};{bgm_audio_filter};{bgm_sfx_str_patched}"
                     cmd = [
                         "ffmpeg", "-y",
                         "-f", "concat", "-safe", "0", "-i", str(concat_file),
                         "-i", str(merged_tts),
                         "-stream_loop", "-1", "-i", str(effective_bgm),
-                        *bgm_extra_sfx,
-                        "-filter_complex", filter_complex,
+                        *extra_inputs_bgm,
+                        "-filter_complex", bgm_sfx_filter,
                         "-map", "[vout]", "-map", "[aout]",
                         *enc_args,
                         "-c:a", "aac", "-b:a", "192k", *_STATIC_CONCAT_CFR_ARGS,
                         str(output_path),
                     ]
                 else:
-                    bgm_audio_filter_final = bgm_audio_filter.replace(
-                        "[aout_premix]", "[aout]"
+                    # ─── BGM만 있는 경우 (기존 그래프 유지) ───────────────
+                    bgm_audio_filter = (
+                        f"[1:a]asplit=2[tts_key][tts_mix];"
+                        f"[2:a]volume=0.40,aloop=loop=-1:size=2e+09[bgm_loop];"
+                        f"[bgm_loop][tts_key]sidechaincompress=threshold=0.10:ratio=4:attack=50:release=400:makeup=1[bgm_ducked];"
+                        f"[tts_mix][bgm_ducked]amix=inputs=2:duration=first:normalize=0[mixed];"
+                        f"[mixed]loudnorm=I=-14:TP=-1:LRA=7[aout]"
                     )
-                    filter_complex = f"{video_filter};{bgm_audio_filter_final}"
+                    filter_complex = f"{video_filter};{bgm_audio_filter}"
                     cmd = [
                         "ffmpeg", "-y",
                         "-f", "concat", "-safe", "0", "-i", str(concat_file),
@@ -1082,6 +1849,7 @@ def _render_pipeline(
                         str(output_path),
                     ]
             else:
+                # BGM이 없는 경우 (SFX는 있을 수도 없을 수도)
                 filter_complex = f"{video_filter};{sfx_filter}"
                 cmd = [
                     "ffmpeg", "-y",
@@ -1107,8 +1875,11 @@ def _render_pipeline(
                 ffmpeg_result.returncode, cmd, ffmpeg_result.stdout, ffmpeg_result.stderr
             )
 
-        logger.info("[layout] 완료: %s (총 %.1fs)", output_path.name, total_dur)
-        return output_path
+        logger.info("[layout] 완료: %s (총 %.1fs, 진단: bgm=%s, sfx=%d)",
+                    output_path.name, total_dur,
+                    generation_diagnostics.get("bgm", "None"),
+                    generation_diagnostics.get("sfx_count", 0))
+        return output_path, generation_diagnostics
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1178,11 +1949,16 @@ def render_layout_video(
     plan = _plan_sequence(sentences, images, layout)
     logger.info("[layout] 씬 계획: %s", [p["type"] for p in plan])
 
-    return _render_pipeline(
+    render_profile = _resolve_render_profile(post.id)
+    output_path_result, diagnostics = _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
         narration_audio=Path(narration_audio) if narration_audio else None,
+        render_profile=render_profile,
     )
+    # TODO: diagnostics를 processor.py가 저장할 수 있도록 연결
+    logger.debug("[layout] 생성 진단: %s", diagnostics)
+    return output_path_result
 
 
 def render_layout_video_from_scenes(
@@ -1264,7 +2040,8 @@ def render_layout_video_from_scenes(
     if _is_again_spring and not any(entry.get("type") == "outro" for entry in plan):
         raise RuntimeError("LAYOUT_OUTRO_MISSING: Again Spring plan must include an outro frame")
 
-    return _render_pipeline(
+    render_profile = _resolve_render_profile(post.id)
+    output_path_result, diagnostics = _render_pipeline(
         post.id, post.title or "", sentences, plan, images,
         output_path, layout, voice, rate, sfx_offset, max_slots, font_dir, audio_dir,
         save_tts_cache=save_tts_cache,
@@ -1274,4 +2051,8 @@ def render_layout_video_from_scenes(
         meta=meta,
         narration_audio=Path(narration_audio) if narration_audio else None,
         comments_fade_enabled=_is_again_spring,
+        render_profile=render_profile,
     )
+    # TODO: diagnostics를 processor.py가 저장할 수 있도록 연결
+    logger.debug("[layout:scenes] 생성 진단: %s", diagnostics)
+    return output_path_result

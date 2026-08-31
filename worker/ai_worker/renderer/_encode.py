@@ -15,6 +15,21 @@ def _resolve_codec() -> str:
 
 
 def _get_encoder_args(codec: str) -> list[str]:
+    """인코더 인자. VRAM 여유가 없으면 CPU(libx264)로 폴백한다.
+
+    fish-speech TTS가 24.6GB 중 23.9GB를 상주 점유한다. NVENC 세션 할당이
+    실패하면 렌더가 통째로 죽고, 최악의 경우 TTS 컨테이너가 OOM으로 내려간다.
+    여유 0.5GB 미만이면 느리더라도 CPU로 내려가는 편이 안전하다.
+    """
+    try:
+        from ai_worker.core.gpu_manager import get_gpu_manager
+        free_gb = get_gpu_manager().get_available_vram()
+        if free_gb is not None and free_gb < 0.5:
+            logger.warning("[encode] VRAM 여유 %.2fGB < 0.5GB — libx264 폴백", free_gb)
+            return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                    "-pix_fmt", "yuv420p"]
+    except Exception:
+        logger.debug("[encode] VRAM 조회 실패 — NVENC 유지", exc_info=True)
     return ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23", "-pix_fmt", "yuv420p"]
 
 
@@ -25,6 +40,33 @@ def _escape_ffmpeg_text(text: str) -> str:
     return text
 
 
+def _resolve_sfx_path(sfx_file: str, audio_dir: Path) -> Path | None:
+    """효과음 파일 경로를 찾는다.
+
+    audio_dir는 TTS 음성 출력 폴더(assets/audio)라 효과음이 없다.
+    효과음은 assets/sfx/<event>.wav에 승격돼 있으므로 그쪽을 먼저 본다.
+    """
+    if not sfx_file:
+        return None
+    candidates = []
+    try:
+        # 컨테이너에는 assets/media만 /app/media로 마운트된다 → 에셋도 그 아래에 둔다
+        from config.settings import MEDIA_DIR
+        candidates.append(Path(MEDIA_DIR) / "sfx" / sfx_file)
+    except Exception:
+        pass
+    candidates.append(Path("/app/media/sfx") / sfx_file)
+    candidates.append(audio_dir.parent / "sfx" / sfx_file)
+    candidates.append(audio_dir / sfx_file)
+    for c in candidates:
+        try:
+            if c.exists():
+                return c
+        except Exception:
+            continue
+    return None
+
+
 def _build_layout_sfx_filter(
     plan: list[dict],
     timings: list[float],
@@ -32,45 +74,161 @@ def _build_layout_sfx_filter(
     layout: dict,
     tts_input_idx: int = 1,
     sfx_offset: float = -0.15,
+    sfx_config: dict | None = None,
+    sfx_start_idx: int | None = None,
+    output_label: str = "[aout]",
 ) -> tuple[list[str], str]:
-    """plan 씬 타입에 따른 효과음 amix 필터 구성."""
-    # ── 당분간 SFX 사용 금지 (2026-03-04) ──
-    tts_ref = f"[{tts_input_idx}:a]"
-    return [], f"{tts_ref}acopy[aout]"
-    # ── SFX 비활성화 끝 ──
-    sfx_map: dict[str, str] = layout.get("layout_algorithm", {}).get("sfx", {
-        "intro": "click.mp3",
-        "image_text": "shutter.mp3",
-        "text_only": "pop.mp3",
-        "outro": "ding.mp3",
-    })
-    vol_map = {"click.mp3": 0.6, "shutter.mp3": 0.5, "pop.mp3": 0.45, "ding.mp3": 0.4}
+    """
+    director가 설정한 sfx_events 마커를 처리하여 효과음을 삽입한다.
 
+    sfx_config: settings.yaml의 sfx.active 섹션 (이벤트 → {file, volume, offset})
+    plan: 각 entry는 get("sfx_events", [])로 마커 리스트 포함 가능
+    timings: 누적 초 리스트
+    sfx_start_idx: SFX 입력 인덱스 시작값. None이면 tts_input_idx + 1 (기본값).
+                   BGM이 입력 2를 차지할 때는 3으로 명시하여 충돌 방지.
+    output_label: 최종 필터 출력 라벨 (기본 "[aout]"). BGM+SFX 병합 시 "[voice]"로 사용.
+
+    반환값: (extra_inputs 리스트, 최종 필터 문자열)
+    """
+    if sfx_config is None:
+        sfx_config = {}
+
+    # 상한은 settings.yaml 의 sfx.max_per_video 가 권위본이다.
+    # (예전엔 6이 코드에 박혀 있어 설정을 올려도 반영되지 않았다)
+    try:
+        from ai_worker.renderer.layout import _load_renderer_settings
+        _sfx_cfg = (_load_renderer_settings().get("sfx") or {})
+        max_sfx = int(_sfx_cfg.get("max_per_video", 6))
+        min_gap = float(_sfx_cfg.get("min_gap_sec", 2.5))
+        short_gap = float(_sfx_cfg.get("short_gap_sec", 1.0))
+        short_events = set(_sfx_cfg.get("short_gap_events") or ())
+        same_file_gap = float(_sfx_cfg.get("same_file_gap_sec", 1.5))
+        one_per_change = bool(_sfx_cfg.get("one_per_change", True))
+        priority = list(_sfx_cfg.get("priority") or ())
+    except Exception:
+        max_sfx, min_gap, short_gap, short_events = 6, 2.5, 1.0, set()
+        same_file_gap = 1.5
+        one_per_change, priority = True, []
+
+    if sfx_start_idx is None:
+        sfx_start_idx = tts_input_idx + 1
+
+    tts_ref = f"[{tts_input_idx}:a]"
+
+    # sfx_events 마커 수집 (최대 6개, 간격 규칙 적용)
+    sfx_events_to_insert: list[tuple[str, float]] = []  # (event_key, timing_sec)
+    last_sfx_time = -float('inf')
+    # 같은 음원 파일이 마지막으로 울린 시각. 이벤트 이름이 달라도 파일이 같으면
+    # 귀에는 같은 소리다 — 지점 이름만으로 간격을 재면 한 장면에서 똑같은 소리가
+    # 두세 번 연달아 난다(실제로 interface_2574 를 세 지점에 매핑해 그렇게 됐다).
+    last_file_time: dict[str, float] = {}
+
+    for entry_idx, (entry, t_start) in enumerate(zip(plan, timings)):
+        events = entry.get("sfx_events", [])
+        if not events:
+            continue
+
+        # 화면 변화 한 번에 소리 하나. 같은 plan 항목에 마커가 여러 개 붙어 있으면
+        # 우선순위가 가장 높은 하나만 남긴다 — 오프셋으로 벌려도 한 번의 변화에
+        # 여러 소리가 나는 것은 그대로라 겹쳐 들린다.
+        if one_per_change and len(events) > 1:
+            def _rank(k: str) -> int:
+                return priority.index(k) if k in priority else len(priority)
+            kept = min(events, key=_rank)
+            dropped = [e for e in events if e != kept]
+            logger.info(
+                "[sfx] 한 화면 한 소리 — %s 채택, %s 생략 (@%.2fs)",
+                kept, ", ".join(dropped), t_start,
+            )
+            events = [kept]
+
+        for event_key in events:
+            # 실제 재생 시각 = 씬 시작 + 이벤트별 offset.
+            # 같은 씬의 두 이벤트는 t_start 가 같아서, offset 을 빼고 비교하면
+            # 뒤엣것이 항상 간격 규칙에 걸려 조용히 사라진다.
+            eff_t = t_start + float(sfx_config.get(event_key, {}).get("offset", 0.0) or 0.0)
+            if len(sfx_events_to_insert) >= max_sfx:
+                logger.info(
+                    "[sfx] 영상당 최대 %d회 초과, 해당 이벤트 dropped: %s @%.2fs",
+                    max_sfx, event_key, t_start
+                )
+                continue
+
+            # 간격 규칙: bubble 연속 시 1.0초, 나머지는 2.5초
+            # 말풍선은 짧고 가벼운 소리라 촘촘해도 지저분하지 않다.
+            # (앞이 전환음일 때도 1.0초를 적용한다 — 예전엔 2.5초라
+            #  첫 댓글의 말풍선이 전환음에 밀려 항상 사라졌다)
+            # 짧고 가벼운 소리는 촘촘해도 지저분하지 않다. 어느 소리가 그런지는
+            # settings.yaml 의 sfx.short_gap_events 가 정한다 — 코드에 박아두면
+            # 어드민에서 이벤트를 바꿔도 규칙이 따라오지 않는다.
+            current_gap_rule = short_gap if event_key in short_events else min_gap
+
+            # 파일 기준 간격 — 이벤트가 달라도 같은 소리면 촘촘히 반복하지 않는다
+            _file = str(sfx_config.get(event_key, {}).get("file", "") or "")
+            if _file and eff_t - last_file_time.get(_file, -float("inf")) < same_file_gap:
+                logger.info(
+                    "[sfx] 같은 음원 반복이라 건너뜀: %s(%s) @%.2fs",
+                    event_key, _file.rsplit("/", 1)[-1], eff_t,
+                )
+                continue
+
+            if eff_t - last_sfx_time >= current_gap_rule or not sfx_events_to_insert:
+                sfx_events_to_insert.append((event_key, t_start))
+                last_sfx_time = eff_t
+                if _file:
+                    last_file_time[_file] = eff_t
+            else:
+                logger.debug(
+                    "[sfx] 간격 규칙 위반, 이벤트 dropped: %s @%.2fs (last: %.2fs, gap: %.2fs < %.2fs)",
+                    event_key, t_start, last_sfx_time, t_start - last_sfx_time, current_gap_rule
+                )
+
+    # SFX 필터 구성
     extra_inputs: list[str] = []
     filter_parts: list[str] = []
     sfx_labels: list[str] = []
-    current_idx = tts_input_idx + 1
+    current_idx = sfx_start_idx
 
-    for i, (entry, t_start) in enumerate(zip(plan, timings)):
-        sfx_file = sfx_map.get(entry["type"], "pop.mp3")
-        sfx_path = audio_dir / sfx_file
-        if not sfx_path.exists():
+    for sfx_idx, (event_key, t_start) in enumerate(sfx_events_to_insert):
+        event_cfg = sfx_config.get(event_key, {})
+        sfx_file = event_cfg.get("file", "")
+        sfx_vol = event_cfg.get("volume", 0.4)
+        sfx_offset_sec = event_cfg.get("offset", 0.0)
+
+        if not sfx_file:
+            # 프로필 게이트로 설정이 비어 있는 경우(marketing_fast) — 정상이므로 조용히 건너뛴다
             continue
-        vol = vol_map.get(sfx_file, 0.4)
-        delay_ms = max(0, int((t_start + sfx_offset) * 1000))
-        label = f"sfx{i}"
+        sfx_path = _resolve_sfx_path(sfx_file, audio_dir)
+        if sfx_path is None:
+            logger.warning("[sfx] 파일 없음, skipped: %s", sfx_file)
+            continue
+
+        # 최종 타이밍: t_start + sfx_offset(전달된 인자, 대사 직전) + event_offset(이벤트별)
+        delay_sec = t_start + sfx_offset + sfx_offset_sec
+        delay_ms = max(0, int(delay_sec * 1000))
+
+        label = f"sfx{sfx_idx}"
         extra_inputs += ["-i", str(sfx_path)]
-        filter_parts.append(f"[{current_idx}:a]adelay={delay_ms}|{delay_ms},volume={vol}[{label}]")
+        filter_parts.append(f"[{current_idx}:a]adelay={delay_ms}|{delay_ms},volume={sfx_vol}[{label}]")
         sfx_labels.append(f"[{label}]")
         current_idx += 1
 
-    tts_ref = f"[{tts_input_idx}:a]"
+    # sfx 진단 — 어떤 마커가 실제로 들어갔는지 이름과 시각을 남긴다.
+    # (개수만 찍으면 마커 유실을 눈치채지 못한다)
+    logger.info(
+        "[sfx] plan=%d timings=%d 마커보유=%d 삽입=%s",
+        len(plan), len(timings),
+        sum(1 for e in plan if e.get("sfx_events")),
+        [f"{k}@{t:.1f}s" for k, t in sfx_events_to_insert],
+    )
+
     if sfx_labels:
         all_refs = tts_ref + "".join(sfx_labels)
         n = 1 + len(sfx_labels)
-        filter_str = ";".join(filter_parts) + f";{all_refs}amix=inputs={n}:normalize=0[aout]"
+        filter_str = ";".join(filter_parts) + f";{all_refs}amix=inputs={n}:normalize=0{output_label}"
+        logger.info("[sfx] %d개 삽입됨 (상한 %d)", len(sfx_labels), max_sfx)
     else:
-        filter_str = f"{tts_ref}acopy[aout]"
+        filter_str = f"{tts_ref}acopy{output_label}"
 
     return extra_inputs, filter_str
 

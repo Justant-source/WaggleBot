@@ -1,4 +1,5 @@
 import { TelegramBotWrapper } from "./telegram-bot.js";
+import { config } from "../config.js";
 import { FileHandler } from "./file-handler.js";
 import { ProjectExplorer } from "../explorer/project-explorer.js";
 import { GitCommands } from "../explorer/git-commands.js";
@@ -136,9 +137,20 @@ export class CommandHandler {
     const chatId = query.message?.chat.id;
     if (!data || !chatId) return;
 
+    const [prefix, ...rest] = data.split(":");
+
+    // ASM(Again-Spring-Marketing) 마케팅 실패 알림 버튼 — ASM이 모든 비즈니스
+    // 로직(idempotency, AS 재구동 호출, answerCallbackQuery, 후속 메시지)을
+    // 소유한다. 이 브리지는 순수 forwarder: 여기서 answerCallbackQuery를
+    // 먼저 호출하지 않는다 — Telegram은 콜백당 응답을 한 번만 허용하므로
+    // ASM 쪽 응답과 충돌한다. ASM 연결 자체가 실패했을 때만 폴백으로 응답한다.
+    if (prefix === "redrive" || prefix === "ignore") {
+      await this.forwardMarketingCallback(query.id, data);
+      return;
+    }
+
     await this.wrapper.bot.answerCallbackQuery(query.id);
 
-    const [prefix, ...rest] = data.split(":");
     const value = rest.join(":");
 
     switch (prefix) {
@@ -178,6 +190,38 @@ export class CommandHandler {
         break;
       default:
         logger.warn("Unknown callback", { prefix, value });
+    }
+  }
+
+  /**
+   * ASM 마케팅 재구동/무시 콜백 forwarder. ASM이 응답(answerCallbackQuery +
+   * 후속 메시지)까지 전부 처리 — 여기서는 ASM 연결 자체가 실패했을 때만
+   * 버튼이 무한 로딩으로 남지 않도록 폴백 응답을 보낸다.
+   */
+  private async forwardMarketingCallback(callbackId: string, data: string): Promise<void> {
+    try {
+      const res = await fetch(config.asm.callbackUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.asm.bearerToken}`,
+        },
+        body: JSON.stringify({ id: callbackId, data }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) {
+        logger.warn("ASM marketing callback forward failed", { status: res.status, data });
+        await this.wrapper.bot.answerCallbackQuery(callbackId, { text: "❌ ASM 처리 실패" });
+      }
+      // res.ok: ASM already answered the callback_query and (for redrive)
+      // sent its own follow-up message — nothing left to do here.
+    } catch (err) {
+      logger.error("ASM marketing callback forward error", { error: err, data });
+      await this.wrapper.bot
+        .answerCallbackQuery(callbackId, { text: "❌ ASM 연결 실패" })
+        .catch(() => {
+          // best-effort — Telegram may reject a very late answer
+        });
     }
   }
 

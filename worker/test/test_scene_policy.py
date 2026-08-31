@@ -24,7 +24,7 @@ def fail(msg: str) -> None:
 # ---------------------------------------------------------------------------
 def test_scene_policy_json() -> None:
     print("[1] scene_policy.json 검증")
-    policy = json.loads((Path(__file__).parent.parent / "config" / "scene_policy.json").read_text())
+    policy = json.loads((Path(__file__).parent.parent.parent / "config" / "scene_policy.json").read_text())
 
     moods = policy.get("moods", {})
     assert len(moods) == 9, f"mood 수 오류: {len(moods)}"
@@ -88,13 +88,13 @@ def test_pick_random_file() -> None:
     from ai_worker.scene.director import pick_random_file
 
     # 존재하지 않는 폴더
-    r = pick_random_file(str(Path(__file__).parent.parent / "assets" / "image" / "nonexistent"), [".jpg"])
+    r = pick_random_file(str(Path(__file__).parent.parent.parent / "assets" / "image" / "nonexistent"), [".jpg"])
     assert r is None
     ok("존재하지 않는 폴더 → None")
 
     # 빈 폴더 (.gitkeep만 있는 경우) — 확장자 필터로 None
     from pathlib import Path as _P
-    test_dir = Path(__file__).parent.parent / "assets" / "image" / "intro" / "mood" / "touching"
+    test_dir = Path(__file__).parent.parent.parent / "assets" / "image" / "intro" / "mood" / "touching"
     exts = [".png", ".jpg", ".jpeg", ".webp"]
     result = pick_random_file(str(test_dir), exts)
     if result is not None:

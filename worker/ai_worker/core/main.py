@@ -12,7 +12,6 @@ import asyncio
 import logging
 import signal
 from datetime import datetime, timezone
-
 from sqlalchemy import case
 
 from ai_worker.core.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
@@ -21,6 +20,68 @@ from db.models import Post, Content, PostStatus
 from db.session import SessionLocal, init_db
 
 logger = logging.getLogger(__name__)
+
+
+def _classify_failure(error: str) -> tuple[str, str, bool]:
+    """Classify failure into (code, stage, retryable).
+
+    Returns:
+        (failure_code, failure_stage, retryable)
+
+    Failure codes:
+      - INFRA_DB_CONFLICT: Database concurrency conflict (retry-able)
+      - INFRA_TIMEOUT: Phase timeout (retry-able)
+      - INFRA_OOM: Out of memory (retry-able)
+      - INFRA_GPU_UNAVAILABLE: GPU not available (retry-able)
+      - RENDER_FFMPEG_ERROR: FFmpeg encoding failed (retry-able)
+      - RENDER_ASSET_MISSING: Input asset missing (not retry-able)
+      - RENDER_INVALID_INPUT: Invalid input data (not retry-able)
+      - RENDER_UNKNOWN: Unclassified render error (retry-able)
+      - TTS_GENERATION_FAILED: TTS synthesis failed (retry-able)
+      - VARIANT_LLM_ERROR: LLM content refusal (not retry-able)
+    """
+    lower = error.lower()
+    prefix = (error or "").strip().split(":", 1)[0].strip().upper()
+    if prefix.startswith(("SIBOM_", "DURATION_", "VARIANT_", "LAYOUT_")) or prefix.startswith("SCRIPT_"):
+        return prefix, "QUALITY_GATE", False
+
+    # Infrastructure errors (retryable)
+    if "record has changed since last read" in lower or "(1020)" in lower:
+        return "INFRA_DB_CONFLICT", "runtime_state", True
+    if "timeout" in lower or "timed out" in lower:
+        return "INFRA_TIMEOUT", "render", True
+    if "out of memory" in lower or "oom" in lower or ("cuda" in lower and "memory" in lower):
+        return "INFRA_OOM", "render", True
+    if "gpu" in lower and ("unavailable" in lower or "not found" in lower):
+        return "INFRA_GPU_UNAVAILABLE", "render", True
+
+    # Render errors
+    if "ffmpeg" in lower:
+        if "not found" in lower or "missing" in lower:
+            return "RENDER_ASSET_MISSING", "ffmpeg_render", False
+        return "RENDER_FFMPEG_ERROR", "ffmpeg_render", True
+
+    # Audio/TTS errors (retryable — may recover with retry)
+    if "tts" in lower or "audio" in lower or "fish" in lower.replace("_", ""):
+        if "not found" in lower or "missing" in lower:
+            return "RENDER_ASSET_MISSING", "tts", False
+        return "TTS_GENERATION_FAILED", "tts", True
+
+    # LLM errors (non-retryable for refusals, retryable for API errors)
+    if "llm" in lower or "claude" in lower:
+        if "refused" in lower or "refuse" in lower or "content policy" in lower:
+            return "VARIANT_LLM_ERROR", "llm", False
+        # LLM API error — could be transient
+        return "RENDER_UNKNOWN", "llm", True
+
+    # Asset errors
+    if "not found" in lower or "missing" in lower or "filenotfound" in lower:
+        return "RENDER_ASSET_MISSING", "render", False
+    if "invalid" in lower or "malformed" in lower:
+        return "RENDER_INVALID_INPUT", "render", False
+
+    # Default: unknown but retryable
+    return "RENDER_UNKNOWN", "render", True
 
 
 def _mark_post_failed(post_id: int, error: str = "") -> None:
@@ -34,17 +95,10 @@ def _mark_post_failed(post_id: int, error: str = "") -> None:
                 post.status = PostStatus.FAILED
                 post.last_error = error[:1000] if error else None
                 session.commit()
-                lower = error.lower()
-                if "record has changed since last read" in lower or "(1020)" in lower:
-                    code, stage = "INFRA_DB_CONFLICT", "runtime_state"
-                elif "tts" in lower or "audio" in lower:
-                    code, stage = "TTS_GENERATION_FAILED", "tts"
-                elif "llm" in lower or "claude" in lower:
-                    code, stage = "VARIANT_LLM_ERROR", "llm"
-                else:
-                    code, stage = "RENDER_FAILED", "render"
+
+                code, stage, retryable = _classify_failure(error or "")
                 from ai_worker.core.progress import save_failure
-                save_failure(post_id, code=code, stage=stage, retryable=code != "VARIANT_LLM_ERROR", error_summary=error or "pipeline failed")
+                save_failure(post_id, code=code, stage=stage, retryable=retryable, error_summary=error or "pipeline failed")
     except Exception:
         logger.exception("FAILED 마킹 실패: post_id=%d", post_id)
 
@@ -113,8 +167,7 @@ def _get_gpu_stage_lock() -> asyncio.Lock:
 # ---------------------------------------------------------------------------
 
 def _post_priority(post: Post) -> int:
-    """Smaller values run first; Again Spring is always marketing critical."""
-    return 0 if post.site_code == "again_spring" else 10
+    return 0 if post.site_code == "again_spring" else 1
 
 
 async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
@@ -131,10 +184,7 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
             post = (
                 session.query(Post)
                 .filter(Post.status == PostStatus.APPROVED)
-                .order_by(
-                    case((Post.site_code == "again_spring", 0), else_=1),
-                    Post.created_at.asc(),
-                )
+                .order_by(case((Post.site_code == "again_spring", 0), else_=1), Post.created_at.asc())
                 .first()
             )
             if post is not None:
@@ -150,27 +200,30 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
                 pass
             continue
 
-        # Claude LLM is remote and must never occupy the GPU/renderer lock.
-        # The narrow TTS lock below still protects Fish Speech from Phase 7.
+        # GPU 작업: LLM + TTS (gpu_lock으로 렌더 Phase 7과 직렬화)
         result = None
-        async with cuda_sem:
-            try:
-                script, audio_path = await processor.llm_tts_stage(post_id, tts_lock=gpu_lock)
-                result = (post_id, script, audio_path)
-            except Exception as exc:
-                from ai_worker.llm.transport import LLMContentRefusalError
-                if isinstance(exc, LLMContentRefusalError):
-                    logger.warning("LLM 콘텐츠 거부: post_id=%d | %s", post_id, exc)
-                    _mark_post_declined(post_id, reason=str(exc))
-                else:
-                    logger.exception("LLM+TTS 실패: post_id=%d", post_id)
-                    _mark_post_failed(post_id, error=repr(exc))
-                await asyncio.sleep(5)
+        if gpu_lock.locked():
+            logger.info(
+                "⏳ GPU 사용 중 (렌더링/비디오 생성) — LLM+TTS 대기: post_id=%d", post_id
+            )
+        async with gpu_lock:
+            async with cuda_sem:
+                try:
+                    script, audio_path = await processor.llm_tts_stage(post_id)
+                    result = (post_id, script, audio_path)
+                except Exception as exc:
+                    from ai_worker.llm.transport import LLMContentRefusalError
+                    if isinstance(exc, LLMContentRefusalError):
+                        logger.warning("LLM 콘텐츠 거부: post_id=%d | %s", post_id, exc)
+                        _mark_post_declined(post_id, reason=str(exc))
+                    else:
+                        logger.exception("LLM+TTS 실패: post_id=%d", post_id)
+                        _mark_post_failed(post_id, error=repr(exc))
+                    await asyncio.sleep(5)
 
         # gpu_lock 해제 후 큐 적재 (데드락 방지: 큐 만석 시 render_worker가 lock 필요)
         if result is not None:
-            priority = _post_priority(post)
-            await render_queue.put((priority, datetime.now(timezone.utc).timestamp(), *result))
+            await render_queue.put((_post_priority(post), datetime.now(timezone.utc).timestamp(), *result))
             logger.info("LLM+TTS 완료, 렌더 큐 적재: post_id=%d (큐 크기=%d)",
                         post_id, render_queue.qsize())
 

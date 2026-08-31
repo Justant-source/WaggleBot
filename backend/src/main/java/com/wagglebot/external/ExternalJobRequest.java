@@ -3,8 +3,8 @@ package com.wagglebot.external;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.databind.JsonNode;
 
-import java.util.List;
 import java.time.OffsetDateTime;
+import java.util.List;
 
 /**
  * POST /api/external/jobs 요청 바디.
@@ -26,6 +26,8 @@ public record ExternalJobRequest(
         Boolean videoGen,
         Boolean autoHdRender,
         String ttsVoice,
+        /** 관리자가 어드민 설정에서 고른 BGM 경로 (/api/media/bgm/<emotion>/<file>). 비면 자동 선택. */
+        String bgmTrack,
         /**
          * Deprecated for video path — ignored at ingest (metaphor PNG unplugged).
          * Kept for backward-compatible JSON deserialization.
@@ -40,7 +42,6 @@ public record ExternalJobRequest(
         Integer maxDurationSec,
         /** Layout profile hint: reels_compact | shorts_standard. */
         String platformLayout,
-        /** Queue/SLA controls for time-sensitive external marketing content. */
         String priority,
         OffsetDateTime deadlineAt,
         Boolean preScripted,

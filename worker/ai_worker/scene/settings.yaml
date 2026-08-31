@@ -40,3 +40,14 @@ scene_director:
   llm_timeout_sec: 60          # LLM 호출 타임아웃
   fallback_on_llm_fail: true   # LLM 실패 시 rule_based 폴백
   oversized_scene_video: true  # 5초 초과 단일 씬의 비디오 허용 여부
+
+# ── WS3.4: 댓글 화자 음성 매핑 (고정) ──
+comment_voice_mapping:
+  author:   kangil_ref        # A 진영 (작성자)
+  partner:  kyunghwa_ref      # B 진영 (상대방)
+  neutral:  default           # 중립
+
+# ── WS4.5: TTS 문장 간 pause 시간 ──
+tts_pause:
+  default: 0.35               # 기본 (초)
+  before_turn: 0.6            # 반전 문장 앞 (초)

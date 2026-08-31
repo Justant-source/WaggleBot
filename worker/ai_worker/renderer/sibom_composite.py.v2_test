@@ -1,0 +1,555 @@
+"""시봄이(Sibom) 캡션 합성 + 프레임 배치 — Phase 2 v2 프로필.
+
+1단계: ``png/{id}.png`` 위에 catalog slot rect 안으로 캡션을 그린다.
+2단계: 그 RGBA 결과를 1080×1920 프레임에 large/small 로 붙인다.
+
+Director 배선은 이 모듈 범위 밖 — 공개 API만 제공한다.
+
+  composite_caption(image_id, caption, render_profile="marketing_fast") -> Image
+  paste_on_frame(frame, img, size="large"|"small", render_profile="marketing_fast") -> Image
+
+small 배치: 스케일 0.40(fast) / 0.35(v2), **우하단** 앵커 (마진 40px).
+large 배치: (90, 550) @ scale 1.0(fast) / 0.60(v2).
+
+폰트: WaggleBot 기본과 동일하게 ``NotoSansKR-Bold`` 우선
+(``assets/fonts`` → 호스트/시스템 한글 Bold → fc-list).
+"""
+from __future__ import annotations
+
+import json
+import logging
+import subprocess
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal, Optional
+
+from PIL import Image, ImageDraw, ImageFont
+
+logger = logging.getLogger(__name__)
+
+SizeMode = Literal["large", "small"]
+RenderProfile = Literal["marketing_fast", "marketing_v2"]
+
+# Catalog canvas / frame placement (docs/shared/marketing/sibom-video-insertion.md §6·§9)
+SIBOM_CANVAS = 820
+FRAME_W = 1080
+FRAME_H = 1920
+LARGE_XY = (90, 550)
+LARGE_SCALE_FAST = 1.0
+LARGE_SCALE_V2 = 0.60
+SMALL_SCALE_FAST = 0.40
+SMALL_SCALE_V2 = 0.35
+SMALL_MARGIN_XY = (40, 40)  # bottom-right inset from frame edges
+DEFAULT_INK = "#5C4030"
+DEFAULT_FONT_SIZE = 80
+# Right/left inset for multi-line caption extension.
+# Layout pad owns the visible margin; wrap inset only covers measure error.
+CAPTION_OUTER_PADDING = 44
+CAPTION_WRAP_INSET = 8
+BOLD_FONT_CANDIDATES = (
+    "NotoSansKR-Bold.ttf",
+    "NotoSansCJKkr-Bold.otf",
+    "NotoSansKR-Bold-renamed.ttf",
+    "NanumGothicBold.ttf",
+)
+
+# 진영색 팔레트 (catalog palette 매핑)
+COLOR_AUTHOR = "#E89A72"  # peach_author
+COLOR_PARTNER = "#6FB08A"  # sage_partner
+COLOR_NEUTRAL = "#B8A68A"  # 중립 회색 (새로 정의)
+COLOR_INK = "#5C4030"  # 텍스트색
+
+
+def _candidate_asset_roots() -> list[Path]:
+    """Possible ASSETS roots: settings → host checkout → Docker /app mount."""
+    roots: list[Path] = []
+    try:
+        from config.settings import ASSETS_DIR
+
+        roots.append(Path(ASSETS_DIR))
+    except Exception:
+        pass
+    here = Path(__file__).resolve()
+    # Host: WaggleBot/worker/ai_worker/renderer → WaggleBot/assets
+    roots.append(here.parents[3] / "assets")
+    # Docker: /app/ai_worker/renderer → /app/assets
+    roots.append(here.parents[2] / "assets")
+    # de-dupe, preserve order
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for r in roots:
+        rp = r.resolve() if r.exists() else r
+        if rp not in seen:
+            seen.add(rp)
+            out.append(r)
+    return out
+
+
+def default_sprouts_dir() -> Path:
+    """``assets/sprouts`` (Docker: ``/app/assets/sprouts``)."""
+    for root in _candidate_asset_roots():
+        sprouts = root / "sprouts"
+        if (sprouts / "catalog.json").exists():
+            return sprouts
+    return _candidate_asset_roots()[0] / "sprouts"
+
+
+def default_font_dir() -> Path:
+    for root in _candidate_asset_roots():
+        fonts = root / "fonts"
+        if fonts.is_dir():
+            return fonts
+    return _candidate_asset_roots()[0] / "fonts"
+
+
+@lru_cache(maxsize=1)
+def load_catalog(sprouts_dir: Optional[str] = None) -> dict:
+    root = Path(sprouts_dir) if sprouts_dir else default_sprouts_dir()
+    path = root / "catalog.json"
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def clear_catalog_cache() -> None:
+    load_catalog.cache_clear()
+
+
+def get_image_meta(image_id: str, catalog: Optional[dict] = None) -> dict:
+    cat = catalog if catalog is not None else load_catalog()
+    for item in cat.get("images", []):
+        if item.get("id") == image_id:
+            return item
+    raise KeyError(f"unknown sibom image_id: {image_id!r}")
+
+
+def get_slot_preset(slot: str, catalog: Optional[dict] = None) -> dict:
+    cat = catalog if catalog is not None else load_catalog()
+    presets = cat.get("presets") or {}
+    if slot not in presets:
+        raise KeyError(f"unknown sibom slot preset: {slot!r}")
+    return presets[slot]
+
+
+def resolve_bold_font_path(font_dir: Optional[Path] = None) -> Path:
+    """Return the first usable Korean bold font path.
+
+    Preference matches existing WaggleBot renderer usage (NotoSansKR-Bold).
+    """
+    fdir = Path(font_dir) if font_dir else default_font_dir()
+    candidates: list[Path] = [fdir / name for name in BOLD_FONT_CANDIDATES]
+    home = Path.home() / ".local" / "share" / "fonts"
+    candidates.extend(
+        [
+            home / "NotoSansKR-Bold-renamed.ttf",
+            home / "NotoSansCJKkr-Bold.otf",
+            home / "NotoSansKR-Bold.ttf",
+            Path("/usr/share/fonts/truetype/noto/NotoSansKR-Bold.ttf"),
+            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+            Path("/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"),
+            Path("/usr/share/fonts/nanum/NanumGothicBold.ttf"),
+        ]
+    )
+    for path in candidates:
+        if path.exists():
+            try:
+                ImageFont.truetype(str(path), DEFAULT_FONT_SIZE)
+                return path
+            except Exception:
+                continue
+    try:
+        result = subprocess.run(
+            ["fc-list", ":lang=ko", "--format=%{file}\n"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            p = Path(line.strip())
+            if not p.exists():
+                continue
+            name_u = p.name.upper()
+            if "BOLD" not in name_u and "BLACK" not in name_u:
+                continue
+            try:
+                ImageFont.truetype(str(p), DEFAULT_FONT_SIZE)
+                return p
+            except Exception:
+                continue
+        # any Korean font as last resort
+        for line in result.stdout.splitlines():
+            p = Path(line.strip())
+            if p.exists():
+                try:
+                    ImageFont.truetype(str(p), DEFAULT_FONT_SIZE)
+                    return p
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    raise FileNotFoundError(
+        "No Korean-capable bold font found for sibom caption compositing"
+    )
+
+
+def _load_font(size: int, font_dir: Optional[Path] = None) -> ImageFont.FreeTypeFont:
+    path = resolve_bold_font_path(font_dir)
+    font = ImageFont.truetype(str(path), size)
+    # Variable-font weight hint (same idea as layout._apply_vf_weight)
+    try:
+        font.set_variation_by_name("Bold")
+    except Exception:
+        pass
+    return font
+
+
+def _font_w(font: ImageFont.ImageFont, text: str) -> float:
+    """Ink-aware width; tiny slack only (pad owns the visible right margin)."""
+    if not text:
+        return 0.0
+    try:
+        bbox = font.getbbox(text)
+        w = float(bbox[2] - bbox[0])
+    except Exception:
+        try:
+            w = float(font.getlength(text))  # type: ignore[attr-defined]
+        except Exception:
+            bbox = font.getbbox(text)
+            w = float(bbox[2] - bbox[0])
+    return w * 1.01
+
+
+def _wrap_to_width(text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    """Wrap at Korean eojeol (space-delimited word) boundaries only.
+
+    Captions are intentionally never split inside a word.  A single word that
+    exceeds *max_width* is therefore returned intact; the catalog's short
+    caption limit keeps that exceptional case out of normal rendering.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+    if _font_w(font, text) <= max_width:
+        return [text]
+
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+
+    for word in words:
+        candidate = f"{current} {word}" if current else word
+        if _font_w(font, candidate) <= max_width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            # Do not fall back to character-level wrapping: Korean captions
+            # must not be split into fragments such as "갑자" / "기".
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _caption_metrics(
+    draw: ImageDraw.ImageDraw,
+    lines: list[str],
+    font: ImageFont.ImageFont,
+) -> tuple[list[tuple[str, int, int, int]], int, int]:
+    """Return text metrics, total height, and the inter-line gap."""
+    metrics: list[tuple[str, int, int, int]] = []
+    total_h = 0
+    line_gap = max(4, int(getattr(font, "size", DEFAULT_FONT_SIZE) * 0.12))
+    for i, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+        metrics.append((line, tw, th, bbox[1]))
+        total_h += th
+        if i:
+            total_h += line_gap
+    return metrics, total_h, line_gap
+
+
+def _draw_caption_lines(
+    draw: ImageDraw.ImageDraw,
+    lines: list[str],
+    font: ImageFont.ImageFont,
+    rect: list[int] | tuple[int, int, int, int],
+    color: str,
+) -> None:
+    """Center pre-wrapped caption lines inside *rect*."""
+    if not lines:
+        return
+    x, y, w, h = (int(v) for v in rect)
+    metrics, total_h, line_gap = _caption_metrics(draw, lines, font)
+    cy = y + max(0, (h - total_h) // 2)
+    for i, (line, tw, th, ascent) in enumerate(metrics):
+        tx = x + max(0, (w - tw) // 2)
+        draw.text((tx, cy - ascent), line, font=font, fill=color)
+        cy += th + (line_gap if i < len(metrics) - 1 else 0)
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert #RRGGBB to (R, G, B)."""
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))  # type: ignore
+
+
+def _draw_rounded_rect(
+    draw: ImageDraw.ImageDraw,
+    xy: list[int] | tuple[int, int, int, int],
+    fill: str,
+    outline: str = "#5C4030",
+    width: int = 3,
+    radius: int = 20,
+) -> None:
+    """Draw a rounded rectangle with optional outline.
+
+    Args:
+        draw: ImageDraw object
+        xy: (x1, y1, x2, y2) bounding box
+        fill: fill color (#RRGGBB)
+        outline: outline color (#RRGGBB)
+        width: outline width in pixels
+        radius: corner radius in pixels
+    """
+    x1, y1, x2, y2 = xy
+    r = radius
+
+    # Draw four corner arcs and four lines
+    # Top-left arc
+    draw.arc([x1, y1, x1 + 2*r, y1 + 2*r], 180, 270, fill=outline, width=width)
+    # Top-right arc
+    draw.arc([x2 - 2*r, y1, x2, y1 + 2*r], 270, 360, fill=outline, width=width)
+    # Bottom-right arc
+    draw.arc([x2 - 2*r, y2 - 2*r, x2, y2], 0, 90, fill=outline, width=width)
+    # Bottom-left arc
+    draw.arc([x1, y2 - 2*r, x1 + 2*r, y2], 90, 180, fill=outline, width=width)
+
+    # Lines
+    draw.line([(x1 + r, y1), (x2 - r, y1)], fill=outline, width=width)  # top
+    draw.line([(x2, y1 + r), (x2, y2 - r)], fill=outline, width=width)  # right
+    draw.line([(x2 - r, y2), (x1 + r, y2)], fill=outline, width=width)  # bottom
+    draw.line([(x1, y2 - r), (x1, y1 + r)], fill=outline, width=width)  # left
+
+    # Fill interior (without outline overlap)
+    if fill:
+        fill_rgb = _hex_to_rgb(fill) + (255,)
+        draw.rectangle([x1 + width//2, y1 + width//2, x2 - width//2, y2 - width//2],
+                      fill=fill_rgb)
+
+
+def composite_caption(
+    image_id: str,
+    caption: str,
+    *,
+    render_profile: RenderProfile = "marketing_fast",
+    sprouts_dir: Optional[Path] = None,
+    font_dir: Optional[Path] = None,
+    catalog: Optional[dict] = None,
+) -> Image.Image:
+    """Open ``png/{id}.png`` and draw *caption* into the catalog slot rect.
+
+    The character PNG is always retained as its original square region.  A
+    multi-line caption is rendered in a padded extension beneath it, so the
+    complete composite may be rectangular without scaling, cropping, or
+    distorting the character art. Empty caption leaves the PNG unchanged
+    (character only) — useful for fallback chain step 2.
+
+    For v2 profile, caption background is rendered with a rounded rectangle
+    and neutral color (진영색 적용 예정 — side 매개변수 필요).
+    """
+    root = Path(sprouts_dir) if sprouts_dir else default_sprouts_dir()
+    cat = catalog if catalog is not None else load_catalog(str(root))
+    meta = get_image_meta(image_id, cat)
+    slot = meta.get("slot") or "bottom"
+    preset = get_slot_preset(slot, cat)
+
+    png_path = root / "png" / f"{image_id}.png"
+    if not png_path.exists():
+        raise FileNotFoundError(f"sibom png missing: {png_path}")
+
+    img = Image.open(png_path).convert("RGBA")
+    if caption:
+        font_size = int(preset.get("font_size") or DEFAULT_FONT_SIZE)
+        # v2 모드: 진영색 적용 (현재는 중립색으로, side 정보 필요)
+        if render_profile == "marketing_v2":
+            color = COLOR_NEUTRAL  # TODO: side 매개변수로 COLOR_AUTHOR/PARTNER 선택
+        else:
+            color = str(preset.get("color") or cat.get("palette", {}).get("ink") or DEFAULT_INK)
+
+        font = _load_font(font_size, font_dir)
+        _, _, slot_w, _ = (int(v) for v in preset["rect"])
+        lines = _wrap_to_width(caption, font, max(1, slot_w - CAPTION_WRAP_INSET))
+
+        if len(lines) <= 1:
+            draw = ImageDraw.Draw(img)
+            _draw_caption_lines(draw, lines, font, preset["rect"], color)
+            return img
+
+        # The PNG itself remains a 1:1 character region at the top, pixel-for-
+        # pixel unchanged (including its transparent corners) — the extended
+        # canvas starts fully transparent and only the *new* band below the
+        # original gets cream-filled, so alpha-compositing the character on
+        # top never bleeds cream into its transparent background.
+        measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        _, caption_h, _ = _caption_metrics(measure, lines, font)
+        caption_w = img.width - 2 * CAPTION_OUTER_PADDING
+
+        if render_profile == "marketing_v2":
+            # v2: 진영색 말풍선 배경
+            bg_color = COLOR_NEUTRAL
+            extended = Image.new(
+                "RGBA",
+                (
+                    img.width,
+                    img.height + CAPTION_OUTER_PADDING + caption_h + CAPTION_OUTER_PADDING,
+                ),
+                (0, 0, 0, 0),
+            )
+            extended.paste(img, (0, 0))
+
+            # 말풍선 배경 그리기
+            draw = ImageDraw.Draw(extended)
+            bg_rect = (
+                CAPTION_OUTER_PADDING - 8,
+                img.height + CAPTION_OUTER_PADDING - 8,
+                img.width - CAPTION_OUTER_PADDING + 8,
+                extended.height - CAPTION_OUTER_PADDING + 8,
+            )
+            # 진영색 말풍선 테두리
+            _draw_rounded_rect(draw, bg_rect, fill=bg_color, outline=COLOR_INK, width=2, radius=12)
+
+            _draw_caption_lines(
+                draw,
+                lines,
+                font,
+                (CAPTION_OUTER_PADDING, img.height + CAPTION_OUTER_PADDING, caption_w, caption_h),
+                COLOR_INK,
+            )
+            return extended
+        else:
+            # fast: 기존 크림색 배경
+            cream = (255, 248, 240, 255)  # #FFF8F0
+            extended = Image.new(
+                "RGBA",
+                (
+                    img.width,
+                    img.height + CAPTION_OUTER_PADDING + caption_h + CAPTION_OUTER_PADDING,
+                ),
+                (0, 0, 0, 0),
+            )
+            extended.paste(img, (0, 0))
+            extended.paste(cream, (0, img.height, img.width, extended.height))
+            draw = ImageDraw.Draw(extended)
+            _draw_caption_lines(
+                draw,
+                lines,
+                font,
+                (CAPTION_OUTER_PADDING, img.height + CAPTION_OUTER_PADDING, caption_w, caption_h),
+                color,
+            )
+            return extended
+    return img
+
+
+def paste_on_frame(
+    frame: Image.Image,
+    img: Image.Image,
+    size: SizeMode = "large",
+    *,
+    render_profile: RenderProfile = "marketing_fast",
+    large_xy: tuple[int, int] = LARGE_XY,
+    small_margin: tuple[int, int] = SMALL_MARGIN_XY,
+) -> Image.Image:
+    """Paste a captioned sibom image onto a (typically 1080×1920) frame.
+
+    - ``large``: top-left at *large_xy* (default 90,550)
+      - fast: scale 1.0 (100% = ~76% of frame width)
+      - v2: scale 0.60 (~60% of original = ~46% of frame width)
+    - ``small``: bottom-right anchor with *small_margin*
+      - fast: scale 0.40
+      - v2: scale 0.35
+
+    Returns an RGBA frame (converts *frame* if needed). Does not mutate the
+    original if mode conversion is required; otherwise pastes onto a copy.
+    """
+    base = frame.convert("RGBA").copy()
+    overlay = img.convert("RGBA")
+
+    # Determine scale based on profile
+    if render_profile == "marketing_v2":
+        large_scale = LARGE_SCALE_V2
+        small_scale = SMALL_SCALE_V2
+    else:
+        large_scale = LARGE_SCALE_FAST
+        small_scale = SMALL_SCALE_FAST
+
+    if size == "large":
+        scale = large_scale
+        if scale != 1.0:
+            nw = max(1, int(overlay.width * scale))
+            nh = max(1, int(overlay.height * scale))
+            # LANCZOS 필터로 고품질 리사이징 (정수 픽셀 오프셋)
+            overlay = overlay.resize((nw, nh), Image.Resampling.LANCZOS)
+        xy = large_xy
+    elif size == "small":
+        scale = small_scale
+        nw = max(1, int(overlay.width * scale))
+        nh = max(1, int(overlay.height * scale))
+        # LANCZOS 필터로 고품질 리사이징
+        overlay = overlay.resize((nw, nh), Image.Resampling.LANCZOS)
+        mx, my = small_margin
+        xy = (base.width - overlay.width - mx, base.height - overlay.height - my)
+    else:
+        raise ValueError(f"size must be 'large' or 'small', got {size!r}")
+
+    # 정수 좌표로 정렬 (떨림 제거)
+    xy = (int(xy[0]), int(xy[1]))
+    base.alpha_composite(overlay, xy)
+    return base
+
+
+def make_cream_frame(
+    size: tuple[int, int] = (FRAME_W, FRAME_H),
+    color: tuple[int, int, int, int] = (251, 243, 236, 255),
+) -> Image.Image:
+    """Blank cream 9:16 frame for smoke tests / intro fallback."""
+    return Image.new("RGBA", size, color)
+
+
+# ---------------------------------------------------------------------------
+# Smoke / CLI
+# ---------------------------------------------------------------------------
+
+def _smoke(out_path: Path | None = None, render_profile: RenderProfile = "marketing_fast") -> Path:
+    out = out_path or Path("/tmp/sibom_smoke_frame.png")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    captioned = composite_caption("waiting-reply", "읽씹 3일차", render_profile=render_profile)
+    frame = make_cream_frame()
+    composed = paste_on_frame(frame, captioned, size="large", render_profile=render_profile)
+    # also stamp a small sticker so both modes are visible
+    small = composite_caption("indignant", "왜 나만", render_profile=render_profile)
+    composed = paste_on_frame(composed, small, size="small", render_profile=render_profile)
+    composed.convert("RGB").save(out)
+    font_used = resolve_bold_font_path()
+    print(f"wrote {out}")
+    print(f"font  {font_used}")
+    print(f"profile {render_profile}")
+    return out
+
+
+if __name__ == "__main__":
+    import sys
+
+    # Allow `python3 ai_worker/renderer/sibom_composite.py` without package __init__.
+    _worker = Path(__file__).resolve().parents[2]
+    _repo = Path(__file__).resolve().parents[3]
+    for p in (_worker, _repo):
+        s = str(p)
+        if s not in sys.path:
+            sys.path.insert(0, s)
+
+    profile = "marketing_v2" if len(sys.argv) > 2 and sys.argv[2] == "v2" else "marketing_fast"
+    dest = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/tmp/sibom_smoke_frame.png")
+    _smoke(dest, render_profile=profile)

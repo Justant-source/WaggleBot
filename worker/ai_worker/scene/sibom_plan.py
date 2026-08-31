@@ -117,36 +117,36 @@ def apply_sibom_plan_to_body(
     plan: list[dict[str, Any]],
     cache_dir: Path,
 ) -> list:
-    """Attach sibom visuals onto body scenes by beat_index.
+    """Put Sibomi on the matching one-clause story beat as ``image_text``.
 
-    Comments/outro are not in body_scenes. Intro is handled separately.
-    Never assigns metaphor assets.
+    The story line stays on screen with TTS. PNG caption is situational only.
+    Does not convert a 3-line text_only stack into a corner sticker.
     """
     if not body_scenes or not plan:
         return body_scenes
 
+    n_story = len(body_scenes)
+    occupied: set[int] = set()
     for item in plan:
         role = item.get("role")
         if role not in _BODY_ROLES:
             continue
-        beat = int(item.get("beat_index") or 0)
-        if beat < 0 or beat >= len(body_scenes):
-            logger.debug(
-                "[sibom] beat_index=%d out of range (body=%d) — skip %s",
-                beat, len(body_scenes), item.get("image_id"),
-            )
+        beat = max(0, min(int(item.get("beat_index") or 0), max(n_story - 1, 0)))
+        available = [idx for idx in range(beat, n_story) if idx not in occupied]
+        if not available:
+            available = [idx for idx in range(n_story) if idx not in occupied]
+        if not available:
+            logger.warning("[sibom] no free body scene for %s", item.get("image_id"))
             continue
-        scene = body_scenes[beat]
-        # Never decorate comment blocks inside body
+        scene_index = available[0]
+        scene = body_scenes[scene_index]
         if getattr(scene, "block_type", "body") == "comment":
             continue
-
         path = materialize_sibom_image(
             item["image_id"], item.get("caption") or "", cache_dir,
         )
         if not path:
             continue
-
         scene.type = "image_text"
         scene.image_url = path
         scene.video_mode = "static"
@@ -154,16 +154,66 @@ def apply_sibom_plan_to_body(
         scene.sibom_size = item.get("size") or "small"
         scene.sibom_dwell = item.get("dwell") or "punch"
         scene.sibom_image_id = item["image_id"]
-        if scene.sibom_dwell == "punch":
-            scene.dwell_sec = SIBOM_PUNCH_SEC
-        # Shake: hook point for future motion — ids listed in spec §9
-        if item["image_id"] in SIBOM_SHAKE_IDS:
-            scene.sibom_shake = True  # type: ignore[attr-defined]
-            # TODO(sibom): light bounce/shake via ffmpeg once motion system exists
-        else:
-            scene.sibom_shake = False  # type: ignore[attr-defined]
+        scene.sibom_shake = item["image_id"] in SIBOM_SHAKE_IDS
+        occupied.add(scene_index)
 
     return body_scenes
+
+
+def pack_undecorated_story_screens(body_scenes: list, per_screen: int = 3) -> list:
+    """Pack adjacent story beats without Sibomi into screens of at most 3 lines."""
+    if not body_scenes:
+        return body_scenes
+    if per_screen < 1:
+        per_screen = 3
+
+    def _lines_of(scene) -> list[str]:
+        psl = getattr(scene, "pre_split_lines", None)
+        if psl:
+            return [str(x) for x in psl if str(x).strip()]
+        out: list[str] = []
+        for item in scene.text_lines or []:
+            if isinstance(item, dict):
+                text = str(item.get("text") or "").strip()
+            else:
+                text = str(item).strip()
+            if text:
+                out.append(text)
+        return out
+
+    out: list = []
+    buf: list = []
+
+    def flush() -> None:
+        nonlocal buf
+        i = 0
+        while i < len(buf):
+            chunk = buf[i : i + per_screen]
+            i += len(chunk)
+            if len(chunk) == 1:
+                out.append(chunk[0])
+                continue
+            lines: list[str] = []
+            for scene in chunk:
+                lines.extend(_lines_of(scene))
+            first = chunk[0]
+            first.type = "text_only"
+            first.image_url = None
+            first.pre_split_lines = lines
+            first.text_lines = [" ".join(lines)] if lines else first.text_lines
+            out.append(first)
+        buf = []
+
+    for scene in body_scenes:
+        if getattr(scene, "sibom_role", None):
+            flush()
+            out.append(scene)
+        else:
+            buf.append(scene)
+    flush()
+    body_scenes[:] = out
+    return body_scenes
+
 
 
 def sibom_cache_dir(post_id: int | None = None) -> Path:

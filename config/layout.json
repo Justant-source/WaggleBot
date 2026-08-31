@@ -361,6 +361,7 @@
           "card": "#FFFFFF",
           "border": "#E5DED2",
           "ink": "#5C4030",
+          "ink_strong": "#3D2A1F",
           "muted": "#A08670",
           "peach": "#C9785A",
           "sage": "#5F8F76"

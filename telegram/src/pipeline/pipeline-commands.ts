@@ -33,7 +33,7 @@ export class PipelineCommands {
       const status = await getPipelineStatus();
       const lines = ["📊 *파이프라인 현황*\n"];
       for (const [key, label] of Object.entries(STATUS_LABELS)) {
-        const count = (status as Record<string, number>)[key] ?? 0;
+        const count = (status as unknown as Record<string, number>)[key] ?? 0;
         if (count > 0) lines.push(`${label}: *${count}*건`);
       }
       if (lines.length === 1) lines.push("처리 중인 게시글 없음");
