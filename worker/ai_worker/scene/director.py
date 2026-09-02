@@ -1264,7 +1264,7 @@ class SceneDirector:
 
             def _pick_bgm() -> _Path | None:
                 # 관리자가 어드민에서 고른 트랙이 있으면 그것을 쓴다.
-                # 값은 "/api/media/bgm/<emotion>/<file>" 형태(카탈로그 path 그대로).
+                # 값은 "/api/media/bgm/calm/<file>" 형태(카탈로그 path 그대로).
                 chosen = self.variant_config.get("bgm_track") or self.variant_config.get("bgmTrack")
                 if isinstance(chosen, str) and chosen.strip():
                     rel = chosen.strip().split("/api/media/", 1)[-1].lstrip("/")
@@ -1274,23 +1274,15 @@ class SceneDirector:
                         return cand
                     logger.warning("[bgm] 선택한 파일 없음 → 자동 선택으로 폴백: %s", chosen)
 
-                # WS4.2: hook_emotion을 기반한 BGM 선택
-                hook_emotion = self.variant_config.get("hook_emotion") or self.variant_config.get("hookEmotion")
-                if not isinstance(hook_emotion, str) or not hook_emotion.strip():
-                    hook_emotion = "tension"
-                else:
-                    hook_emotion = hook_emotion.strip()
-
-                # BGM 디렉토리: MEDIA_DIR/bgm/<emotion>/ (컨테이너는 assets/media만 마운트됨)
-                bgm_dir = str(MEDIA_DIR / "bgm" / hook_emotion)
+                # 2026-09-02: 감정별 BGM 매칭 폐지(사용자 명시 결정). 옛 구조는
+                # anger/tension 트랙이 동일 소스 파일이었던 등 감정별 구분이 사실상
+                # 무의미했다. 사연 감정과 무관하게 잔잔한 곡 5개 단일 풀에서 무작위
+                # 선택한다. BGM 디렉토리: MEDIA_DIR/bgm/calm/
+                bgm_dir = str(MEDIA_DIR / "bgm" / "calm")
                 result = pick_random_file(bgm_dir, supported_bgm_ext)
 
-                # 파일 없으면 tension 폴백
-                if result is None and hook_emotion != "tension":
-                    result = pick_random_file(str(MEDIA_DIR / "bgm" / "tension"), supported_bgm_ext)
-
                 if result:
-                    logger.info("[bgm] emotion=%s file=%s", hook_emotion, result)
+                    logger.info("[bgm] pool=calm file=%s", result)
                 return result
         else:
             # policy 없을 때 fallback (기존 동작 유지)

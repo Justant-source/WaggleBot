@@ -20,26 +20,30 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * BGM 카탈로그 — assets/media/bgm/<emotion>/*.mp3 를 훑어 목록으로 돌려준다.
+ * BGM 카탈로그 — assets/media/bgm/calm/*.mp3 를 훑어 목록으로 돌려준다.
+ *
+ * 2026-09-02: 감정별 매칭(shock/anger/tension/sad/hype)을 폐지했다. 옛 구조는
+ * anger/tension 트랙이 동일 Mixkit 소스였던 등 감정별 구분이 사실상 무의미했다.
+ * 지금은 사연 감정과 무관하게 잔잔한 곡 5개 단일 풀({@link #POOL_DIR})에서
+ * 고른다 — 실제 무작위 선택은 director.py의 {@code _pick_bgm()}이 담당한다.
  *
  * 미리듣기는 별도 엔드포인트를 두지 않는다. 파일이 이미 /app/media 아래에 있어
- * 기존 MediaController가 /api/media/bgm/<emotion>/<file> 로 그대로 서빙한다.
+ * 기존 MediaController가 /api/media/bgm/calm/<file> 로 그대로 서빙한다.
  */
 @RestController
 @RequestMapping("/api/bgm")
 @Slf4j
 public class BgmController {
 
-    /** hook_emotion 과 같은 표시 순서 — 강한 감정부터. */
-    private static final List<String> EMOTION_ORDER =
-        List.of("shock", "anger", "tension", "sad", "hype");
+    private static final String POOL_DIR = "calm";
 
-    private static final Map<String, String> EMOTION_LABEL = Map.of(
-        "shock", "충격",
-        "anger", "분노",
-        "tension", "긴장",
-        "sad", "슬픔",
-        "hype", "활기"
+    /** 파일명 → 화면 표시용 곡 제목. LICENSES.md와 짝을 맞춘다. */
+    private static final Map<String, String> TRACK_TITLES = Map.of(
+        "calm_01_first_light_particles.mp3", "First Light Particles",
+        "calm_02_november_snow.mp3", "November Snow",
+        "calm_03_calm_ambient.mp3", "Calm Ambient",
+        "calm_04_complicated_feelings.mp3", "Complicated Feelings",
+        "calm_05_piano_emotional_solo.mp3", "Piano Emotional Solo"
     );
 
     private final Path mediaDir;
@@ -71,30 +75,26 @@ public class BgmController {
     public Map<String, Object> listTracks() {
         Path bgmRoot = mediaDir.resolve("bgm");
         List<Map<String, Object>> tracks = new ArrayList<>();
-        if (!Files.isDirectory(bgmRoot)) {
-            log.warn("[bgm] 디렉토리 없음: {}", bgmRoot);
+        Path dir = bgmRoot.resolve(POOL_DIR);
+        if (!Files.isDirectory(dir)) {
+            log.warn("[bgm] 디렉토리 없음: {}", dir);
             return Map.of("tracks", tracks, "enabled", readEnabled());
         }
-        for (String emotion : EMOTION_ORDER) {
-            Path dir = bgmRoot.resolve(emotion);
-            if (!Files.isDirectory(dir)) continue;
-            try (Stream<Path> files = Files.list(dir)) {
-                files.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().toLowerCase().endsWith(".mp3"))
-                    .sorted(Comparator.comparing(p -> p.getFileName().toString()))
-                    .forEach(p -> {
-                        String file = p.getFileName().toString();
-                        Map<String, Object> entry = new LinkedHashMap<>();
-                        entry.put("emotion", emotion);
-                        entry.put("emotionLabel", EMOTION_LABEL.getOrDefault(emotion, emotion));
-                        entry.put("file", file);
-                        // 선택값이자 재생 경로 — 그대로 variant_config.bgm_track 으로 저장된다
-                        entry.put("path", "/api/media/bgm/" + emotion + "/" + file);
-                        tracks.add(entry);
-                    });
-            } catch (IOException e) {
-                log.warn("[bgm] 목록 실패: {}", dir, e);
-            }
+        try (Stream<Path> files = Files.list(dir)) {
+            files.filter(Files::isRegularFile)
+                .filter(p -> p.getFileName().toString().toLowerCase().endsWith(".mp3"))
+                .sorted(Comparator.comparing(p -> p.getFileName().toString()))
+                .forEach(p -> {
+                    String file = p.getFileName().toString();
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("title", TRACK_TITLES.getOrDefault(file, file));
+                    entry.put("file", file);
+                    // 선택값이자 재생 경로 — 그대로 variant_config.bgm_track 으로 저장된다
+                    entry.put("path", "/api/media/bgm/" + POOL_DIR + "/" + file);
+                    tracks.add(entry);
+                });
+        } catch (IOException e) {
+            log.warn("[bgm] 목록 실패: {}", dir, e);
         }
         return Map.of("tracks", tracks, "enabled", readEnabled());
     }

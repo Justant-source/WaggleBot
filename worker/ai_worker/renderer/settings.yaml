@@ -21,7 +21,7 @@ audio:
 # false 면 모든 렌더에서 BGM 을 넣지 않는다. 고르는 기능은 그대로 살아 있어
 # (어드민 매핑 · 카탈로그 API · 잡별 bgmTrack) 값만 true 로 바꾸면 즉시 복귀한다.
 bgm:
-  enabled: false
+  enabled: true
 
 sfx:
   active:
