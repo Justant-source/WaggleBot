@@ -1209,6 +1209,11 @@ def _render_pipeline(
 ) -> tuple[Path, dict]:
     """sentences / plan / images 를 받아 mp4를 생성한다."""
     _ = comments_fade_enabled  # reserved (Tone L comment fade; keep signature parity)
+    # 훅 구간 실험 프로필(marketing_hook_a/b/c)은 본문 분기에서 marketing_v2 로 접고,
+    # 인트로 장면에서만 hook_variant 로 갈라진다 (renderer/hook_variants.py).
+    from ai_worker.renderer.hook_variants import is_hook_profile, base_profile
+    hook_variant = render_profile if is_hook_profile(render_profile) else None
+    render_profile = base_profile(render_profile)
     tmp_dir = MEDIA_DIR / "tmp" / f"layout_{post_id}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1435,7 +1440,24 @@ def _render_pipeline(
                     layout, font_dir, frame_path, content_top, stage=1,
                     render_profile=render_profile, title_text=title,
                 )
-                if (theme == "tone_l" or render_profile == "marketing_v2") and img_pil is not None:
+                if hook_variant:
+                    # 훅 실험: 인트로를 타임라인(PNG+길이)으로 굽는다. 실패하면 v2 정지 프레임으로 진행.
+                    try:
+                        from ai_worker.renderer.hook_variants import build_hook_timeline
+                        _final, _tl = build_hook_timeline(
+                            hook_variant, img_pil, title or hook_text, layout, font_dir,
+                            tmp_dir, frame_idx, durations[frame_idx],
+                        )
+                        if hook_variant == "marketing_hook_a":
+                            shutil.copyfile(_final, frame_path)   # A 는 확대·강조본이 정지 프레임도 대체
+                        entry["hook_timeline"] = [(str(p), d) for p, d in _tl]
+                        logger.info("[hook] %s 타임라인 생성: frame=%d clips=%d dur=%.2fs",
+                                    hook_variant, frame_idx, len(_tl), durations[frame_idx])
+                    except Exception:
+                        logger.warning("[hook] %s 타임라인 생성 실패 — v2 정지 인트로로 진행",
+                                       hook_variant, exc_info=True)
+                        entry.pop("hook_timeline", None)
+                elif (theme == "tone_l" or render_profile == "marketing_v2") and img_pil is not None:
                     def _rf_intro(_img, _out, _txt=hook_text, hook_alpha=1.0):
                         _render_intro_frame(
                             base_frame, _img, _txt,
@@ -1610,6 +1632,16 @@ def _render_pipeline(
                             "[layout] 비디오 세그먼트 %d 생성 실패, 정적 폴백: %s",
                             frame_idx, e,
                         )
+                        _render_static_segment(frame_paths[frame_idx], dur, segment_path)
+                elif entry.get("hook_timeline") and segment_idx == 0 and entry.get("type") == "intro":
+                    # 훅 실험 프로필: 인트로 첫 세그먼트만 애니메이션 타임라인으로 굽는다.
+                    try:
+                        from ai_worker.renderer.hook_variants import render_timeline_segment
+                        render_timeline_segment(
+                            [(Path(p), d) for p, d in entry["hook_timeline"]], dur, segment_path,
+                        )
+                    except Exception:
+                        logger.warning("[hook] 인트로 타임라인 인코딩 실패 — 정적 폴백", exc_info=True)
                         _render_static_segment(frame_paths[frame_idx], dur, segment_path)
                 else:
                     _render_static_segment(frame_paths[frame_idx], dur, segment_path)

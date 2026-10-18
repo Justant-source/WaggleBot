@@ -132,7 +132,9 @@ def resolve_render_profile(post_id: int) -> str:
     Phase 1~2에서 이 분기 안에 새 렌더 로직(BGM·전환·댓글 반응 장면)이 들어간다.
     """
     profile = _resolve_post_variant_config(post_id).get("render_profile")
-    if profile in ("marketing_fast", "marketing_v2"):
+    # marketing_hook_* : 훅 구간(인트로) 디자인 실험 프로필 — 본문은 v2와 동일(renderer/hook_variants.py)
+    if profile in ("marketing_fast", "marketing_v2",
+                   "marketing_hook_a", "marketing_hook_b", "marketing_hook_c"):
         return profile
     return "marketing_fast"
 
