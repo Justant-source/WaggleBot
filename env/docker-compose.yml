@@ -72,6 +72,8 @@ services:
       - ../checkpoints/s2-pro:/app/checkpoints/s2-pro
       # ⚠ assets/voices는 UID 1000 소유여야 함 (validate_env가 /app/references 쓰기 권한 요구)
       - ../assets/voices:/app/references
+      # torch.compile(triton)이 -lcuda 링크에 libcuda.so(비버전 심볼릭)를 요구 — WSL 컨테이너엔 .so.1만 있음
+      - /usr/lib/wsl/lib/libcuda.so:/opt/libcuda/libcuda.so:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -79,7 +81,8 @@ services:
       - LLAMA_CHECKPOINT_PATH=checkpoints/s2-pro
       - DECODER_CHECKPOINT_PATH=checkpoints/s2-pro/codec.pth
       - DECODER_CONFIG_NAME=modded_dac_vq
-      # COMPILE=1  # torch.compile (시작 느림) — A3 RTF 측정 후 판단
+      - COMPILE=1  # torch.compile — 고품질 합성 속도 개선 (2026-10-24)
+      - TRITON_LIBCUDA_PATH=/opt/libcuda
     deploy:
       resources:
         reservations:
