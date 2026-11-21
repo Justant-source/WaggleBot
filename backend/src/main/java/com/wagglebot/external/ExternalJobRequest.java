@@ -51,6 +51,14 @@ public record ExternalJobRequest(
          * Accepts camelCase {@code sibomPlan} or snake_case {@code sibom_plan}.
          */
         @JsonAlias("sibom_plan")
-        JsonNode sibomPlan
+        JsonNode sibomPlan,
+        /** 영상 포맷 실험 매개변수 (전부 선택). 없으면 variant_config 에 키를 넣지 않는다. */
+        Integer commentCount,
+        /** partner_cta | vote_reveal — 문구는 워커가 정한다. */
+        String outroMode,
+        String formatArm,
+        /** 투표 공감 비율 {"a":int,"b":int} — outroMode=vote_reveal 일 때만 variant_config.empathy_ratio 로 전달된다. */
+        @JsonAlias("empathy_ratio")
+        JsonNode empathyRatio
     ) {}
 }

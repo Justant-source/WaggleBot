@@ -67,7 +67,7 @@ from ai_worker.renderer._frames import (
     _title_block_bottom_y, _fmt_count, _relative_time, _theme_name,
 )
 from ai_worker.renderer._tts import (
-    _tts_chunk_async, _generate_tts_chunks, _merge_chunks,
+    _tts_chunk_async, _generate_tts_chunks, _merge_chunks, _append_silence,
     _get_audio_duration, _unpack_line, _INTRO_PAUSE_SEC,
 )
 from ai_worker.renderer._encode import (
@@ -87,6 +87,56 @@ _STATIC_FINAL_FRAME_HOLD_FILTER: str = "tpad=stop_mode=clone:stop=-1"
 _AGAIN_SPRING_MAX_COMMENTS = 2
 _OUTRO_MIN_DURATION_SEC = 2.5
 _PROTECTED_TAIL_SCENE_TYPES = frozenset({"outro", "comments"})
+# 영상 길이 상한(max_duration_sec)에 허용하는 초과폭 — 이를 넘으면 댓글을 뒤에서부터 뺀다.
+_DURATION_SLACK_SEC = 2.0
+
+
+def _comment_count_override(variant_config: dict | None) -> int | None:
+    """variant_config.comment_count 가 명시된(0 이상 정수) 경우만 값을 돌려준다. 없으면 None.
+
+    포맷 실험(arm)이 낭독·표시 댓글 수를 정할 때만 쓰인다. 키가 없는 기존 잡은 None → 기존 동작.
+    """
+    if not isinstance(variant_config, dict):
+        return None
+    raw = variant_config.get("comment_count")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        return None
+    return raw
+
+
+def _comment_cap(variant_config: dict | None) -> int:
+    """Again Spring 낭독 댓글 수 상한 — comment_count 명시 시 그 값, 아니면 기존 2."""
+    override = _comment_count_override(variant_config)
+    return _AGAIN_SPRING_MAX_COMMENTS if override is None else override
+
+
+def _comment_trim_keep_positions(
+    plan: list[dict],
+    durations: list[float],
+    variant_config: dict | None,
+    slack_sec: float = _DURATION_SLACK_SEC,
+) -> list[int]:
+    """총 길이가 max_duration_sec + slack 을 넘으면 댓글 항목을 뒤에서부터 뺀 뒤 남길 plan 위치를 돌려준다.
+
+    적용 조건: variant_config 에 max_duration_sec(양수) 와 comment_count(명시) 가 둘 다 있을 때만.
+    그 외(키 없는 기존 잡 포함)에는 모든 위치를 그대로 돌려준다 — 길이 통제를 바꾸지 않는다.
+    내레이션·아웃트로는 절대 빼지 않는다. 댓글이 다 빠져도 초과면 거기서 멈춘다.
+    """
+    keep = list(range(len(plan)))
+    if _comment_count_override(variant_config) is None:
+        return keep
+    raw_max = (variant_config or {}).get("max_duration_sec")
+    if isinstance(raw_max, bool) or not isinstance(raw_max, (int, float)) or raw_max <= 0:
+        return keep
+    limit = float(raw_max) + slack_sec
+    total = float(sum(durations))
+    while total > limit:
+        victim = next((p for p in reversed(keep) if plan[p].get("type") == "comments"), None)
+        if victim is None:
+            break
+        total -= float(durations[victim])
+        keep.remove(victim)
+    return keep
 
 
 def _bgm_allowed_for_profile(render_profile: str | None) -> bool:
@@ -1069,7 +1119,7 @@ def _scenes_to_plan_and_sentences(
         elif scene.type == "comments":
             # 항목당 1개 TTS 엔트리 — text_only 패턴과 동일하게 점진적 낭독
             items = getattr(scene, "comment_items", None) or []
-            if max_comment_items:
+            if max_comment_items is not None:
                 items = items[:max_comment_items]
             for k, item in enumerate(items):
                 content = (item.get("content") or "").strip()
@@ -1313,25 +1363,68 @@ def _render_pipeline(
 
         # 0-duration 프레임 제거 — TTS 실패 프레임이 concat에서 빈 세그먼트로 이어지는 것 방지.
         # outro/comments tail은 마케팅 CTA 계약상 반드시 유지한다.
+        _chunk_idx: list[int] = list(range(len(plan)))  # plan 위치 → 원래 TTS 청크 번호
         if any(d <= 0.0 for d in durations):
             _zero_count = sum(1 for d in durations if d <= 0.0)
             logger.warning("[layout] TTS 실패 프레임 %d개 제거 (dur=0)", _zero_count)
             _pairs: list[tuple[dict, float]] = []
-            for entry, dur in zip(plan, durations):
+            _kept_chunk_idx: list[int] = []
+            for _ci, (entry, dur) in enumerate(zip(plan, durations)):
                 scene_type = entry.get("type")
                 if dur > 0.0:
                     _pairs.append((entry, dur))
+                    _kept_chunk_idx.append(_ci)
                 elif scene_type in _PROTECTED_TAIL_SCENE_TYPES:
                     floor = _OUTRO_MIN_DURATION_SEC if scene_type == "outro" else 0.5
                     _pairs.append((entry, floor))
+                    _kept_chunk_idx.append(_ci)
                     logger.warning(
                         "[layout] tail scene %s TTS 실패 — 최소 %.1fs 유지",
                         scene_type, floor,
                     )
             if _pairs:
                 plan, durations = [list(x) for x in zip(*_pairs)]
+                _chunk_idx = _kept_chunk_idx
             else:
                 raise RuntimeError("모든 TTS 프레임 실패 — 렌더링 불가")
+
+        # ── 포맷 실험: 길이 상한 초과 시 댓글 장면을 뒤에서부터 제거 ─────────
+        # comment_count 가 명시된 잡에만 적용(키 없는 기존 잡은 그대로). TTS 길이가 확정된
+        # 이 지점이 가장 이르다. 이미 합성된 댓글 청크는 버리고 낭독 오디오를 다시 잇는다.
+        _keep_pos = _comment_trim_keep_positions(plan, durations, variant_config)
+        if len(_keep_pos) != len(plan):
+            _kept_chunks = [tmp_dir / f"chunk_{_chunk_idx[p]:03d}.wav" for p in _keep_pos]
+            if all(c.exists() and c.stat().st_size > 0 for c in _kept_chunks):
+                _before = sum(durations)
+                _dropped = len(plan) - len(_keep_pos)
+                # outro 직전 청크엔 TTS 단계에서 휴지(PRE_PAUSE)가 붙어 있다. 그 청크가 댓글이라
+                # 빠졌다면 새로 outro 앞에 오는 청크에 같은 휴지를 붙여 낭독 템포를 지킨다.
+                _outro_pos = next((i for i, e in enumerate(plan) if e.get("type") == "outro"), None)
+                if _outro_pos is not None and _outro_pos > 0 and (_outro_pos - 1) not in _keep_pos:
+                    _pred = [p for p in _keep_pos if p < _outro_pos]
+                    if _pred:
+                        try:
+                            from config.settings import TTS_OUTRO_PRE_PAUSE_SEC
+                            _pp = _pred[-1]
+                            durations = list(durations)
+                            durations[_pp] = _append_silence(
+                                tmp_dir / f"chunk_{_chunk_idx[_pp]:03d}.wav", TTS_OUTRO_PRE_PAUSE_SEC,
+                            )
+                        except Exception:
+                            logger.warning("[layout] outro 전 휴지 재삽입 실패 — 생략", exc_info=True)
+                _merge_chunks(
+                    _kept_chunks, merged_tts,
+                    skip_global_loudnorm=(narration_audio is not None),
+                )
+                plan = [plan[p] for p in _keep_pos]
+                durations = [durations[p] for p in _keep_pos]
+                total_dur = sum(durations)
+                logger.info(
+                    "[layout] 길이 상한 초과 — 댓글 %d개 제거 (%.1fs → %.1fs, max_duration_sec=%s)",
+                    _dropped, _before, total_dur, variant_config.get("max_duration_sec"),
+                )
+            else:
+                logger.warning("[layout] 길이 상한 초과이나 TTS 청크 누락 — 댓글 제거 생략")
 
         # ── 진단 정보 업데이트: 섹션별 듀레이션 계산 ────────────
         for entry, dur in zip(plan, durations):
@@ -2023,7 +2116,9 @@ def render_layout_video_from_scenes(
     _is_again_spring = getattr(post, "site_code", None) == "again_spring"
     sentences, plan, images = _scenes_to_plan_and_sentences(
         scenes,
-        max_comment_items=_AGAIN_SPRING_MAX_COMMENTS if _is_again_spring else None,
+        max_comment_items=(
+            _comment_cap(_resolve_post_variant_config(post.id)) if _is_again_spring else None
+        ),
     )
     logger.info(
         "[layout:scenes] post_id=%d 씬=%d 문장=%d 이미지=%d",

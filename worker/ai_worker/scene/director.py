@@ -38,6 +38,10 @@ from config.settings import EMOTION_TAGS, MEDIA_DIR, get_domain_setting
 logger = logging.getLogger(__name__)
 
 
+# 포맷 실험(outro_mode=vote_reveal) 엔드카드 문구 — Java ingest 는 outro_text 를 바꾸지 않고 워커가 정한다.
+VOTE_REVEAL_OUTRO_MODE = "vote_reveal"
+VOTE_REVEAL_OUTRO_TEXT = "당신은 어느 쪽인가요?"
+
 SceneType = Literal["intro", "video_text", "image_text", "text_only", "image_only", "outro", "comments", "chat"]
 
 # 반전/충격 키워드가 등장하면 단독 강조 처리
@@ -1463,11 +1467,17 @@ class SceneDirector:
         # ── 댓글 씬 (아웃트로 직전) ────────────────────────────────────────
         if policy:
             comments_rule = policy.get("scene_rules", {}).get("comments", {})
-            if comments_rule.get("enabled", True) and self._db_comments:
+            # 포맷 실험(arm): variant_config.comment_count 가 명시되면 낭독·표시 댓글 수 상한.
+            # 0 이면 댓글 장면 없음. 키가 없으면 기존 동작(마케팅 사전대본 2 / policy top_n).
+            _cc_raw = self.variant_config.get("comment_count")
+            _cc = _cc_raw if (isinstance(_cc_raw, int) and not isinstance(_cc_raw, bool) and _cc_raw >= 0) else None
+            if _cc != 0 and comments_rule.get("enabled", True) and self._db_comments:
                 # Marketing pre-scripted renders always use the top two comments.
                 # Tie-break by stable DB id so retries reproduce the same video.
                 is_marketing_prescripted = self.site_code == "again_spring" and self.variant_config.get("pre_scripted") is True
                 top_n: int = 2 if is_marketing_prescripted else comments_rule.get("top_n", 5)
+                if _cc is not None:
+                    top_n = _cc
                 dwell: float = float(comments_rule.get("dwell_sec", 4.0))
                 # likes 내림차순 정렬
                 sorted_cmts = sorted(
@@ -1511,6 +1521,9 @@ class SceneDirector:
         outro_asset = _pick_asset("outro_image_dir")
         outro_img = str(outro_asset) if outro_asset else None
         outro_text = self.outro_text if self.outro_text else random.choice(fixed_texts)
+        if self.variant_config.get("outro_mode") == VOTE_REVEAL_OUTRO_MODE:
+            # 포맷 실험: 투표 공개 엔드카드 — 문구를 고정한다(TTS 낭독·화면 모두 이 씬 텍스트를 쓴다).
+            outro_text = VOTE_REVEAL_OUTRO_TEXT
         scenes.append(SceneDecision(
             type="outro",
             text_lines=[outro_text],

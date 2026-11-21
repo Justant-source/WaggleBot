@@ -134,13 +134,18 @@ public class ExternalIngestService {
         boolean marketingCritical = "again_spring".equals(siteCode) || (options != null && "MARKETING_CRITICAL".equalsIgnoreCase(options.priority()));
         boolean preScripted = options != null && Boolean.TRUE.equals(options.preScripted());
         String renderProfile = (options != null && options.renderProfile() != null) ? options.renderProfile().trim() : null;
+        Integer commentCount = options != null ? options.commentCount() : null;
+        String outroMode = (options != null && options.outroMode() != null) ? options.outroMode().trim() : null;
+        String formatArm = (options != null && options.formatArm() != null) ? options.formatArm().trim() : null;
+        var empathyRatio = options != null ? options.empathyRatio() : null;
         String bgmTrack = (options != null && options.bgmTrack() != null) ? options.bgmTrack().trim() : null;
         OffsetDateTime deadlineAt = options != null ? options.deadlineAt() : null;
         if (marketingCritical && deadlineAt == null) deadlineAt = OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(10);
         upsertContent(
             post.getId(), now, req, videoGen, paired, outroText, autoHdRender,
             ttsVoice, commentVoices, mood, ttsEmotion, maxDurationSec, platformLayout, sibomPlan,
-            marketingCritical, preScripted, renderProfile, deadlineAt, bgmTrack
+            marketingCritical, preScripted, renderProfile, deadlineAt, bgmTrack,
+            commentCount, outroMode, formatArm, empathyRatio
         );
 
         log.info(
@@ -187,7 +192,9 @@ public class ExternalIngestService {
         String platformLayout,
         com.fasterxml.jackson.databind.JsonNode sibomPlan,
         boolean marketingCritical, boolean preScripted, String renderProfile, OffsetDateTime deadlineAt,
-        String bgmTrack
+        String bgmTrack,
+        Integer commentCount, String outroMode, String formatArm,
+        com.fasterxml.jackson.databind.JsonNode empathyRatio
     ) {
         Content content = contentRepo.findByPostId(postId).orElseGet(() -> {
             Content c = new Content();
@@ -230,12 +237,40 @@ public class ExternalIngestService {
         if (platformLayout != null && !platformLayout.isBlank()) {
             variantConfig.put("platform_layout", platformLayout);
         }
+        // 영상 포맷 실험 매개변수 — 없으면 키 자체를 넣지 않는다(기존 잡과 동일).
+        if (commentCount != null && commentCount >= 0) {
+            variantConfig.put("comment_count", commentCount);
+        }
+        if (outroMode != null && !outroMode.isBlank()) {
+            variantConfig.put("outro_mode", outroMode);
+        }
+        if (formatArm != null && !formatArm.isBlank()) {
+            variantConfig.put("format_arm", formatArm);
+        }
+        // 공감 비율 막대는 vote_reveal 엔드카드에서만 쓴다. 다른 잡에 넣으면 기존 영상이 바뀌므로
+        // 모드가 vote_reveal 이고 a·b 가 0 이상 정수일 때만 전달한다(워커는 합 0 이면 막대를 생략).
+        ObjectNode ratio = voteRevealRatio(outroMode, empathyRatio);
+        if (ratio != null) {
+            variantConfig.set("empathy_ratio", ratio);
+        }
         if (sibomPlan != null && sibomPlan.isArray()) {
             variantConfig.set("sibom_plan", sibomPlan);
         }
         content.setVariantConfig(variantConfig);
 
         contentRepo.save(content);
+    }
+
+    ObjectNode voteRevealRatio(String outroMode, com.fasterxml.jackson.databind.JsonNode empathyRatio) {
+        if (!"vote_reveal".equals(outroMode) || empathyRatio == null || !empathyRatio.isObject()) return null;
+        var a = empathyRatio.get("a");
+        var b = empathyRatio.get("b");
+        if (a == null || b == null || !a.isIntegralNumber() || !b.isIntegralNumber()) return null;
+        if (a.asInt() < 0 || b.asInt() < 0) return null;
+        ObjectNode out = objectMapper.createObjectNode();
+        out.put("a", a.asInt());
+        out.put("b", b.asInt());
+        return out;
     }
 
     /** crawlers/base.py의 댓글 해시 규칙(sha256(author:content)[:32])과 동일 — 두 경로가 같은 uq_post_comment 키 사용. */
