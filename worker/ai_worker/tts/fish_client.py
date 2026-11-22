@@ -60,6 +60,7 @@ from config.settings import (
     VOICE_PRESETS,
     VOICE_REFERENCE_TEXTS,
 )
+from ai_worker.tts.fish_gate import gate as _fish_gate
 from ai_worker.tts.normalizer import normalize_for_tts
 from ai_worker.tts.alignment import transcribe_tts_quality
 from ai_worker.tts.quality import (
@@ -441,9 +442,16 @@ def _concat_wavs(seg_files: list[Path], output_path: Path) -> None:
 # HTTP 요청 + 세그먼트 합성
 # ────────────────────────────────────────────────────────────────
 async def _request_one(client: httpx.AsyncClient, payload: dict) -> bytes:
-    """단일 /v1/tts 요청 (5xx/ReadTimeout 재시도 포함). 응답 bytes 반환."""
+    """단일 /v1/tts 요청 (5xx/ReadTimeout 재시도 포함). 응답 bytes 반환.
+
+    Fish가 중간에 내려가(ConnectError, 또는 최종 ReadTimeout 후 health 실패) 요청이 끊기면
+    fish_gate 대기 경로로 들어가 Fish가 다시 올라올 때까지 기다린 뒤 같은 요청을 재시도한다.
+    대기 한도(FISH_GATE_MAX_WAIT_SEC)를 넘으면 FishGateTimeout이 전파된다.
+    """
     async with _fish_speech_request_lock():
-        for attempt in range(_MAX_TTS_RETRIES + 1):
+        attempt = 0
+        gate_waits = 0  # Fish가 살아 있는데 반복되는 ConnectError 무한 루프 방지
+        while attempt <= _MAX_TTS_RETRIES:
             try:
                 resp = await client.post(f"{FISH_SPEECH_URL}/v1/tts", json=payload)
                 resp.raise_for_status()
@@ -456,17 +464,29 @@ async def _request_one(client: httpx.AsyncClient, payload: dict) -> bytes:
                         e.response.status_code, attempt + 1, _MAX_TTS_RETRIES + 1, wait,
                     )
                     await asyncio.sleep(wait)
+                    attempt += 1
                 else:
                     raise
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError):
+                # 연결 거부뿐 아니라 요청 도중 Fish 컨테이너가 stop되어 연결이 끊긴 경우도 같은 대기 경로로 보낸다
+                gate_waits += 1
+                if gate_waits > 3 or not await _fish_gate.recover("요청 중 연결 실패/끊김"):
+                    raise
+                logger.info("Fish Speech 복구 확인 — 요청 재시도")
             except httpx.ReadTimeout:
                 if attempt < _MAX_TTS_RETRIES:
                     logger.warning(
                         "Fish Speech ReadTimeout (attempt %d/%d) — 즉시 재시도",
                         attempt + 1, _MAX_TTS_RETRIES + 1,
                     )
-                else:
-                    logger.error("Fish Speech ReadTimeout — 최대 재시도(%d) 초과", _MAX_TTS_RETRIES + 1)
+                    attempt += 1
+                    continue
+                logger.error("Fish Speech ReadTimeout — 최대 재시도(%d) 초과", _MAX_TTS_RETRIES + 1)
+                # Fish가 죽어서 끊긴 경우만 대기 후 재시도한다(살아 있으면 기존대로 실패).
+                gate_waits += 1
+                if gate_waits > 3 or not await _fish_gate.recover("요청 중 ReadTimeout 후 Fish 중단"):
                     raise
+                attempt = 0
     raise RuntimeError("unreachable")
 
 
@@ -612,6 +632,8 @@ async def synthesize(
         httpx.HTTPStatusError: Fish Speech 서버 오류 (5xx)
     """
     global _warmup_done
+    # Fish가 내려가 있으면(평소 stop) 게이트에 올릴 수 있는지 묻고 대기한다 (healthy면 GET 1회로 통과).
+    await _fish_gate.ensure_ready()
     if not _warmup_done:
         logger.info("synthesize() 첫 호출 — 자동 웜업 실행")
         await _warmup_model()

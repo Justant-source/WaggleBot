@@ -174,6 +174,12 @@ graph TD
   ```
   LLM_WORKER_URL=http://llm-worker:8090
   FISH_SPEECH_URL=http://fish-speech:8080
+  # Fish 게이트(Flight-Brain 호스트 :8100, compose 게이트웨이 172.20.0.1로 도달 확인). 평소 Fish는 stop이며
+  # Flight-Brain atomic_tts GPU 데몬이 수명주기를 관리(유휴 10분 또는 Windows X-Plane 실행 시 정지, 2026-11-22 기준)
+  ATOMIC_TTS_FISH_GATE_URL=http://172.20.0.1:8100/api/gpu/fish/ensure
+  FISH_GATE_RECHECK_SEC=1800
+  FISH_GATE_MAX_WAIT_SEC=86400
+  # (FISH_GATE_ENABLED·HEARTBEAT·START_* 는 compose 미전달 — 코드 기본값 사용, 필요 시 환경에 추가)
   COMFYUI_URL=http://comfyui:8188
   VIDEO_GEN_ENABLED=false   (기본값, true로 변경 시 Phase 4.5~7 활성화)
   # comfyui는 compose profile `video-gen` — VIDEO_GEN=false면 기본 up에서 제외
@@ -283,6 +289,7 @@ graph TD
   DATABASE_URL=...
   LLM_WORKER_URL=http://llm-worker:8090
   FISH_SPEECH_URL=http://fish-speech:8080
+  FISH_GATE_ENABLED=0   # 대시보드 TTS 미리듣기는 즉시 실패해야 하므로 Fish 게이트 대기 비활성
   MEDIA_DIR=/app/media
   ```
 

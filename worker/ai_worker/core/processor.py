@@ -25,6 +25,7 @@ from ai_worker.core.progress import (
 from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts.fish_client import synthesize as tts_synthesize
+from ai_worker.tts.fish_gate import gate as fish_gate
 from db.models import ScriptData
 from config.settings import (
     MAX_RETRY_COUNT,
@@ -244,7 +245,8 @@ async def _with_phase_heartbeat(awaitable, post_id: int, phase: int, phase_name:
     async def beat() -> None:
         while True:
             await asyncio.sleep(30)
-            stamp_progress(post_id, phase, phase_name)
+            # Fish 게이트 대기 중이면 "TTS 대기: ..." 문구를 유지한다 (heartbeat는 계속 갱신).
+            stamp_progress(post_id, phase, fish_gate.wait_label(post_id) or phase_name)
 
     task = asyncio.create_task(beat())
     try:
@@ -957,7 +959,11 @@ class RobustProcessor:
         finally:
             # ★ fish-speech 재기동 — Phase 7 성공/실패와 무관하게 항상 복구 시도
             #   (다음 LLM+TTS 요청이 이 컨테이너에 의존함)
-            restarted = await start_fish_speech()
+            #   단, Fish 게이트가 blocked(X-Plane 등)면 올리지 않는다 — 다음 TTS가 게이트 대기로 처리.
+            if await fish_gate.should_skip_start():
+                restarted = True
+            else:
+                restarted = await start_fish_speech()
             if not restarted:
                 logger.error(
                     "[video] fish-speech 재기동 실패 — 다음 TTS 요청이 실패할 수 있음. "
@@ -1113,6 +1119,7 @@ class RobustProcessor:
                 load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
             )
             stamp_progress(post_id, 5, "TTS 합성")
+            fish_gate.bind_post(post_id, 5, "TTS 합성")  # Fish 대기 시 heartbeat·문구 갱신용
             # Remote Claude work above can proceed while a video job owns GPU.
             # Only Fish Speech itself takes the shared GPU lock.
             if tts_lock is not None and tts_lock.locked():
@@ -1134,6 +1141,7 @@ class RobustProcessor:
                             voice_override=_post_voice,
                         ), post_id, 5, "TTS 합성",
                     )
+            fish_gate.unbind_post()
             stamp_progress(post_id, 5, "TTS 합성", done=True)
             logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
 
@@ -1243,6 +1251,7 @@ class RobustProcessor:
             )
 
             stamp_progress(post_id, 8, "FFmpeg 렌더링")
+            fish_gate.bind_post(post_id, 8, "FFmpeg 렌더링")  # Phase 8 댓글/outro TTS 캐시 미스 대기용
             _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
             _post_voice = _resolve_post_voice(post_id) or _nv
             video_path = render_layout_video_from_scenes(
@@ -1251,6 +1260,7 @@ class RobustProcessor:
                 voice_key=_post_voice,
                 narration_audio=audio_path if audio_path and Path(audio_path).exists() else None,
             )
+            fish_gate.unbind_post()
             _persist_marketing_duration_diagnostics(post_id, scenes, audio_path, video_path)
 
             # 렌더링 후 트랜잭션 갱신 ─ 장시간 렌더링(15분+) 중 대시보드가

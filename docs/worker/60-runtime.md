@@ -1,6 +1,6 @@
 # WaggleBot — 파이프라인 런타임 동작
 
-> last-verified: 2026-08-31 · code-ref: `worker/ai_worker/core/main.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/`
+> last-verified: 2026-11-22 · code-ref: `worker/ai_worker/core/main.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/`
 > scope: ai_worker 처리 루프, 4단계 폴백, 피드백 루프, Phase5‖6 병렬 시퀀싱 — SSOT
 
 ## 처리 루프
@@ -17,6 +17,8 @@
 렌더 단계는 진행률을 별도 세션으로 저장한 직후 기존 읽기 트랜잭션을 종료하고 최신 `contents` 행을 다시 읽는다. 마케팅 deadline 상태 저장이 같은 행의 오래된 스냅샷을 커밋해 MariaDB errno 1020으로 렌더를 실패시키는 것을 방지한다.
 
 기존 `contents.pipeline_state`는 롤링 업그레이드 중 읽기 폴백만 유지한다.
+
+**Fish 게이트 대기:** Fish 수명주기는 Flight-Brain `atomic_tts` GPU 데몬이 관리한다(유휴 10분 또는 Windows X-Plane 실행 시 Fish 정지, 2026-11-22 기준). `_llm_tts_worker`는 TTS 직전 Fish health가 실패하면 `fish_gate`로 문의·대기하며(blocked/미응답은 30분 재질의, 30초 heartbeat) post를 FAILED로 만들지 않는다. 대기 중 GPU 락을 쥐므로 뒤 post·렌더도 함께 대기하고, 총 24시간(`FISH_GATE_MAX_WAIT_SEC`) 초과 시에만 위 FAILED 경로를 탄다. 실패 경로(`main.py`)는 `fish_gate.unbind_post()`로 바인딩을 해제한다. 상세는 [pipeline.md Phase 5](30-components/pipeline.md).
 
 ## Again Spring 마케팅 고속 경로
 

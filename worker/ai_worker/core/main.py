@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from sqlalchemy import case
 
 from ai_worker.core.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
+from ai_worker.tts.fish_gate import gate as fish_gate
 from config.settings import AI_POLL_INTERVAL, CUDA_CONCURRENCY
 from db.models import Post, Content, PostStatus
 from db.session import SessionLocal, init_db
@@ -218,6 +219,7 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
                         _mark_post_declined(post_id, reason=str(exc))
                     else:
                         logger.exception("LLM+TTS 실패: post_id=%d", post_id)
+                        fish_gate.unbind_post()
                         _mark_post_failed(post_id, error=repr(exc))
                     await asyncio.sleep(5)
 
@@ -262,6 +264,7 @@ async def _render_worker(render_queue: asyncio.PriorityQueue) -> None:
                 )
         except Exception as exc:
             logger.exception("렌더링 실패: post_id=%d", post_id)
+            fish_gate.unbind_post()
             _mark_post_failed(post_id, error=repr(exc))
         finally:
             render_queue.task_done()

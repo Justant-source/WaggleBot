@@ -1,6 +1,6 @@
 # WaggleBot — 설정 레퍼런스
 
-> **last-verified:** 2026-08-31
+> **last-verified:** 2026-11-22
 > **scope:** settings.py 변수, pipeline.json, scene_policy.json, layout.json, .env — SSOT
 
 ## 설정 파일 구조
@@ -40,10 +40,18 @@ env/
 
 ### TTS 설정
 
+Fish(고품질 TTS) 수명주기는 Flight-Brain의 `atomic_tts` GPU 데몬이 관리한다(2026-11-22 기준: 유휴 10분 또는 Windows X-Plane 실행 시 Fish 정지). WaggleBot은 Fish가 내려가 있으면 게이트(`tts/fish_gate.py`)로 문의·대기한다. 게이트 변수 중 compose가 ai_worker에 전달하는 것은 `ATOMIC_TTS_FISH_GATE_URL`·`FISH_GATE_RECHECK_SEC`·`FISH_GATE_MAX_WAIT_SEC`뿐이며 나머지는 코드 기본값이다. `dashboard_worker`는 `FISH_GATE_ENABLED=0`.
+
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `FISH_SPEECH_URL` | `http://fish-speech:8080` | OpenAudio S1 API (호스트 매핑 포트는 **8082**) |
 | `FISH_SPEECH_TIMEOUT` | `300` | TTS 요청 타임아웃 (초) |
+| `ATOMIC_TTS_FISH_GATE_URL` | `http://172.20.0.1:8100/api/gpu/fish/ensure` | Fish 게이트(Flight-Brain 호스트 서비스 :8100). compose 네트워크 게이트웨이로 도달 확인됨. 대안 `http://host.docker.internal:8100/api/gpu/fish/ensure`(extra_hosts host-gateway), 빈 값=게이트 호출 없이 health만 대기 |
+| `FISH_GATE_ENABLED` | `1` | `0`이면 게이트·대기 로직 전체 비활성(기존 동작) |
+| `FISH_GATE_RECHECK_SEC` | `1800` | blocked/unavailable/미응답 시 게이트 재질의 주기(30분) |
+| `FISH_GATE_MAX_WAIT_SEC` | `86400` | 총 대기 상한(24시간). 초과 시 `FishGateTimeout`→기존 FAILED 경로 |
+| `FISH_GATE_HEARTBEAT_SEC` | `30` | 대기 중 progress heartbeat·Fish health 확인 주기 |
+| `FISH_GATE_START_POLL_SEC` / `FISH_GATE_START_MAX_SEC` | `10` / `360` | `starting` 응답 시 Fish health 폴링 간격/상한 |
 | `FISH_SPEECH_TEMPERATURE` | `0.8` | 생성 다양성 (S1 기본값, ADR-0005) |
 | `FISH_SPEECH_TOP_P` | `0.8` | nucleus sampling |
 | `FISH_SPEECH_REPETITION_PENALTY` | `1.1` | 반복 억제 |

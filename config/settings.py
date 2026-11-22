@@ -289,6 +289,18 @@ def get_llm_constraints_prompt() -> str:
 FISH_SPEECH_URL = os.getenv("FISH_SPEECH_URL", "http://fish-speech:8080")
 FISH_SPEECH_TIMEOUT = 300  # seconds — 대본 600자+(9문장) 전체 합성이 타임아웃을 넘지 않도록 여유 확보
 
+# Fish 게이트 (Flight-Brain GPU 데몬 연동; ai_worker/tts/fish_gate.py)
+# Fish가 내려가 있거나 X-Plane 등으로 막히면 post를 FAILED로 만들지 않고 대기하며 재확인한다.
+# 기본 URL은 compose 네트워크(env_default) 게이트웨이 172.20.0.1 — 호스트 서비스(0.0.0.0:8100)에 도달 확인됨.
+# 빈 문자열이면 게이트 호출 없이 Fish health만으로 대기한다.
+FISH_GATE_URL = os.getenv("ATOMIC_TTS_FISH_GATE_URL", "http://172.20.0.1:8100/api/gpu/fish/ensure")
+FISH_GATE_ENABLED = os.getenv("FISH_GATE_ENABLED", "1") not in ("0", "false", "False", "")
+FISH_GATE_RECHECK_SEC = float(os.getenv("FISH_GATE_RECHECK_SEC", "1800"))      # blocked/미응답 시 재질의 주기(30분)
+FISH_GATE_MAX_WAIT_SEC = float(os.getenv("FISH_GATE_MAX_WAIT_SEC", "86400"))   # 총 대기 상한(24시간) 초과 시 FAILED 경로
+FISH_GATE_HEARTBEAT_SEC = float(os.getenv("FISH_GATE_HEARTBEAT_SEC", "30"))    # 대기 중 진행 heartbeat·health 확인 주기
+FISH_GATE_START_POLL_SEC = float(os.getenv("FISH_GATE_START_POLL_SEC", "10"))  # starting 시 health 폴링 간격
+FISH_GATE_START_MAX_SEC = float(os.getenv("FISH_GATE_START_MAX_SEC", "360"))   # starting 폴링 상한(약 6분)
+
 # 참조 오디오 프리셋 (voices.json v2)
 # {key: {label, ref_dir, file, params}}
 #   ref_dir: assets/voices/ 하위 폴더명 → fish-speech reference_id (폴더 내 NN.wav+NN.lab)
