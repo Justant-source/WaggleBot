@@ -124,6 +124,7 @@ export class CommandHandler {
       }
     });
 
+
     // === Callback queries (inline keyboard) ===
     bot.on("callback_query", this.wrapper.withCallbackAuth(async (query) => {
       await this.handleCallback(query);
@@ -198,6 +199,7 @@ export class CommandHandler {
    * 후속 메시지)까지 전부 처리 — 여기서는 ASM 연결 자체가 실패했을 때만
    * 버튼이 무한 로딩으로 남지 않도록 폴백 응답을 보낸다.
    */
+
   private async forwardMarketingCallback(callbackId: string, data: string): Promise<void> {
     try {
       const res = await fetch(config.asm.callbackUrl, {

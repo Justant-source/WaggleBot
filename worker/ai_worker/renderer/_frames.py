@@ -1625,6 +1625,35 @@ def _render_outro_frame(
                      (arr_cx + arr_r, arr_cy)], fill=pill_cfg.get("send_color", "#C9785A"))
         y = box_y + box_h
 
+        # 2026-09-04: vote_fill SFX 이벤트(director.py 아웃트로 씬)는 있는데 실제로
+        # 그리는 코드가 없었다 — 소리만 나고 화면엔 아무것도 안 나오는 상태였다.
+        # empathy_ratio가 있을 때만(없는 사연이 대부분) 작성자(peach) vs 상대방(sage)
+        # 가로 막대로 표시한다 — X 카드(reply3) 투표바와 같은 색 규칙.
+        empathy = (cfg or {}).get("empathy_ratio") or {}
+        ratio_a = empathy.get("a")
+        ratio_b = empathy.get("b")
+        if isinstance(ratio_a, (int, float)) and isinstance(ratio_b, (int, float)) and (ratio_a + ratio_b) > 0:
+            bar_w = pill_cfg.get("width", 860)
+            bar_h = 16
+            bar_x = (cw - bar_w) // 2
+            bar_y = y + pill_cfg.get("gap_top", 72)
+            total = ratio_a + ratio_b
+            split_x = bar_x + int(bar_w * ratio_a / total)
+            draw.rounded_rectangle([(bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h)],
+                                   radius=bar_h // 2, fill=palette.get("sage", "#5F8F76"))
+            if split_x > bar_x:
+                draw.rounded_rectangle([(bar_x, bar_y), (max(split_x, bar_x + bar_h), bar_y + bar_h)],
+                                       radius=bar_h // 2, fill=palette.get("peach", "#C9785A"))
+            label_font = _load_font(font_dir, "NotoSansKR-Regular.ttf", 28)
+            label_y = bar_y + bar_h + 12
+            draw.text((bar_x, label_y), f"작성자 {ratio_a}%", font=label_font,
+                      fill=palette.get("peach", "#C9785A"))
+            b_text = f"상대방 {ratio_b}%"
+            b_w = int(_font_w(label_font, b_text))
+            draw.text((bar_x + bar_w - b_w, label_y), b_text, font=label_font,
+                      fill=palette.get("sage", "#5F8F76"))
+            y = label_y + 40
+
         dom_fs = domain_cfg.get("font_size", 34)
         dom_font = _load_font(font_dir, "NotoSansKR-Bold.ttf", dom_fs)
         dom_text = "againspring.net"
