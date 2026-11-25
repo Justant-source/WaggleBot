@@ -134,7 +134,7 @@ graph TD
 - **주요 설정:**
   ```
   LLM_DEFAULT_MODEL=claude-haiku-4-5-20251001
-  LLM_REPORT_MODEL=claude-sonnet-4-6
+  LLM_REPORT_MODEL=claude-sonnet-5-5
   LLM_POOL_SIZE=100
   LLM_QUEUE_CAPACITY=500
   ```
@@ -178,7 +178,7 @@ graph TD
   # Flight-Brain atomic_tts GPU 데몬이 수명주기를 관리(유휴 10분 또는 Windows X-Plane 실행 시 정지, 2026-11-22 기준)
   ATOMIC_TTS_FISH_GATE_URL=http://172.20.0.1:8100/api/gpu/fish/ensure
   FISH_GATE_RECHECK_SEC=1800
-  FISH_GATE_MAX_WAIT_SEC=86400
+  FISH_GATE_MAX_WAIT_SEC=3600
   # (FISH_GATE_ENABLED·HEARTBEAT·START_* 는 compose 미전달 — 코드 기본값 사용, 필요 시 환경에 추가)
   COMFYUI_URL=http://comfyui:8188
   VIDEO_GEN_ENABLED=false   (기본값, true로 변경 시 Phase 4.5~7 활성화)
@@ -330,7 +330,6 @@ graph TD
   만료·legacy 거부 등 정책은 ASM이 소유. ASM에는 이 봇 토큰의 `getUpdates`
   poller가 없음(이 컨테이너가 단독 소비, 409 회피) — redrive/ignore 버튼도
   ASM이 직접 Bot API로 전송하고, 클릭 결과만 이 브리지가 중계한다.
-
 ---
 
 ## 볼륨 / 네트워크

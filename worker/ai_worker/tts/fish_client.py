@@ -8,6 +8,7 @@
 import asyncio
 import base64
 import concurrent.futures
+import contextlib
 import hashlib
 import json
 import logging
@@ -60,7 +61,7 @@ from config.settings import (
     VOICE_PRESETS,
     VOICE_REFERENCE_TEXTS,
 )
-from ai_worker.tts.fish_gate import gate as _fish_gate
+from ai_worker.tts.fish_gate import FishGateTimeout, gate as _fish_gate
 from ai_worker.tts.normalizer import normalize_for_tts
 from ai_worker.tts.alignment import transcribe_tts_quality
 from ai_worker.tts.quality import (
@@ -441,53 +442,92 @@ def _concat_wavs(seg_files: list[Path], output_path: Path) -> None:
 # ────────────────────────────────────────────────────────────────
 # HTTP 요청 + 세그먼트 합성
 # ────────────────────────────────────────────────────────────────
+def _gate_lease(why: str):
+    """Fish에 실제 합성 요청을 보내는 구간만 GPU 데몬 임대를 잡는다(게이트 비활성/미지원이면 no-op)."""
+    lease = getattr(_fish_gate, "lease", None)
+    return lease(why) if lease is not None else contextlib.nullcontext()
+
+
+_monotonic = time.monotonic
+
+
+async def _recover_within(deadline: float | None, why: str) -> bool:
+    """recover()를 요청 단위 공유 데드라인 안에서 수행한다. 잔여 시간이 없으면 FishGateTimeout."""
+    if deadline is None:
+        return await _fish_gate.recover(why)
+    remaining = deadline - _monotonic()
+    if remaining <= 0:
+        raise FishGateTimeout(f"Fish 대기 합산 한도 초과 — {why}")
+    try:
+        return await asyncio.wait_for(_fish_gate.recover(why), timeout=remaining)
+    except asyncio.TimeoutError:
+        raise FishGateTimeout(f"Fish 대기 합산 한도 초과 — {why}") from None
+
+
 async def _request_one(client: httpx.AsyncClient, payload: dict) -> bytes:
     """단일 /v1/tts 요청 (5xx/ReadTimeout 재시도 포함). 응답 bytes 반환.
 
     Fish가 중간에 내려가(ConnectError, 또는 최종 ReadTimeout 후 health 실패) 요청이 끊기면
     fish_gate 대기 경로로 들어가 Fish가 다시 올라올 때까지 기다린 뒤 같은 요청을 재시도한다.
-    대기 한도(FISH_GATE_MAX_WAIT_SEC)를 넘으면 FishGateTimeout이 전파된다.
+    대기는 요청 락·GPU 데몬 임대 밖에서 하며(대기 중 임대 유지 금지), 재시도 때 다시 잡는다.
+    대기 합산 한도는 요청 단위로 FISH_GATE_MAX_WAIT_SEC 하나를 공유하며, 넘으면 FishGateTimeout이 전파된다.
     """
-    async with _fish_speech_request_lock():
-        attempt = 0
-        gate_waits = 0  # Fish가 살아 있는데 반복되는 ConnectError 무한 루프 방지
-        while attempt <= _MAX_TTS_RETRIES:
-            try:
-                resp = await client.post(f"{FISH_SPEECH_URL}/v1/tts", json=payload)
-                resp.raise_for_status()
-                return resp.content
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code >= 500 and attempt < _MAX_TTS_RETRIES:
-                    wait = 30 * (attempt + 1)
-                    logger.warning(
-                        "Fish Speech %d (attempt %d/%d) — %d초 후 재시도",
-                        e.response.status_code, attempt + 1, _MAX_TTS_RETRIES + 1, wait,
-                    )
-                    await asyncio.sleep(wait)
-                    attempt += 1
-                else:
-                    raise
-            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError):
-                # 연결 거부뿐 아니라 요청 도중 Fish 컨테이너가 stop되어 연결이 끊긴 경우도 같은 대기 경로로 보낸다
-                gate_waits += 1
-                if gate_waits > 3 or not await _fish_gate.recover("요청 중 연결 실패/끊김"):
-                    raise
-                logger.info("Fish Speech 복구 확인 — 요청 재시도")
-            except httpx.ReadTimeout:
-                if attempt < _MAX_TTS_RETRIES:
-                    logger.warning(
-                        "Fish Speech ReadTimeout (attempt %d/%d) — 즉시 재시도",
-                        attempt + 1, _MAX_TTS_RETRIES + 1,
-                    )
-                    attempt += 1
-                    continue
-                logger.error("Fish Speech ReadTimeout — 최대 재시도(%d) 초과", _MAX_TTS_RETRIES + 1)
-                # Fish가 죽어서 끊긴 경우만 대기 후 재시도한다(살아 있으면 기존대로 실패).
-                gate_waits += 1
-                if gate_waits > 3 or not await _fish_gate.recover("요청 중 ReadTimeout 후 Fish 중단"):
-                    raise
-                attempt = 0
-    raise RuntimeError("unreachable")
+    max_wait = getattr(_fish_gate, "max_wait_sec", None)
+    deadline: float | None = None  # 첫 대기 진입 시점부터 계산
+    attempt = 0
+    gate_waits = 0  # Fish가 살아 있는데 반복되는 ConnectError 무한 루프 방지
+    last_exc: BaseException | None = None
+    while True:
+        recover_why: str | None = None
+        async with _fish_speech_request_lock():
+            async with _gate_lease("tts"):
+                while attempt <= _MAX_TTS_RETRIES:
+                    try:
+                        resp = await client.post(f"{FISH_SPEECH_URL}/v1/tts", json=payload)
+                        resp.raise_for_status()
+                        return resp.content
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code >= 500 and attempt < _MAX_TTS_RETRIES:
+                            wait = 30 * (attempt + 1)
+                            logger.warning(
+                                "Fish Speech %d (attempt %d/%d) — %d초 후 재시도",
+                                e.response.status_code, attempt + 1, _MAX_TTS_RETRIES + 1, wait,
+                            )
+                            await asyncio.sleep(wait)
+                            attempt += 1
+                        else:
+                            raise
+                    except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError) as exc:
+                        # 연결 거부뿐 아니라 요청 도중 Fish 컨테이너가 stop되어 연결이 끊긴 경우도 같은 대기 경로로 보낸다
+                        last_exc = exc
+                        recover_why = "요청 중 연결 실패/끊김"
+                        break
+                    except httpx.ReadTimeout as exc:
+                        if attempt < _MAX_TTS_RETRIES:
+                            logger.warning(
+                                "Fish Speech ReadTimeout (attempt %d/%d) — 즉시 재시도",
+                                attempt + 1, _MAX_TTS_RETRIES + 1,
+                            )
+                            attempt += 1
+                            continue
+                        logger.error("Fish Speech ReadTimeout — 최대 재시도(%d) 초과", _MAX_TTS_RETRIES + 1)
+                        # Fish가 죽어서 끊긴 경우만 대기 후 재시도한다(살아 있으면 기존대로 실패).
+                        last_exc = exc
+                        recover_why = "요청 중 ReadTimeout 후 Fish 중단"
+                        break
+        if recover_why is None:
+            raise RuntimeError("unreachable")
+        # 락·임대 밖에서 대기한다. 살아 있었으면(False) 원 오류를 다시 일으키기 위해 마지막 예외를 재전파.
+        gate_waits += 1
+        if gate_waits > 3:
+            raise last_exc
+        if deadline is None and max_wait:
+            deadline = _monotonic() + float(max_wait)
+        if not await _recover_within(deadline, recover_why):
+            raise last_exc
+        if recover_why.startswith("요청 중 ReadTimeout"):
+            attempt = 0
+        logger.info("Fish Speech 복구 확인 — 요청 재시도")
 
 
 async def _synthesize_segment(
@@ -747,7 +787,7 @@ async def _warmup_model() -> None:
         _warmup_done = True
         return
 
-    async with _fish_speech_request_lock():
+    async with _fish_speech_request_lock(), _gate_lease("tts-warmup"):
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
             # 센티널 유효: 저비용 프로브 1회
             if sentinel_valid:

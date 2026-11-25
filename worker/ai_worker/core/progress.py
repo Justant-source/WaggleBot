@@ -5,7 +5,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from ai_worker.core.runtime_state import delete_runtime_state, get_runtime_state, put_runtime_state
+from ai_worker.core.runtime_state import (
+    delete_runtime_state, get_runtime_state, put_runtime_state, touch_runtime_heartbeat,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,7 @@ def stamp_progress(
         "phase_started_at": started_at,
         "updated_at": now,
         "last_heartbeat_at": now,
+        "stamped_at": now,  # stamp_progress 호출 시각만 (touch_heartbeat는 갱신 안 함) — 정체 판정 기준
         "done": done,
     }
     if scenes_done is not None:
@@ -36,6 +39,40 @@ def stamp_progress(
     if total_scenes is not None:
         progress["total_scenes"] = total_scenes
     put_runtime_state(post_id, "progress", progress)
+
+
+def touch_heartbeat(post_id: int) -> bool:
+    """Mark the worker as alive for this post without changing phase/label."""
+    return touch_runtime_heartbeat(post_id, "progress")
+
+
+def phase_stalled(state: dict[str, Any] | None, now: datetime, stall_sec: float) -> bool:
+    """진행 표시(stamp)가 stall_sec를 *초과*해 멈춘 phase인지.
+
+    stamped_at 없음(레거시 행)·done=True(큐 대기)·파싱 불가는 정체로 보지 않는다(보수적).
+    now/stamped_at 은 naive면 UTC로 간주한다.
+    """
+    if not state or state.get("done") or stall_sec <= 0:
+        return False
+    raw = state.get("stamped_at")
+    if not isinstance(raw, str) or not raw:
+        return False
+    try:
+        stamped = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return (now - stamped).total_seconds() > stall_sec
+
+
+def touch_heartbeat_unless_stalled(post_id: int, stall_sec: float) -> str:
+    """정체되지 않았을 때만 하트비트를 갱신. 반환: 'touched' | 'stalled' | 'missing'."""
+    if phase_stalled(get_runtime_state(post_id, "progress"), datetime.now(timezone.utc), stall_sec):
+        return "stalled"
+    return "touched" if touch_heartbeat(post_id) else "missing"
 
 
 def load_render_checkpoint(post_id: int) -> dict[str, Any] | None:

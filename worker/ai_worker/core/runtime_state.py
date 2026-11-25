@@ -78,3 +78,30 @@ def delete_runtime_state(post_id: int, state_key: str) -> bool:
     except Exception:
         logger.warning("[runtime-state] delete failed post_id=%d key=%s", post_id, state_key, exc_info=True)
         return False
+
+
+def touch_runtime_heartbeat(post_id: int, state_key: str = "progress") -> bool:
+    """Refresh only the heartbeat timestamps of an existing state row (atomic JSON_SET).
+
+    단계/문구(phase_name 등)는 건드리지 않으므로 stamp_progress와 경쟁해도 라벨이 되돌려지지 않는다.
+    행이 없으면 아무것도 하지 않는다(False).
+    """
+    try:
+        from datetime import datetime, timezone
+
+        from db.session import SessionLocal
+
+        now = datetime.now(timezone.utc).isoformat()
+        with SessionLocal() as db:
+            result = db.execute(text("""
+                UPDATE content_runtime_state rs
+                JOIN contents c ON c.id = rs.content_id
+                SET rs.state_value = JSON_SET(rs.state_value,
+                        '$.last_heartbeat_at', :now, '$.updated_at', :now)
+                WHERE c.post_id = :post_id AND rs.state_key = :state_key
+            """), {"now": now, "post_id": post_id, "state_key": state_key})
+            db.commit()
+            return bool(result.rowcount)
+    except Exception:
+        logger.warning("[runtime-state] heartbeat touch failed post_id=%d", post_id, exc_info=True)
+        return False

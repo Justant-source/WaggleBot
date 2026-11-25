@@ -12,13 +12,13 @@
 3. 8-Phase 실행 (`content_processor.py`)
 4. 성공 → `PREVIEW_RENDERED` / `RENDERED`
 5. 실패 → `FAILED`, `retry_count++`, `MAX_RETRY_COUNT=3` 초과 시 영구 FAILED
-6. **하트비트**: 각 Phase 경계에서 `posts.updated_at`와 `content_runtime_state(progress).last_heartbeat_at`을 갱신한다. 진행률·Phase 7 체크포인트·SLA·품질 진단은 키별 원자적 upsert라 장시간 렌더 세션과 충돌하지 않는다.
+6. **하트비트**: 워커가 소유한 post(LLM+TTS → 렌더 큐 대기 → 렌더)는 `_heartbeat_loop`가 `HEARTBEAT_INTERVAL_SEC`(30s)마다 `last_heartbeat_at`·`updated_at`만 원자적으로 갱신한다(`touch_runtime_heartbeat`, JSON_SET — 단계/문구 불변). 큐·GPU 락 대기, 렌더 중에도 '살아있음'이 보인다. 단, 같은 phase에서 진행 표시(`progress.stamped_at` — `stamp_progress`만 갱신, Fish 대기 라벨 stamp 포함)가 `PHASE_STALL_SEC`(기본 7200s)를 넘으면 해당 post의 하트비트 갱신을 멈추고 경고 로그만 남긴다(`done=true` 큐 대기·`stamped_at` 없는 레거시 행은 제외; 소유 코루틴은 취소하지 않으며 inflight는 회수 대상에서도 계속 제외). 소유자 없는 고착 PROCESSING은 `_stale_reclaim_loop`/시작 시 `reclaim_stuck_posts`가 회수한다([shared/60-runtime.md](../shared/60-runtime.md)). APPROVED 폴링의 DB 오류는 로그 후 다음 주기에 재시도한다(워커 태스크 종료 방지). Phase 경계에서도 `posts.updated_at`와 `content_runtime_state(progress).last_heartbeat_at`을 갱신한다. 진행률·Phase 7 체크포인트·SLA·품질 진단은 키별 원자적 upsert라 장시간 렌더 세션과 충돌하지 않는다.
 
 렌더 단계는 진행률을 별도 세션으로 저장한 직후 기존 읽기 트랜잭션을 종료하고 최신 `contents` 행을 다시 읽는다. 마케팅 deadline 상태 저장이 같은 행의 오래된 스냅샷을 커밋해 MariaDB errno 1020으로 렌더를 실패시키는 것을 방지한다.
 
 기존 `contents.pipeline_state`는 롤링 업그레이드 중 읽기 폴백만 유지한다.
 
-**Fish 게이트 대기:** Fish 수명주기는 Flight-Brain `atomic_tts` GPU 데몬이 관리한다(유휴 10분 또는 Windows X-Plane 실행 시 Fish 정지, 2026-11-22 기준). `_llm_tts_worker`는 TTS 직전 Fish health가 실패하면 `fish_gate`로 문의·대기하며(blocked/미응답은 30분 재질의, 30초 heartbeat) post를 FAILED로 만들지 않는다. 대기 중 GPU 락을 쥐므로 뒤 post·렌더도 함께 대기하고, 총 24시간(`FISH_GATE_MAX_WAIT_SEC`) 초과 시에만 위 FAILED 경로를 탄다. 실패 경로(`main.py`)는 `fish_gate.unbind_post()`로 바인딩을 해제한다. 상세는 [pipeline.md Phase 5](30-components/pipeline.md).
+**Fish 게이트 대기:** Fish 수명주기는 Flight-Brain `atomic_tts` GPU 데몬이 관리한다(유휴 10분 또는 Windows X-Plane 실행 시 Fish 정지, 2026-11-22 기준). `_llm_tts_worker`는 TTS 직전 Fish health가 실패하면 `fish_gate`로 문의·대기하며(blocked/미응답은 30분 재질의, 30초 heartbeat) post를 FAILED로 만들지 않는다. 대기 중 GPU 락을 쥐므로 뒤 post·렌더도 함께 대기하고, 총 1시간(`FISH_GATE_MAX_WAIT_SEC`, 요청 단위 합산) 초과 시에만 위 FAILED 경로를 탄다. GPU 데몬 임대는 실제 `/v1/tts` 요청 구간에만 잡고 recover 대기 중에는 풀어둔다. 바인딩은 `try/finally`에서 `fish_gate.unbind_post(post_id)`로 해제하며(post_id가 일치할 때만 해제 — Phase 5와 Phase 8 렌더 스레드가 겹쳐도 남의 바인딩을 지우지 않음), `_with_phase_heartbeat`의 progress 갱신 실패는 로그만 남기고 본 작업을 가리지 않는다. 실패 경로(`main.py`)도 `unbind_post()`를 호출한다. **Fish 차단 보류·재큐:** `_llm_tts_worker`는 APPROVED를 집기 전에 `fish_gate.blocked_reason()`을 확인해 blocked면 post를 집지 않고(PROCESSING·gpu_lock·retry_count 보존) `max(AI_POLL_INTERVAL, FISH_GATE_MIN_RECHECK_SEC)` 대기 후 재확인한다(상태 변화 시에만 INFO 로그; 게이트 비활성·예외·unavailable은 fail-open). LLM 단계도 함께 보류한다(단순성 우선). 처리 중 Phase 5 게이트 대기가 `FISH_GATE_REQUEUE_AFTER_SEC`(기본 600s)를 넘고 여전히 blocked면 `_run_llm_tts_supervised`가 처리 태스크를 취소하고 `retry_count`를 시작 전 값으로 복원한 채 APPROVED로 재큐한다(대본은 재생성될 수 있음, TTS 캐시 재사용). 상세는 [pipeline.md Phase 5](30-components/pipeline.md).
 
 ## Again Spring 마케팅 고속 경로
 

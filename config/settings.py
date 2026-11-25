@@ -68,6 +68,11 @@ AI_POLL_INTERVAL = int(os.getenv("AI_POLL_INTERVAL", "10"))
 # CUDA 세마포어 동시성 제한 (2막 TTS+VIDEO 병렬 실행 시 2로 전환 가능, 기본 1 = 순차)
 CUDA_CONCURRENCY = int(os.getenv("CUDA_CONCURRENCY", "1"))
 MAX_RETRY_COUNT = int(os.getenv("MAX_RETRY_COUNT", "3"))
+# PROCESSING 고착 회수: 워커 하트비트/갱신이 이 시간(분) 넘게 없으면 회수 (재시작 시는 즉시 회수)
+STALE_PROCESSING_MINUTES = int(os.getenv("STALE_PROCESSING_MINUTES", "30"))
+# 인플라이트 항목 하트비트 갱신 주기(초) / 고착 회수 점검 주기(초)
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "30"))
+STALE_SCAN_INTERVAL_SEC = int(os.getenv("STALE_SCAN_INTERVAL_SEC", "60"))
 # ---------------------------------------------------------------------------
 # LLM Worker (Claude CLI bridge)
 # ---------------------------------------------------------------------------
@@ -296,10 +301,20 @@ FISH_SPEECH_TIMEOUT = 300  # seconds — 대본 600자+(9문장) 전체 합성�
 FISH_GATE_URL = os.getenv("ATOMIC_TTS_FISH_GATE_URL", "http://172.20.0.1:8100/api/gpu/fish/ensure")
 FISH_GATE_ENABLED = os.getenv("FISH_GATE_ENABLED", "1") not in ("0", "false", "False", "")
 FISH_GATE_RECHECK_SEC = float(os.getenv("FISH_GATE_RECHECK_SEC", "1800"))      # blocked/미응답 시 재질의 주기(30분)
-FISH_GATE_MAX_WAIT_SEC = float(os.getenv("FISH_GATE_MAX_WAIT_SEC", "86400"))   # 총 대기 상한(24시간) 초과 시 FAILED 경로
+FISH_GATE_MAX_WAIT_SEC = float(os.getenv("FISH_GATE_MAX_WAIT_SEC", "3600"))    # 총 대기 상한(1시간) 초과 시 FAILED 경로
 FISH_GATE_HEARTBEAT_SEC = float(os.getenv("FISH_GATE_HEARTBEAT_SEC", "30"))    # 대기 중 진행 heartbeat·health 확인 주기
 FISH_GATE_START_POLL_SEC = float(os.getenv("FISH_GATE_START_POLL_SEC", "10"))  # starting 시 health 폴링 간격
 FISH_GATE_START_MAX_SEC = float(os.getenv("FISH_GATE_START_MAX_SEC", "360"))   # starting 폴링 상한(약 6분)
+FISH_GATE_MIN_RECHECK_SEC = float(os.getenv("FISH_GATE_MIN_RECHECK_SEC", "30"))  # blocked retry_after_sec 하한
+FISH_LEASE_URL = os.getenv(
+    "FISH_LEASE_URL", FISH_GATE_URL[: -len("/ensure")] + "/lease" if FISH_GATE_URL.endswith("/ensure") else "",
+)  # atomic_tts GPU 데몬 Fish 임대 base(/lease, /lease/heartbeat, /lease/release)
+FISH_LEASE_ENABLED = os.getenv("FISH_LEASE_ENABLED", "1") not in ("0", "false", "False", "")
+FISH_LEASE_HEARTBEAT_SEC = float(os.getenv("FISH_LEASE_HEARTBEAT_SEC", "30"))  # 임대 heartbeat 간격(ttl 90초)
+# Fish가 blocked인데도 Phase 5 게이트 대기가 이 시간(초)을 넘으면 retry_count 불변으로 APPROVED 재큐(락·PROCESSING 해제)
+FISH_GATE_REQUEUE_AFTER_SEC = float(os.getenv("FISH_GATE_REQUEUE_AFTER_SEC", "600"))
+# 같은 phase에서 진행 표시(stamp)가 이 시간(초) 넘게 없으면 inflight 하트비트 갱신 중단(경고 로그)
+PHASE_STALL_SEC = float(os.getenv("PHASE_STALL_SEC", "7200"))
 
 # 참조 오디오 프리셋 (voices.json v2)
 # {key: {label, ref_dir, file, params}}

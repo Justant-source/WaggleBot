@@ -107,6 +107,7 @@ class GPUMemoryManager:
             return
 
         model_key = f"{model_type.value}_{model_name}"
+        before_stats = self.get_memory_stats()  # 진입부 예외 시에도 finally 로그가 UnboundLocalError로 원인을 가리지 않게 선초기화
 
         try:
             # === 진입: 메모리 확보 ===

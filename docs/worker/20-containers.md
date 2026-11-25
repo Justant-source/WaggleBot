@@ -33,6 +33,11 @@ env/
 | `AI_POLL_INTERVAL` | `10` | APPROVED 게시글 폴링 간격 (초) |
 | `CUDA_CONCURRENCY` | `1` | CUDA 세마포어 동시성 (TTS+VIDEO 병렬 시 2) |
 | `MAX_RETRY_COUNT` | `3` | 파이프라인 최대 재시도 횟수 |
+| `STALE_PROCESSING_MINUTES` | `30` | 무활동 PROCESSING 고착 회수 기준(분). 워커 재시작 시는 즉시 회수 |
+| `HEARTBEAT_INTERVAL_SEC` | `30` | 소유 중 post 하트비트 갱신 주기(초) |
+| `STALE_SCAN_INTERVAL_SEC` | `60` | 고착 PROCESSING 점검 주기(초) |
+| `PHASE_STALL_SEC` | `7200` | 같은 phase에서 진행 stamp가 이 시간 넘게 없으면 inflight 하트비트 갱신 중단(경고) |
+| `FISH_GATE_REQUEUE_AFTER_SEC` | `600` | Fish blocked 상태 Phase 5 대기가 이 시간 넘으면 retry_count 유지한 채 APPROVED 재큐 |
 | `LLM_WORKER_URL` | `http://llm-worker:8090` | LLM 게이트웨이 주소 |
 | `DEFAULT_LLM_MODEL` | `haiku` | 기본 LLM 모델 별칭 |
 | `MEDIA_DIR` | `assets/media` | 미디어 파일 루트 |
@@ -48,8 +53,11 @@ Fish(고품질 TTS) 수명주기는 Flight-Brain의 `atomic_tts` GPU 데몬이 �
 | `FISH_SPEECH_TIMEOUT` | `300` | TTS 요청 타임아웃 (초) |
 | `ATOMIC_TTS_FISH_GATE_URL` | `http://172.20.0.1:8100/api/gpu/fish/ensure` | Fish 게이트(Flight-Brain 호스트 서비스 :8100). compose 네트워크 게이트웨이로 도달 확인됨. 대안 `http://host.docker.internal:8100/api/gpu/fish/ensure`(extra_hosts host-gateway), 빈 값=게이트 호출 없이 health만 대기 |
 | `FISH_GATE_ENABLED` | `1` | `0`이면 게이트·대기 로직 전체 비활성(기존 동작) |
-| `FISH_GATE_RECHECK_SEC` | `1800` | blocked/unavailable/미응답 시 게이트 재질의 주기(30분) |
-| `FISH_GATE_MAX_WAIT_SEC` | `86400` | 총 대기 상한(24시간). 초과 시 `FishGateTimeout`→기존 FAILED 경로 |
+| `FISH_GATE_RECHECK_SEC` | `1800` | blocked/unavailable/미응답 시 게이트 재질의 주기(30분). blocked 응답의 `retry_after_sec`가 있으면 `[FISH_GATE_MIN_RECHECK_SEC, RECHECK_SEC]`로 클램프해 그 간격을 따른다 |
+| `FISH_GATE_MIN_RECHECK_SEC` | `30` | `retry_after_sec` 하한 |
+| `FISH_LEASE_URL` | `<ATOMIC_TTS_FISH_GATE_URL에서 /ensure를 뗀 값>/lease` (`http://172.20.0.1:8100/api/gpu/fish/lease`) | Fish 임대 API base(`POST` base·`/heartbeat`·`/release`). `fish_gate.lease(why)`가 Fish를 실제로 쓰는 동안만 임대(ttl 90초)를 잡으며, 실패해도 TTS는 막히지 않는다 |
+| `FISH_LEASE_ENABLED` / `FISH_LEASE_HEARTBEAT_SEC` | `1` / `30` | 임대 기능 on/off, heartbeat 간격. `FISH_GATE_ENABLED=0`이면 임대도 no-op |
+| `FISH_GATE_MAX_WAIT_SEC` | `3600` | 총 대기 상한(1시간, 요청 단위 합산). 초과 시 `FishGateTimeout`→기존 FAILED 경로 |
 | `FISH_GATE_HEARTBEAT_SEC` | `30` | 대기 중 progress heartbeat·Fish health 확인 주기 |
 | `FISH_GATE_START_POLL_SEC` / `FISH_GATE_START_MAX_SEC` | `10` / `360` | `starting` 응답 시 Fish health 폴링 간격/상한 |
 | `FISH_SPEECH_TEMPERATURE` | `0.8` | 생성 다양성 (S1 기본값, ADR-0005) |
@@ -180,7 +188,6 @@ whispering→`(whispering)`, neutral→`""`, friendly→`(relaxed)`, surprised�
 |------|--------|--------|------|
 | `config.asm.callbackUrl` | `ASM_TELEGRAM_CALLBACK_URL` | `http://100.115.252.61:8200/api/v1/telegram/callback` | ASM(Again-Spring-Marketing) 콜백 수신 엔드포인트 (Tailscale) |
 | `config.asm.bearerToken` | `ASM_BEARER_TOKEN` | (빈 문자열) | ASM 콜백 요청 인증 토큰 |
-
 > `redrive:`/`ignore:` 접두사 `callback_query`만 이 URL로 raw `data` 문자열째 전달(필드 수·형식 미해석).
 > ASM이 idempotency·만료·legacy(4-field) 거부·`answerCallbackQuery`·후속 메시지를 전부 소유 — telegram-bridge는 순수 forwarder.
 > ASM 연결 실패(non-2xx·타임아웃) 시에만 브리지가 폴백으로 `answerCallbackQuery` 응답(버튼 무한 로딩 방지).

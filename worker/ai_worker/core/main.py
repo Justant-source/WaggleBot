@@ -16,7 +16,10 @@ from sqlalchemy import case
 
 from ai_worker.core.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
 from ai_worker.tts.fish_gate import gate as fish_gate
-from config.settings import AI_POLL_INTERVAL, CUDA_CONCURRENCY
+from config.settings import (
+    AI_POLL_INTERVAL, CUDA_CONCURRENCY, FISH_GATE_MIN_RECHECK_SEC, FISH_GATE_REQUEUE_AFTER_SEC,
+    HEARTBEAT_INTERVAL_SEC, PHASE_STALL_SEC, STALE_SCAN_INTERVAL_SEC,
+)
 from db.models import Post, Content, PostStatus
 from db.session import SessionLocal, init_db
 
@@ -31,6 +34,7 @@ def _classify_failure(error: str) -> tuple[str, str, bool]:
 
     Failure codes:
       - INFRA_DB_CONFLICT: Database concurrency conflict (retry-able)
+      - INFRA_DB_DISCONNECT: MySQL connection lost / server has gone away (retry-able)
       - INFRA_TIMEOUT: Phase timeout (retry-able)
       - INFRA_OOM: Out of memory (retry-able)
       - INFRA_GPU_UNAVAILABLE: GPU not available (retry-able)
@@ -49,6 +53,9 @@ def _classify_failure(error: str) -> tuple[str, str, bool]:
     # Infrastructure errors (retryable)
     if "record has changed since last read" in lower or "(1020)" in lower:
         return "INFRA_DB_CONFLICT", "runtime_state", True
+    if ("server has gone away" in lower or "lost connection to" in lower
+            or "(2006" in lower or "(2013" in lower):
+        return "INFRA_DB_DISCONNECT", "runtime_state", True
     if "timeout" in lower or "timed out" in lower:
         return "INFRA_TIMEOUT", "render", True
     if "out of memory" in lower or "oom" in lower or ("cuda" in lower and "memory" in lower):
@@ -119,24 +126,75 @@ def _mark_post_declined(post_id: int, reason: str = "") -> None:
 
 
 def _recover_stuck_posts() -> None:
-    """시작 시 PROCESSING 상태로 고착된 포스트를 APPROVED로 복구한다."""
-    with SessionLocal() as session:
-        stuck = (
-            session.query(Post)
-            .filter(Post.status == PostStatus.PROCESSING)
-            .all()
-        )
-        if not stuck:
-            return
-        for post in stuck:
-            post.status = PostStatus.APPROVED
-            post.last_error = None
-            logger.warning(
-                "🔄 고착 포스트 복구: post_id=%d → APPROVED (이전 상태: PROCESSING)",
-                post.id,
+    """시작 시 PROCESSING 고착 포스트를 회수한다 (재시도 소진 시 FAILED, 아니면 APPROVED)."""
+    from ai_worker.core.recovery import reclaim_stuck_posts
+
+    result = reclaim_stuck_posts(startup=True)
+    if result["requeued"] or result["failed"]:
+        logger.info("✅ 시작 시 고착 회수: APPROVED %d건, FAILED %d건",
+                    len(result["requeued"]), len(result["failed"]))
+
+
+# 이 프로세스가 현재 소유(LLM+TTS → 렌더 큐 → 렌더)한 PROCESSING post id.
+# 하트비트 대상이자 주기적 고착 회수의 제외 대상. 단일 이벤트 루프 스레드에서만 변경한다.
+_inflight_post_ids: set[int] = set()
+
+
+_stall_warned: set[int] = set()
+
+
+async def _heartbeat_loop() -> None:
+    """소유 중인 post의 progress 하트비트를 주기 갱신 (큐/락 대기·렌더 중에도 '살아있음' 표시).
+
+    같은 phase에서 진행 표시(stamp)가 PHASE_STALL_SEC 넘게 없으면 갱신을 멈추고 경고만 남긴다
+    (코루틴 취소·상태 변경은 하지 않는다 — 소유 프로세스가 아직 실행 중일 수 있음).
+    """
+    from ai_worker.core.progress import touch_heartbeat_unless_stalled
+
+    shutdown_event = get_shutdown_event()
+    loop = asyncio.get_running_loop()
+    while not is_shutting_down():
+        live = set(_inflight_post_ids)
+        _stall_warned.intersection_update(live)
+        for pid in list(live):
+            try:
+                outcome = await loop.run_in_executor(None, touch_heartbeat_unless_stalled, pid, PHASE_STALL_SEC)
+            except Exception:
+                logger.warning("하트비트 갱신 실패: post_id=%d", pid, exc_info=True)
+                continue
+            if outcome == "stalled":
+                if pid not in _stall_warned:
+                    _stall_warned.add(pid)
+                    logger.warning(
+                        "⚠️ 단계 정체: post_id=%d — 진행 표시가 %.0f초 넘게 없어 하트비트 갱신 중단 "
+                        "(처리 코루틴은 취소하지 않음)", pid, PHASE_STALL_SEC,
+                    )
+            else:
+                _stall_warned.discard(pid)
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=HEARTBEAT_INTERVAL_SEC)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def _stale_reclaim_loop() -> None:
+    """소유자 없이 오래 방치된 PROCESSING(DB 끊김으로 FAILED 마킹 실패 등)을 주기적으로 회수."""
+    from ai_worker.core.recovery import reclaim_stuck_posts
+
+    shutdown_event = get_shutdown_event()
+    loop = asyncio.get_running_loop()
+    while not is_shutting_down():
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=STALE_SCAN_INTERVAL_SEC)
+            break
+        except asyncio.TimeoutError:
+            pass
+        try:
+            await loop.run_in_executor(
+                None, lambda: reclaim_stuck_posts(exclude_ids=set(_inflight_post_ids))
             )
-        session.commit()
-        logger.info("✅ %d건의 고착 포스트를 APPROVED로 복구 완료", len(stuck))
+        except Exception:
+            logger.warning("고착 회수 점검 실패 (다음 주기에 재시도)", exc_info=True)
 
 
 # CUDA 리소스를 직렬화하는 세마포어 (LLM + TTS 는 순차 실행)
@@ -171,6 +229,101 @@ def _post_priority(post: Post) -> int:
     return 0 if post.site_code == "again_spring" else 1
 
 
+# ---------------------------------------------------------------------------
+# Fish 차단 시 보류·재큐
+# ---------------------------------------------------------------------------
+
+_fish_hold_reason: str | None = None
+
+
+async def _fish_hold_check() -> str | None:
+    """Fish가 blocked면 사유, 아니면 None. 게이트 비활성·예외·unavailable은 None(fail-open).
+
+    상태가 바뀔 때만 INFO 로그(반복 로그 폭주 방지).
+    """
+    global _fish_hold_reason
+    try:
+        reason = await fish_gate.blocked_reason()
+    except Exception:
+        logger.debug("Fish 차단 확인 실패 — 진행(fail-open)", exc_info=True)
+        reason = None
+    if reason != _fish_hold_reason:
+        if reason:
+            logger.info("⏸ Fish 차단 중 — APPROVED 집기 보류: %s", reason)
+        else:
+            logger.info("▶ Fish 차단 해제 — APPROVED 처리 재개")
+        _fish_hold_reason = reason
+    return reason
+
+
+class _FishRequeued(Exception):
+    """Fish 차단이 길어져 retry_count 소모 없이 APPROVED로 되돌렸다."""
+
+
+def _requeue_without_retry(post_id: int, retry_before: int, note: str) -> bool:
+    """PROCESSING → APPROVED, retry_count를 처리 시작 전 값으로 복원 (status 조건부 UPDATE)."""
+    with SessionLocal() as session:
+        changed = (
+            session.query(Post)
+            .filter(Post.id == post_id, Post.status == PostStatus.PROCESSING)
+            .update(
+                {Post.status: PostStatus.APPROVED, Post.retry_count: retry_before, Post.last_error: note[:1000]},
+                synchronize_session=False,
+            )
+        )
+        session.commit()
+    return bool(changed)
+
+
+async def _run_llm_tts_supervised(
+    processor, post_id: int, *, requeue_after: float = FISH_GATE_REQUEUE_AFTER_SEC,
+    check_interval: float = 30.0, clock=None,
+):
+    """llm_tts_stage 실행 중 Fish 게이트 대기가 requeue_after초를 넘고 여전히 blocked면 취소·재큐.
+
+    취소 지점은 fish_gate 대기 라벨이 있을 때(= 게이트 대기 루프 안)뿐이다.
+    재큐 시 _FishRequeued를 던진다(호출부는 락을 풀고 다음 post/보류로 진행).
+    """
+    import time
+
+    clock = clock or time.monotonic
+    with SessionLocal() as session:
+        row = session.query(Post.retry_count).filter(Post.id == post_id).first()
+    retry_before = int((row[0] if row else 0) or 0)
+
+    task = asyncio.ensure_future(processor.llm_tts_stage(post_id))
+    waiting_since: float | None = None
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=check_interval)
+            if done:
+                return task.result()
+            if fish_gate.wait_label(post_id) is None:
+                waiting_since = None
+                continue
+            now = clock()
+            if waiting_since is None:
+                waiting_since = now
+            if now - waiting_since < requeue_after:
+                continue
+            reason = await _fish_hold_check()
+            if not reason:
+                continue
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            fish_gate.unbind_post(post_id)
+            _requeue_without_retry(
+                post_id, retry_before,
+                f"Fish 차단({reason})으로 {int(now - waiting_since)}초 대기 → APPROVED 재큐(재시도 횟수 유지)",
+            )
+            logger.warning("↩ Fish 차단 지속 — APPROVED 재큐(retry_count 유지=%d): post_id=%d | %s",
+                           retry_before, post_id, reason)
+            raise _FishRequeued(reason)
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+
+
 async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
     """APPROVED 게시글을 폴링해 LLM+TTS 처리 후 render_queue에 적재."""
     from ai_worker.core.processor import RobustProcessor
@@ -181,15 +334,26 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
 
     while not is_shutting_down():
         post_id: int | None = None
-        with SessionLocal() as session:
-            post = (
-                session.query(Post)
-                .filter(Post.status == PostStatus.APPROVED)
-                .order_by(case((Post.site_code == "again_spring", 0), else_=1), Post.created_at.asc())
-                .first()
-            )
-            if post is not None:
-                post_id = post.id
+        post_site: str | None = None
+        try:
+            with SessionLocal() as session:
+                post = (
+                    session.query(Post)
+                    .filter(Post.status == PostStatus.APPROVED)
+                    .order_by(case((Post.site_code == "again_spring", 0), else_=1), Post.created_at.asc())
+                    .first()
+                )
+                if post is not None:
+                    post_id = post.id
+                    post_site = post.site_code
+        except Exception:
+            # DB 끊김 등 일시 오류로 워커 태스크 전체가 죽지 않게 한다 (프로세스 종료 → 재시작 루프 방지).
+            logger.warning("APPROVED 폴링 실패 — 다음 주기에 재시도", exc_info=True)
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=max(AI_POLL_INTERVAL, 5))
+            except asyncio.TimeoutError:
+                pass
+            continue
 
         if post_id is None:
             # 셧다운 이벤트 또는 폴링 타임아웃 대기
@@ -201,8 +365,21 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
                 pass
             continue
 
+        # Fish가 blocked면 post를 집지 않는다(PROCESSING·gpu_lock·retry_count 보존).
+        # LLM 대본 단계는 Fish가 불필요하지만, 대본 후 TTS에서 어차피 막혀 락을 쥐게 되므로
+        # 단순함을 우선해 전부 보류한다. 게이트 비활성/예외/unavailable이면 None → 기존대로 진행.
+        if await _fish_hold_check():
+            try:
+                await asyncio.wait_for(
+                    shutdown_event.wait(), timeout=max(AI_POLL_INTERVAL, FISH_GATE_MIN_RECHECK_SEC),
+                )
+            except asyncio.TimeoutError:
+                pass
+            continue
+
         # GPU 작업: LLM + TTS (gpu_lock으로 렌더 Phase 7과 직렬화)
         result = None
+        _inflight_post_ids.add(post_id)
         if gpu_lock.locked():
             logger.info(
                 "⏳ GPU 사용 중 (렌더링/비디오 생성) — LLM+TTS 대기: post_id=%d", post_id
@@ -210,22 +387,26 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
         async with gpu_lock:
             async with cuda_sem:
                 try:
-                    script, audio_path = await processor.llm_tts_stage(post_id)
+                    script, audio_path = await _run_llm_tts_supervised(processor, post_id)
                     result = (post_id, script, audio_path)
+                except _FishRequeued:
+                    _inflight_post_ids.discard(post_id)
                 except Exception as exc:
                     from ai_worker.llm.transport import LLMContentRefusalError
                     if isinstance(exc, LLMContentRefusalError):
                         logger.warning("LLM 콘텐츠 거부: post_id=%d | %s", post_id, exc)
                         _mark_post_declined(post_id, reason=str(exc))
+                        _inflight_post_ids.discard(post_id)
                     else:
                         logger.exception("LLM+TTS 실패: post_id=%d", post_id)
                         fish_gate.unbind_post()
                         _mark_post_failed(post_id, error=repr(exc))
+                        _inflight_post_ids.discard(post_id)
                     await asyncio.sleep(5)
 
         # gpu_lock 해제 후 큐 적재 (데드락 방지: 큐 만석 시 render_worker가 lock 필요)
         if result is not None:
-            await render_queue.put((_post_priority(post), datetime.now(timezone.utc).timestamp(), *result))
+            await render_queue.put((0 if post_site == "again_spring" else 1, datetime.now(timezone.utc).timestamp(), *result))
             logger.info("LLM+TTS 완료, 렌더 큐 적재: post_id=%d (큐 크기=%d)",
                         post_id, render_queue.qsize())
 
@@ -267,6 +448,7 @@ async def _render_worker(render_queue: asyncio.PriorityQueue) -> None:
             fish_gate.unbind_post()
             _mark_post_failed(post_id, error=repr(exc))
         finally:
+            _inflight_post_ids.discard(post_id)
             render_queue.task_done()
 
     logger.info("🛑 _render_worker 종료")
@@ -351,6 +533,7 @@ def _drain_render_queue(render_queue: asyncio.PriorityQueue) -> None:
     while not render_queue.empty():
         try:
             _priority, _queued_at, post_id, _script, _audio = render_queue.get_nowait()
+            _inflight_post_ids.discard(post_id)
             with SessionLocal() as session:
                 post = session.query(Post).filter_by(id=post_id).first()
                 if post is not None and post.status == PostStatus.PROCESSING:
@@ -386,6 +569,8 @@ async def _main_loop() -> None:
             _llm_tts_worker(render_queue),
             _render_worker(render_queue),
             _upload_loop(),
+            _heartbeat_loop(),
+            _stale_reclaim_loop(),
         )
     finally:
         logger.info("🛑 메인 루프 종료 — 큐 드레인 시작")

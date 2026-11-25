@@ -145,7 +145,7 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 - **길이 검증:** WAV 헤더 파싱으로 초/자 계산, 0.05~0.35 범위 밖이면 재생성(비한국어/잘림 감지)
 - 결과: `scene.text_lines = [{"text": "...", "audio": "/path/to/audio.wav"}]`
 - 댓글 보이스는 작성자 값의 SHA-256으로 풀에서 결정적으로 선택한다. 댓글 chunk WAV는 `voice:text:emotion` 전역 캐시를 사용하므로 같은 댓글을 Reels·Shorts에서 다시 합성하지 않는다.
-- **Fish 게이트 (`tts/fish_gate.py`)**: Fish(평소 stop; Flight-Brain `atomic_tts` GPU 데몬이 수명주기 관리 — 유휴 10분 또는 Windows X-Plane 실행 시 정지, 2026-11-22 기준)가 health 실패면 `POST ATOMIC_TTS_FISH_GATE_URL`로 `{state: ready|starting|blocked|unavailable}`를 받는다. `starting`은 10초 폴링(최대 ~6분), `blocked`(X-Plane 등)/`unavailable`/호출 실패는 **post를 FAILED로 만들지 않고** 30분(`FISH_GATE_RECHECK_SEC`)마다 재질의하며 대기, 대기 중 30초마다 progress heartbeat를 갱신하고 phase 문구를 `TTS 대기: … — 30분마다 재확인`으로 바꾼다(UI 15분 "응답 없음" 배지 방지). 요청 중 `ConnectError`/최종 `ReadTimeout`으로 Fish가 끊기면 같은 대기 후 요청 재시도. 총 대기 24시간(`FISH_GATE_MAX_WAIT_SEC`) 초과 시에만 기존 FAILED 경로. Phase 5(`synthesize` 진입 시)와 Phase 8 댓글/outro 캐시 미스 모두 동일. 대기 중 `_llm_tts_worker`는 GPU 락을 쥔 채 대기하므로 다음 post·렌더는 함께 대기한다.
+- **Fish 게이트 (`tts/fish_gate.py`)**: Fish(평소 stop; Flight-Brain `atomic_tts` GPU 데몬이 수명주기 관리 — 유휴 10분 또는 Windows X-Plane 실행 시 정지, 2026-11-22 기준)가 health 실패면 `POST ATOMIC_TTS_FISH_GATE_URL`로 `{state: ready|starting|blocked|unavailable}`를 받는다. `starting`은 10초 폴링(최대 ~6분), `blocked`(X-Plane 등)/`unavailable`/호출 실패는 **post를 FAILED로 만들지 않고** 30분(`FISH_GATE_RECHECK_SEC`)마다 재질의하며 대기(blocked 응답에 `retry_after_sec`가 있으면 30초~30분으로 클램프한 그 간격), 대기 중 30초마다 progress heartbeat를 갱신하고 phase 문구를 `TTS 대기: … — N분(또는 N초)마다 재확인`으로 바꾼다(UI 15분 "응답 없음" 배지 방지). 요청 중 `ConnectError`/최종 `ReadTimeout`으로 Fish가 끊기면 같은 대기 후 요청 재시도. 총 대기 1시간(`FISH_GATE_MAX_WAIT_SEC`) 초과 시에만 기존 FAILED 경로(요청 단위로 합산 데드라인 공유 — 한 요청 안의 여러 recover 대기를 합쳐 1시간). 대기는 Fish 요청 락 밖에서 한다. **GPU 데몬 임대**: `fish_client._request_one`(및 웜업)이 실제 `/v1/tts` 호출 구간(5xx/ReadTimeout 재시도 포함)만 `fish_gate.lease("tts")`로 감싼다. 청크(HTTP 요청) 단위로 잡고 recover 대기·ASR 검증·후처리·캐시 히트에서는 잡지 않는다(대기 중 임대 해제, 재시도 때 재획득; 게이트 비활성/`lease` 미지원이면 no-op). Phase 5(`synthesize` 진입 시)와 Phase 8 댓글/outro 캐시 미스 모두 동일. 대기 중 `_llm_tts_worker`는 GPU 락을 쥔 채 대기하므로 다음 post·렌더는 함께 대기한다. `gate.lease(why)`(async 컨텍스트)는 Fish를 실제로 쓰는 동안만 데몬 임대를 잡고 30초 heartbeat·종료 시 release(실패는 모두 삼킴, TTS 비차단)하며, `gate.blocked_reason()`은 health 실패+게이트 blocked일 때만 reason을 돌려준다(부작용 없음). 바인딩 해제는 `finally`에서 `unbind_post(post_id)`(일치 시에만)로 보장한다.
 - 워밍업 센티널 (`MEDIA_DIR/tmp/fish_warmup_state.json`): 6시간 이내 재시작 시 풀 워밍업 스킵
 - 음성 등록: `python -m tools.prepare_voice`(faster-whisper 자동 전사). 동일 key 재등록 시 fish-speech 재시작 필요(메모리 캐시 스테일)
 
@@ -200,7 +200,7 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 ```mermaid
 flowchart LR
     CALL[call_llm call_type] --> ROUTER[pick_model]
-    ROUTER --> |chunk / generate_script<br/>scene_director / feedback| SONNET[claude-sonnet-4-6]
+    ROUTER --> |chunk / generate_script<br/>scene_director / feedback| SONNET[claude-sonnet-5-5]
     ROUTER --> |video_prompt_t2v·i2v·simplify<br/>video_visual_anchor / video_image_brief<br/>translate / comment_summarize| HAIKU[claude-haiku-4-5-20251001]
     OVERRIDE[config/pipeline.json<br/>llm_model_overrides] -.->|override| ROUTER
 ```

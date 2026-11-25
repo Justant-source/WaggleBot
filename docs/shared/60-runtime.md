@@ -21,6 +21,8 @@ stateDiagram-v2
     RENDERED --> UPLOADED : YouTube 업로드 완료
     RENDERED --> FAILED : 업로드 실패
     PROCESSING --> FAILED : 파이프라인 실패 (last_error 저장)
+    PROCESSING --> APPROVED : 고착 회수 (재시작 즉시 / 무활동 N분, 재시도 여유)
+    PROCESSING --> FAILED : 고착 회수 (재시도 소진)
     FAILED --> APPROVED : 재시도 (retryCount++, last_error 초기화)
 ```
 
@@ -41,6 +43,8 @@ stateDiagram-v2
 ## 재시도 정책
 
 - `MAX_RETRY_COUNT = 3` — 초과 시 영구 FAILED
+- **PROCESSING 고착 회수** (`worker/ai_worker/core/recovery.py`): 워커 시작 시 모든 PROCESSING을, 이후 `STALE_SCAN_INTERVAL_SEC`(60s)마다 `STALE_PROCESSING_MINUTES`(30분) 넘게 무활동(`progress.last_heartbeat_at`·`posts.updated_at` 중 최근 값)인 PROCESSING을 회수한다. `retry_count < MAX_RETRY_COUNT`면 `APPROVED` 재큐, 아니면 `FAILED`(`INFRA_STUCK_PROCESSING`, `last_error`에 사유). 현재 프로세스가 소유한 post는 제외하고 하트비트로 보호한다. 다만 단계 정체(`PHASE_STALL_SEC`, 기본 7200s 동안 진행 stamp 없음) inflight는 하트비트 갱신만 멈추고 경고하며, 소유 프로세스가 실행 중이므로 회수·취소는 하지 않는다. Fish 차단이 길어지면 `FISH_GATE_REQUEUE_AFTER_SEC` 후 `PROCESSING → APPROVED`(retry_count 유지)로 되돌린다.
+- 일시 오류 자동 재시도는 없다(FAILED는 수동 retry만) — 폭주 방지
 - `POST /api/progress/{id}/retry` → `FAILED → APPROVED`, `retryCount++`, `last_error = null`
 - 실패 원인은 `Post.last_error` 컬럼에 저장, Progress 페이지에서 최근 20건 조회 가능
 

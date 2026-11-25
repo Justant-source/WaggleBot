@@ -51,8 +51,8 @@ LLM 호출. Python `call_llm()` 함수가 이 엔드포인트를 사용.
 | 별칭 | 실제 모델 ID |
 |------|------------|
 | `haiku` | `claude-haiku-4-5-20251001` |
-| `sonnet` | `claude-sonnet-4-6` |
-| `opus` | `claude-opus-4-8` |
+| `sonnet` | `claude-sonnet-5-5` |
+| `opus` | `claude-opus-5-5` |
 
 **Response (200):**
 ```json
@@ -142,7 +142,7 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 
 | Method | Path | 설명 |
 |--------|------|------|
-| `GET` | `/api/progress` | 전체 상태별 카운트 + PROCESSING 목록 + FAILED 목록(최근 20건, lastError 포함) |
+| `GET` | `/api/progress` | 전체 상태별 카운트 + PROCESSING 목록 + FAILED 목록(최근 20건, lastError 포함). `processing[]`는 `id,title,siteCode,updatedAt`와 `progress{currentPhase,phaseName,phaseStartedAt,lastHeartbeatAt,updatedAt,done,...}`(없으면 null). `progress`는 `content_runtime_state(progress)`가 정본이고 `pipeline_state`는 롤링 업그레이드 폴백. 소비자는 `lastHeartbeatAt`이 수 분 이상 갱신되지 않으면 '멈춤'으로 판정한다(워커는 30초마다 갱신, 30분 무활동이면 자동 회수) |
 | `POST` | `/api/progress/{id}/retry` | FAILED → APPROVED, retryCount++, lastError=null |
 
 ### Analytics (`/api/analytics`)

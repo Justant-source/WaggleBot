@@ -189,7 +189,7 @@ services:
       # Fish 게이트(Flight-Brain 호스트 :8100). 기본값은 코드 기본과 동일 — 바꿀 때만 .env에 설정
       ATOMIC_TTS_FISH_GATE_URL: "${ATOMIC_TTS_FISH_GATE_URL:-http://172.20.0.1:8100/api/gpu/fish/ensure}"
       FISH_GATE_RECHECK_SEC: "${FISH_GATE_RECHECK_SEC:-1800}"
-      FISH_GATE_MAX_WAIT_SEC: "${FISH_GATE_MAX_WAIT_SEC:-86400}"
+      FISH_GATE_MAX_WAIT_SEC: "${FISH_GATE_MAX_WAIT_SEC:-3600}"
       COMFYUI_URL: "http://comfyui:8188"
       VIDEO_GEN_ENABLED: "${VIDEO_GEN_ENABLED:-false}"
       VIDEO_OUTPUT_DIR: "/app/media/tmp/videos"

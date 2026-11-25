@@ -3,6 +3,7 @@ package com.wagglebot.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wagglebot.common.PostStatus;
 import com.wagglebot.domain.ContentRepository;
+import com.wagglebot.domain.ContentRuntimeStateRepository;
 import com.wagglebot.domain.PostRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,7 @@ public class ProgressController {
 
     private final PostRepository postRepo;
     private final ContentRepository contentRepo;
+    private final ContentRuntimeStateRepository runtimeStateRepo;
     private final ObjectMapper objectMapper;
 
     @GetMapping
@@ -35,8 +37,21 @@ public class ProgressController {
             item.put("siteCode", post.getSiteCode());
             item.put("updatedAt", post.getUpdatedAt());
             contentRepo.findByPostId(post.getId()).ifPresent(c -> {
-                String ps = c.getPipelineState() != null ? c.getPipelineState().toString() : null;
-                item.put("progress", parseProgress(ps));
+                // 정본: content_runtime_state(progress). 롤링 업그레이드 중에만 pipeline_state 폴백.
+                Map<String, Object> progress = null;
+                if (c.getId() != null) {
+                    progress = runtimeStateRepo.findByContentIdAndStateKey(c.getId(), "progress")
+                        .map(s -> s.getStateValue())
+                        .filter(v -> v != null && v.isObject())
+                        .map(v -> toCamel(objectMapper.convertValue(v,
+                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {})))
+                        .orElse(null);
+                }
+                if (progress == null) {
+                    String ps = c.getPipelineState() != null ? c.getPipelineState().toString() : null;
+                    progress = parseProgress(ps);
+                }
+                item.put("progress", progress);
             });
             if (!item.containsKey("progress")) item.put("progress", null);
             return item;
