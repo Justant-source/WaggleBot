@@ -62,6 +62,9 @@ services:
     # - fish-speech / fish-speech-s2 등 TTS 컨테이너 병렬 기동 금지.
     #   교체·실험 시 반드시 기존 fish-speech를 stop한 뒤 단일 인스턴스만 기동.
     image: fishaudio/fish-speech:server-cuda
+    # 2026-11-25: Fish 폐기(이미지·체크포인트 삭제). 어떤 프로파일도 켜지 않으므로 기동되지 않는다.
+    # 정식 제거(블록 삭제·ai_worker TTS 이관)는 별도 작업.
+    profiles: ["fish-removed"]
     container_name: fish-speech
     restart: unless-stopped
     runtime: nvidia
@@ -202,8 +205,6 @@ services:
               capabilities: [gpu]
     depends_on:
       db:
-        condition: service_healthy
-      fish-speech:
         condition: service_healthy
       comfyui:
         condition: service_healthy
