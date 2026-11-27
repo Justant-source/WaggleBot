@@ -31,7 +31,7 @@ def test_create_job_body_and_headers() -> None:
 
     job = _client(handler).create_job(
         "안녕", {"voice": "M1", "normalize": {"profile": "wagglebot/shorts-ko"}, "speed": None},
-        request_id="wb-1-intro-ab", idempotency="k1",
+        request_id="wb-1-intro-ab", idempotency="wb-1-intro-ab",
     )
     assert job["id"] == "j1"
     req = seen[0]
@@ -43,7 +43,7 @@ def test_create_job_body_and_headers() -> None:
     assert body["options"]["voice"] == "M1"
     assert "speed" not in body["options"]                 # None 은 전송하지 않음
     assert req.headers["x-client-id"] == "wagglebot"
-    assert req.headers["idempotency-key"] == "k1"
+    assert req.headers["idempotency-key"] == "wb-1-intro-ab"  # 서버: 헤더 키 == options.request_id
     assert req.headers["x-request-id"] == "wb-1-intro-ab"
 
 
@@ -105,3 +105,25 @@ def test_wait_done_and_failed() -> None:
     with pytest.raises(JobFailed) as ei:
         c.wait("j", long_poll=None)
     assert ei.value.retryable is True
+
+
+def test_create_job_rejects_idempotency_different_from_request_id() -> None:
+    """서버는 Idempotency-Key 와 options.request_id 가 다르면 400 — 클라이언트가 먼저 막는다."""
+    import pytest
+
+    def handler(req: httpx.Request) -> httpx.Response:  # 호출되면 안 된다
+        raise AssertionError("요청이 전송되면 안 됨")
+
+    with pytest.raises(ValueError):
+        _client(handler).create_job("안녕", {"voice": "M1"}, request_id="wb-1-a", idempotency="other")
+
+
+def test_create_job_request_id_alone_becomes_idempotency_key() -> None:
+    seen = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(202, json={"id": "j1", "state": "queued"})
+
+    _client(handler).create_job("안녕", {"voice": "M1"}, request_id="wb-1-a")
+    assert seen[0].headers["idempotency-key"] == "wb-1-a"

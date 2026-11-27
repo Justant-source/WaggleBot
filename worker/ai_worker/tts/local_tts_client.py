@@ -1,6 +1,6 @@
 # 출처: /home/justant/Data/Local-TTS/client/local_tts_client.py 의 **사본**이다(앱 간 import 금지 원칙).
 # 원본이 갱신되면 이 파일을 통째로 다시 복사한다. 이 사본을 직접 고치지 않는다(어댑터는 engines/local_tts.py).
-# 사본 작성: 2026-11-27 (P3-①).
+# 사본 작성: 2026-11-27 (P3-①). 원본 갱신 반영: 2026-11-27 (Local-TTS 69fce05).
 """Local-TTS 참조 클라이언트 (단일 파일, 의존성: httpx 만).
 
 앱(Flight-Brain, WaggleBot)은 이 파일을 **사본으로 복사**해 쓴다(앱 간 import 금지).
@@ -248,6 +248,19 @@ class SpeechResult:
         return self._f("x-synth-ms")
 
 
+def _idem_key(idempotency: str | bool | None, request_id: str | None) -> str | None:
+    """Idempotency-Key 결정. 서버는 헤더 키와 options.request_id 가 다르면 400 이므로 둘을 항상 일치시킨다.
+
+    request_id 가 있으면 그 값이 키다(idempotency=True/None 이면 자동 사용, 다른 문자열을 주면 ValueError).
+    request_id 가 없으면 True=uuid 자동 생성, 문자열=그대로, None/False=키 없음."""
+    if request_id:
+        if isinstance(idempotency, str) and idempotency != request_id:
+            raise ValueError("idempotency 와 request_id 는 같아야 합니다(서버는 둘이 다르면 400). "
+                             "request_id 만 지정하면 그 값이 Idempotency-Key 로도 쓰입니다")
+        return None if idempotency is False else request_id
+    return str(uuid.uuid4()) if idempotency is True else (idempotency or None)
+
+
 # ───────────────────────── 클라이언트 ─────────────────────────
 class LocalTTS:
     def __init__(self, base_url: str = "http://127.0.0.1:8500", *, client: str | None = None,
@@ -376,6 +389,7 @@ class LocalTTS:
         """job 생성(202). text 가 list 면 `texts`(=explicit 청크)로 보낸다.
 
         idempotency: 문자열이면 Idempotency-Key 헤더, True 면 uuid 자동 생성(재시도 안전).
+            request_id 를 주면 그 값이 곧 키다(서버는 헤더와 options.request_id 가 다르면 400).
         wait: 지정 시 서버가 최대 wait초 대기 후 완료되면 200 으로 결과를 반환(?wait=N).
         """
         body: dict[str, Any] = {"texts": list(text)} if isinstance(text, (list, tuple)) else {"input": text}
@@ -384,7 +398,7 @@ class LocalTTS:
             body["options"] = {**body["options"], "request_id": request_id}
         if metadata:
             body["metadata"] = dict(metadata)
-        key = str(uuid.uuid4()) if idempotency is True else (idempotency or None)
+        key = _idem_key(idempotency, request_id)
         headers = {"Idempotency-Key": key} if key else {}
         if request_id:
             headers["X-Request-Id"] = request_id
@@ -518,7 +532,7 @@ class LocalTTS:
             body["voice"] = o["voice"]
         if "speed" in o:
             body["speed"] = o["speed"]
-        key = str(uuid.uuid4()) if idempotency is True else (idempotency or None)
+        key = _idem_key(idempotency, request_id)
         headers = {"Idempotency-Key": key} if key else {}
         if request_id:
             body["local_tts"] = {**o, "request_id": request_id}
@@ -543,10 +557,15 @@ class LocalTTS:
     def get_profile(self, pid: str) -> dict:
         return self._json("GET", f"/v1/profiles/{self._pid(pid)}")
 
-    def upload_profile(self, pid: str, document: Mapping[str, Any], *, activate: bool = False) -> dict:
-        """새 버전 업로드(항상 draft). activate=True 는 검증 통과 시 즉시 활성(?activate=true)."""
-        return self._json("POST", f"/v1/profiles/{self._pid(pid)}/versions", json=dict(document),
-                          params={"activate": "true" if activate else None}, expect=(200, 201))
+    def upload_profile(self, pid: str, document: Mapping[str, Any], *, activate: bool = False,
+                       force_warnings: bool = False) -> dict:
+        """새 버전 업로드(항상 draft). 서버 업로드 엔드포인트는 활성화를 하지 않으므로(쿼리 무시),
+        activate=True 면 업로드 뒤 `activate_profile` 을 따로 호출한다(서버가 검증을 수행, 실패 시 ValidationFailed).
+        반환: 업로드 응답 dict. 활성화했으면 `activation` 키에 활성화 응답이 붙는다."""
+        out = self._json("POST", f"/v1/profiles/{self._pid(pid)}/versions", json=dict(document), expect=(200, 201))
+        if activate:
+            out = {**out, "activation": self.activate_profile(pid, int(out["version"]), force_warnings=force_warnings)}
+        return out
 
     def list_versions(self, pid: str) -> list[dict]:
         r = self._json("GET", f"/v1/profiles/{self._pid(pid)}/versions")
@@ -558,11 +577,9 @@ class LocalTTS:
     def validate_profile(self, pid: str, version: int) -> dict:
         return self._json("POST", f"/v1/profiles/{self._pid(pid)}/versions/{version}:validate")
 
-    def preview_profile(self, pid: str, version: int, text: str, *, diff: bool = True,
-                        audio: Mapping[str, Any] | None = None) -> dict:
+    def preview_profile(self, pid: str, version: int, text: str, *, diff: bool = True) -> dict:
+        """정규화 미리보기(텍스트만). 서버는 오디오 미리듣기를 지원하지 않는다(미지 키는 422)."""
         body: dict[str, Any] = {"input": text, "diff": diff}
-        if audio:
-            body["audio"] = dict(audio)
         return self._json("POST", f"/v1/profiles/{self._pid(pid)}/versions/{version}:preview", json=body)
 
     def activate_profile(self, pid: str, version: int, *, force_warnings: bool = False) -> dict:
@@ -581,9 +598,6 @@ class LocalTTS:
     def voices(self) -> list[dict]:
         r = self._json("GET", "/v1/voices")
         return r["data"] if isinstance(r, dict) and "data" in r else r
-
-    def voice_sample(self, voice_id: str, lang: str = "ko") -> bytes:
-        return self._request("GET", f"/v1/voices/{voice_id}/sample", params={"lang": lang}).content
 
     def defaults(self) -> dict:
         return self._json("GET", "/v1/defaults")
