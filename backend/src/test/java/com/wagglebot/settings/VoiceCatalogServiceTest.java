@@ -40,9 +40,11 @@ class VoiceCatalogServiceTest {
     }
 
     @Test
-    void legacyDefaultVoiceFallsBackToPreset() throws Exception {
-        assertEquals("F1", service("seohyeon_ref").getDefaultVoice());
+    void defaultVoiceKeepsAutoPresetAndLegacyKeys() throws Exception {
+        assertEquals("default", service("default").getDefaultVoice());   // 자동(글별 랜덤)은 F1로 바뀌지 않는다
+        assertEquals("default", service("").getDefaultVoice());
         assertEquals("M3", service("m3").getDefaultVoice());
+        assertEquals("seohyeon_ref", service("seohyeon_ref").getDefaultVoice());   // 구 키는 보존
     }
 
     @Test

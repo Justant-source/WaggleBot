@@ -31,6 +31,8 @@ const schema = z.object({
 })
 
 const DEFAULT_BASE_URL = 'https://api.anthropic.com/v1'
+// pipeline.json tts_voice 자동 모드 — 워커 voice_resolver가 글(post_id)별로 10종 프리셋 중 결정적 랜덤 선택
+const AUTO_VOICE = 'default'
 
 type FormData = z.infer<typeof schema>
 
@@ -55,7 +57,7 @@ export default function SettingsPage() {
       llm_model_overrides: '{}',
       llm_prompt_cache: true,
       use_content_processor: false,
-      tts_voice: 'F1',
+      tts_voice: AUTO_VOICE,
       auto_approve_enabled: false,
       auto_approve_threshold: 80,
       auto_upload: false,
@@ -276,15 +278,16 @@ export default function SettingsPage() {
             <Select value={ttsVoice} onValueChange={(v) => setValue('tts_voice', v)}>
               <SelectTrigger className="max-w-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
+                <SelectItem value={AUTO_VOICE}>자동 (글별 랜덤)</SelectItem>
                 {voices.map((v) => (
                   <SelectItem key={v.key} value={v.key}>{v.label}</SelectItem>
                 ))}
-                {voices.length > 0 && ttsVoice && !voices.some((v) => v.key === ttsVoice) && (
+                {voices.length > 0 && ttsVoice && ttsVoice !== AUTO_VOICE && !voices.some((v) => v.key === ttsVoice) && (
                   <SelectItem value={ttsVoice}>{`기존: ${ttsVoice} (자동 매핑)`}</SelectItem>
                 )}
               </SelectContent>
             </Select>
-            <p className="mt-1 text-xs text-gray-400">포스트별 음성 미지정 시 사용하는 기본 내레이터. (Supertonic 프리셋 10종, voices.json 기반. 구 키는 성별 보존 자동 매핑)</p>
+            <p className="mt-1 text-xs text-gray-400">포스트별 음성 미지정 시 사용하는 기본 내레이터. '자동'은 글마다 프리셋 10종 중 하나를 결정적으로 고르고(글당 1회 확정), 프리셋을 직접 고르면 모든 글이 그 음성으로 고정됩니다. (구 키는 성별 보존 자동 매핑)</p>
           </div>
 
           <div>

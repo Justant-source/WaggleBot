@@ -1,6 +1,6 @@
 # WaggleBot — Local-TTS 요청·응답 처리 (클라이언트 계약)
 
-> last-verified: 2026-11-27 (commit `70dbc00`) · code-ref: `worker/ai_worker/tts/local_tts_client.py`, `worker/ai_worker/tts/synth.py`, `worker/ai_worker/tts/voice_resolver.py`, `worker/ai_worker/core/tts_requeue.py`, `worker/ai_worker/core/main.py`, `worker/ai_worker/core/processor.py`, `config/settings.py`, `env/docker-compose.yml`
+> last-verified: 2026-11-27 (commit `70dbc00` + 미커밋 보정) · code-ref: `worker/ai_worker/tts/local_tts_client.py`, `worker/ai_worker/tts/synth.py`, `worker/ai_worker/tts/voice_resolver.py`, `worker/ai_worker/core/tts_requeue.py`, `worker/ai_worker/core/main.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/_tts.py`, `backend/src/main/java/com/wagglebot/settings/SettingsService.java`, `backend/src/main/java/com/wagglebot/settings/VoiceCatalogService.java`, `frontend/app/(admin)/admin/settings/page.tsx`, `config/settings.py`, `env/docker-compose.yml`
 > scope: WaggleBot이 공용 Local-TTS 서버에 합성을 **요청하는 방법**과 **응답을 소비하는 방법** — SSOT. 서버 쪽 계약(전체 옵션·오류 코드·응답 스키마)은 Local-TTS 저장소의 `docs/api.md`(`/home/justant/Data/Local-TTS/docs/api.md`)가 정본이며 여기서는 복제하지 않는다.
 
 [ADR-0006](../../shared/90-adr/0006-local-tts-provider.md)(제공자 모델)·[ADR-0007](../../shared/90-adr/0007-voice-presets.md)(보이스 프리셋)·[ADR-0008](../../shared/90-adr/0008-tts-normalization-standard.md)(정규화)의 구현 상세다. WaggleBot에는 합성 모델·게이트·GPU 임대·컨테이너 제어가 없고, 아래 HTTP 요청만 한다.
@@ -74,7 +74,7 @@ sequenceDiagram
 | `X-Request-Id` | `request_id`와 동일 |
 | `User-Agent` | `local-tts-client/1` |
 
-`request_id = wb-<post_id|x>-<scene_type>-<uuid hex 8자>` — 호출(`synthesize`)마다 새로 만든다. 같은 호출 안의 500 재시도만 같은 값을 재사용한다.
+`request_id = wb-<post_id|x>-<scene_type>-<uuid hex 8자>` — 호출(`synthesize`)마다 새로 만든다. 같은 호출 안에서 **연결 실패·타임아웃처럼 job이 만들어졌는지 모르는 실패는 같은 키**를 유지한다(이미 만들어진 job에 재접속, 중복 생성 방지). 반면 **서버 오류(500·replay된 failed job) 뒤의 재시도는 새 키 `<request_id>-r1`**(`synth.attempt_request_id`)을 쓴다 — 서버는 같은 `Idempotency-Key`의 실패 job을 24h 그대로 재생(replay)하므로 같은 키로 재시도하면 첫 실패를 되돌려받을 뿐이다. 새 키는 `Idempotency-Key`·`X-Request-Id`·`options.request_id`에 모두 반영된다.
 
 ### 3.2 본문 (`synth.build_options`)
 
@@ -150,14 +150,14 @@ sequenceDiagram
 
 - `config/voices.json` v4(`key·label·gender·engine`, 10종)가 카탈로그 정본이다. backend `VoiceCatalogService`가 읽어 `GET /api/tts/voices`(`voices` + `defaultVoice`)로 제공하고, 샘플 mp3(`voice_preview_<KEY>.mp3`)는 `GET /api/tts/voices/{key}/sample`로 스트리밍한다.
 - `VoiceCatalogService.isValidVoiceKey(key)`는 `null`(전역 기본 사용)과 카탈로그 프리셋 키만 허용한다. 즉 UI(편집실 `/api/editor` 미리듣기 등)는 프리셋만 보낼 수 있고, 구 키·`default` 같은 값은 외부 ingest(`ExternalIngestService`, `variant_config.tts_voice`)나 `pipeline.json`·기존 DB 값으로만 들어온다. 이런 값은 워커가 위 규칙으로 해석한다.
-- `defaultVoice`는 `pipeline.json tts_voice`가 프리셋이면 그 값, 아니면(`default`·구 키) UI 표시용으로 `F1`을 돌려준다. **표시일 뿐 실제 합성 결과와 다를 수 있다**(`default`는 글마다 10종 중 하나). backend 설정 기본값(`SettingsService` `tts_voice`)도 `F1`이라, 설정 화면에서 저장하면 `pipeline.json tts_voice=F1`이 되어 이후 모든 글이 F1 고정이 된다.
+- `defaultVoice`는 `pipeline.json tts_voice`를 그대로 돌려준다: 비었거나 `default`면 `default`(자동·글별 랜덤), 프리셋이면 대문자 키, 구 키는 보존(UI가 `기존: … (자동 매핑)`으로 표시). backend 설정 기본값(`SettingsService.DEFAULTS` `tts_voice`)도 `default`이고, `savePipelineConfig`는 `tts_voice`가 비었거나 `default`(대소문자 무관)면 `default`로 정규화하며 프리셋·구 키는 바꾸지 않는다. 설정 화면(`/admin/settings`)의 내레이터 음성 선택에는 `자동 (글별 랜덤)`(값 `default`)이 첫 항목이자 기본값이고, 프리셋을 직접 고르면 모든 글이 그 프리셋으로 고정된다(워커 `voice_resolver`는 변경 없음).
 - 미리듣기(`TTS_PREVIEW` job → `dashboard_worker._handle_tts_preview`): 보이스 우선순위가 `payload.voice > contents.tts_voice > pipeline.json tts_voice`(`variant_config`는 보지 않음)이며 `synthesize(..., post_id)`로 같은 규칙으로 해석한다. 장애 시 재큐 없이 job 실패로 끝난다.
 
 ## 5. 응답 소비
 
 | 응답 | 소비 방식 |
 |---|---|
-| `POST /v1/jobs` 202(또는 멱등 재생 200) | `job["id"]`만 사용 |
+| `POST /v1/jobs` 202(또는 멱등 재생 200) | `job["id"]`만 사용. 단 재생된 job의 `state`가 이미 `failed`면 대기 없이 서버 오류로 보고 새 키로 1회 재제출한다 |
 | `GET /v1/jobs/{id}` | `wait()`가 `state`를 폴링. `done`이면 마지막 job 문서 반환, `failed`→`JobFailed`, `cancelled`→`JobCancelled`(`JobFailed` 하위). 앱이 읽는 필드는 `result.duration_sec`(완료 로그용)뿐이며 `on_progress`·`progress`·`queue`·`warnings`·`resolved`는 쓰지 않는다 |
 | `GET /v1/jobs/{id}/audio` | wav 바이트를 `<out>.part`에 쓴 뒤 rename. 이후 `processor`가 1KB 미만이면 실패로 본다 |
 | `chunks[]`·`/timings` | **호출하지 않는다** |
@@ -177,18 +177,18 @@ sequenceDiagram
 | 완료 대기 초과 | `WaitTimeout`(→ `cancel` 시도 후 재전파) | `TTSUnavailable` | 〃 |
 | job `failed`/`cancelled` + `error.retryable=true` | `JobFailed`/`JobCancelled` | `TTSUnavailable` | 〃 |
 | job `failed`/`cancelled` + retryable 아님 | `JobFailed`/`JobCancelled` | `TTSError` | FAILED |
-| **500 등 그 밖의 5xx**(`engine_error`·`internal_error` …) | `ServerError` | 내부 `_TTSServerFault` → **총 2회 시도**(첫 시도 포함, 사이 2s, 같은 `request_id`) → 둘 다 실패하면 `TTSError` | FAILED |
+| **500 등 그 밖의 5xx**(`engine_error`·`internal_error` …) | `ServerError` | 내부 `_TTSServerFault` → **총 2회 시도**(첫 시도 포함, 사이 2s, **2회차는 새 키 `<request_id>-r1`**) → 둘 다 실패하면 `TTSError`. create 응답이 이미 `failed`인 replay job도 같은 경로 | FAILED |
 | 400 `empty_input` | `InvalidRequest` | `ValueError` | FAILED(일반 실패) |
 | 그 밖의 400·413·422(`ValidationFailed` 포함) | `InvalidRequest` | `TTSError` | FAILED |
 | 401·403·404·409·410 등 | `LocalTTSError`·`NotFound`·`Conflict`·`Expired` | `TTSError` | FAILED |
 | `prenormalize` 후 읽을 글자 없음 | — | `ValueError`(서버 호출 전) | FAILED(일반 실패) |
 
-핵심 규칙: **서버가 내려갔거나 과부하인 경우만 `TTSUnavailable`**(연결·429·503·502/504·대기 초과·재시도 가능 job 실패). **500류는 "그 요청 고유 결함"으로 보아 2회 시도 후 FAILED**로 승격해, 같은 글이 영원히 재큐되며 뒤 글을 막는 것을 방지한다. 합성 중간 청크 실패는 서버 `on_chunk_error=fail`(기본)에 따라 job `failed`가 되어 위 job 행으로 들어온다.
+핵심 규칙: **서버가 내려갔거나 과부하인 경우만 `TTSUnavailable`**(연결·429·503·502/504·대기 초과·재시도 가능 job 실패). **500류는 "그 요청 고유 결함"으로 보아 2회 시도 후 FAILED**로 승격해, 같은 글이 영원히 재큐되며 뒤 글을 막는 것을 방지한다. 서버 오류 재시도가 새 키를 쓰는 이유는 §3 `request_id` 항목 참조(같은 키는 실패 job을 replay). 합성 중간 청크 실패는 서버 `on_chunk_error=fail`(기본)에 따라 job `failed`가 되어 위 job 행으로 들어온다.
 
 호출처별 동작:
 
 - **LLM+TTS 단계(`_run_llm_tts_supervised`)**: `TTSUnavailable` → §7 재큐. 그 밖의 예외(`TTSError`·`ValueError` 포함) → `_mark_post_failed`(수동 retry만).
-- **렌더 단계**: 댓글/outro 폴백이 `TTSUnavailable`이면 같은 재큐 로직(`_handle_tts_unavailable`, 렌더 중 표기). 개별 청크 합성은 `TTSUnavailable` 외 예외 시 5초 후 1회 재시도하고, 그래도 실패하면 길이 0(무음 청크)으로 넘어간다.
+- **렌더 단계**: 댓글/outro 폴백이 `TTSUnavailable`이면 같은 재큐 로직(`_handle_tts_unavailable`, 렌더 중 표기). 개별 청크 합성은 `TTSUnavailable`·빈 텍스트(`ValueError`) 외 예외 시 5초 후 1회 재시도하고, 그래도 실패하면 **`TTSError`로 렌더를 중단한다**(예전의 길이 0 무음 청크 폴백은 대사가 빠진 영상을 정상 산출물로 남겨 폐기). 호출 경로별 결과: 본문·outro·댓글·채팅 청크 모두 같은 `_tts_chunk_async`를 거치며, `render_stage` → `_render_worker`가 `TTSUnavailable`이면 재큐, 그 외(`TTSError`)는 `FAILED`+`last_error`(`TTS 렌더 청크 N(scene) 합성 실패: …`, `TTS_GENERATION_FAILED`로 분류)로 마킹한다. `dashboard_worker`의 `HD_RENDER`는 예외가 잡 실패(`_mark_error`)로 기록돼 성공으로 끝나지 않는다. 텍스트가 비었거나(공백) 정규화 후 읽을 내용이 없는 청크만 길이 0으로 건너뛴다.
 - **미리듣기**: 예외는 job 실패로 기록될 뿐 재큐 없음.
 
 ## 7. 재큐 상한·백오프 (`core/tts_requeue.py`)
@@ -226,7 +226,7 @@ sequenceDiagram
 | `TTS_REQUEUE_BACKOFF_BASE_SEC` | `30` | 아니오(settings 기본값) | 백오프 시작 |
 | `TTS_REQUEUE_BACKOFF_MAX_SEC` | `600` | 아니오(settings 기본값) | 백오프 상한 |
 
-코드 상수(환경변수 아님): 청크 `max_chars` 120, loudnorm `i=-16 tp=-1.5`, 500 재시도 총 2회·간격 2s, 집기 전 확인 3s, 보류 재확인 30s, 후보 50건, 마커 만료 1시간.
+코드 상수(환경변수 아님): 청크 `max_chars` 120, loudnorm `i=-16 tp=-1.5`, 500 재시도 총 2회(2회차 새 키 `-r1`)·간격 2s, 집기 전 확인 3s, 보류 재확인 30s, 후보 50건, 마커 만료 1시간.
 
 ## 10. 네트워크·운영 상태
 

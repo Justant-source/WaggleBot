@@ -191,7 +191,7 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 
 | Method | Path | 설명 |
 |--------|------|------|
-| `GET` | `/api/tts/voices` | 보이스 프리셋 목록(`M1~M5`·`F1~F5`, `config/voices.json` v4) + `defaultVoice` |
+| `GET` | `/api/tts/voices` | 보이스 프리셋 목록(`M1~M5`·`F1~F5`, `config/voices.json` v4) + `defaultVoice`(`pipeline.json tts_voice` 그대로: `default`=자동·글별 랜덤, 프리셋 대문자, 구 키 보존) |
 | `GET` | `/api/tts/voices/{key}/sample` | 사전 생성 샘플 `assets/voices/voice_preview_{KEY}.mp3` 스트리밍(없으면 404) |
 
 ### External Jobs (`/api/external/jobs`) — 외부 연동 ingest+render
@@ -311,7 +311,7 @@ Python `worker/ai_worker/tts/synth.py`가 `local_tts_client.py`(Local-TTS 클라
 }
 ```
 
-**오류 분류:** 연결 실패·타임아웃·429·503·502/504는 클라이언트가 `TTS_SERVER_RETRIES`회 재시도한 뒤, 대기 초과(`WaitTimeout`)와 재시도 가능 job 실패(`error.retryable`)는 즉시 `TTSUnavailable`(일시 장애 → APPROVED 재큐). **500 등 그 밖의 5xx는 일시 장애가 아니다** — 같은 `request_id`로 총 2회 시도한 뒤 `TTSError`(FAILED). `empty_input`은 `ValueError`, 그 밖의 400/413/422·401/403/404/409/410·영구 job 실패는 `TTSError`(일반 실패). 전체 표는 local-tts-client.md §6.
+**오류 분류:** 연결 실패·타임아웃·429·503·502/504는 클라이언트가 `TTS_SERVER_RETRIES`회 재시도한 뒤, 대기 초과(`WaitTimeout`)와 재시도 가능 job 실패(`error.retryable`)는 즉시 `TTSUnavailable`(일시 장애 → APPROVED 재큐). **500 등 그 밖의 5xx는 일시 장애가 아니다** — 총 2회 시도(2회차는 새 키 `<request_id>-r1`: 서버가 실패 job을 같은 키로 replay하므로)한 뒤 `TTSError`(FAILED). `empty_input`은 `ValueError`, 그 밖의 400/413/422·401/403/404/409/410·영구 job 실패는 `TTSError`(일반 실패). 전체 표는 local-tts-client.md §6.
 
 **설정값 (config/settings.py):** `TTS_SERVER_URL`, `TTS_SERVER_TOKEN`, `TTS_SERVER_TIMEOUT_SEC=120`, `TTS_SERVER_RETRIES=3`, `TTS_SERVER_MAX_WAIT_SEC=3600`(job 완료 대기만), `TTS_PROFILE=wagglebot/shorts-ko`, `TTS_CLIENT_ID=wagglebot`, `TTS_SPEED=1.1` → [worker/20-containers](../worker/20-containers.md#tts-설정)
 

@@ -21,7 +21,6 @@ import java.util.regex.Pattern;
 @Slf4j
 public class VoiceCatalogService {
 
-    private static final String DEFAULT_PRESET = "F1";
     private static final Pattern PRESET_KEY = Pattern.compile("^[MFmf][1-5]$");
 
     private final Path configDir;
@@ -59,14 +58,16 @@ public class VoiceCatalogService {
     }
 
     /**
-     * pipeline.json의 tts_voice 값. 프리셋이 아닌 구 키(예: yura)는 UI 표시용으로 "F1"을 반환한다
-     * (실제 합성 시에는 워커 voice_resolver가 성별 보존 매핑).
+     * pipeline.json의 tts_voice 값을 UI 선택값으로 돌려준다.
+     * 비었거나 "default"면 "default"(자동: 글별 랜덤), 프리셋이면 대문자 키, 그 밖의 구 키(예: yura)는
+     * 그대로 돌려준다(UI가 "기존: … (자동 매핑)"으로 표시하며 저장 시에도 값이 바뀌지 않는다).
      */
     public String getDefaultVoice() {
         Map<String, Object> cfg = settingsService.loadPipelineConfig();
         Object val = cfg.get("tts_voice");
         String key = val != null ? val.toString().trim() : "";
-        return isPresetKey(key) ? key.toUpperCase() : DEFAULT_PRESET;
+        if (key.isEmpty() || key.equalsIgnoreCase(SettingsService.AUTO_VOICE)) return SettingsService.AUTO_VOICE;
+        return isPresetKey(key) ? key.toUpperCase() : key;
     }
 
     private boolean isPresetKey(String key) {

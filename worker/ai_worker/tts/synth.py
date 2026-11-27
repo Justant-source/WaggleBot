@@ -90,16 +90,25 @@ def build_options(voice: str, request_id: str) -> dict:
     }
 
 
+def attempt_request_id(base: str, attempt: int) -> str:
+    """서버 오류 재시도용 요청 키. 1회차는 base 그대로, n회차(n>=2)는 `<base>-r<n-1>`."""
+    return base if attempt <= 1 else f"{base}-r{attempt - 1}"
+
+
 def _synthesize_blocking(text: str, voice: str, output_path: Path, request_id: str,
                          scene_type: str) -> Path:
     """합성 1건. 500류 서버 오류는 최대 _SERVER_ERROR_ATTEMPTS회 시도 후 TTSError(비일시)로 확정한다.
 
-    같은 request_id(=Idempotency-Key)로 재시도하므로 서버가 중복 job을 만들지 않는다.
+    서버 오류(500·replay된 failed job) 뒤의 재시도는 **새 키**(`<base>-r1`)를 쓴다 — 서버는 같은
+    Idempotency-Key에 실패한 job을 24h 그대로 재생(replay)하므로 같은 키 재시도는 무의미하다.
+    반대로 연결 실패·타임아웃 등 job이 만들어졌는지 모르는 실패는 같은 키를 유지해(클라이언트 내부
+    재시도·상위 재큐 모두) 이미 만들어진 job에 재접속하고 중복 생성을 막는다.
     연결 실패·503·429·504/502·WaitTimeout은 기존대로 TTSUnavailable(일시 장애).
     """
     for attempt in range(1, _SERVER_ERROR_ATTEMPTS + 1):
+        key = attempt_request_id(request_id, attempt)
         try:
-            return _synthesize_once(text, voice, output_path, request_id, scene_type)
+            return _synthesize_once(text, voice, output_path, key, scene_type)
         except _TTSServerFault as exc:
             if attempt >= _SERVER_ERROR_ATTEMPTS:
                 raise TTSError(
@@ -119,6 +128,12 @@ def _synthesize_once(text: str, voice: str, output_path: Path, request_id: str,
             job = c.create_job(text, options, request_id=request_id,
                                idempotency=request_id)  # 서버: Idempotency-Key == options.request_id
             job_id = job["id"]
+            if job.get("state") == "failed":
+                # 같은 키의 실패 job이 replay됨 — 대기해도 소용없다. 다른 키로 1회 재제출한다.
+                err = job.get("error") or {}
+                raise _TTSServerFault(
+                    f"replay된 실패 job {job_id}: {err.get('code') or ''} {err.get('message') or ''}".strip()
+                )
             try:
                 st = c.wait(job_id, timeout=float(_cfg.TTS_SERVER_MAX_WAIT_SEC))
             except WaitTimeout:

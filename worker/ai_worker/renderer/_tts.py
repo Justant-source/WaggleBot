@@ -567,7 +567,7 @@ async def _tts_chunk_async(
     """
     import asyncio
     import shutil
-    from ai_worker.tts.synth import TTSUnavailable, synthesize as tts_synthesize
+    from ai_worker.tts.synth import TTSError, TTSUnavailable, synthesize as tts_synthesize
     from ai_worker.tts.voice_resolver import resolve_voice
 
     out_path = output_dir / f"chunk_{idx:03d}.wav"
@@ -618,16 +618,28 @@ async def _tts_chunk_async(
             # 서버 불가는 synth가 상한까지 대기한 뒤의 결과 — 무음 청크로 넘기지 않고 상위(재큐)로 전파.
             logger.warning("[layout] TTS 서버 불가 — 청크 %d 중단", idx)
             raise
-        except Exception:
+        except ValueError:
+            # 전처리·서버 정규화 후 읽을 내용이 없는 텍스트(기호만 등) — 말할 게 없으니 건너뛴다.
+            logger.warning("[layout] TTS 청크 %d 건너뜀: 정규화 후 빈 텍스트 (%r)", idx, text[:30])
+            return 0.0
+        except Exception as exc:
             if attempt == 0:
                 logger.warning("[layout] TTS 청크 %d 실패 — 5초 후 재시도", idx, exc_info=True)
                 await asyncio.sleep(5.0)
-            else:
-                logger.error("[layout] TTS 청크 %d 최종 실패", idx)
-                return 0.0
+                continue
+            # 무음 클립으로 렌더를 진행하면 대사가 빠진 영상이 정상 산출물처럼 남는다 — 렌더를 실패시킨다.
+            # (main._render_worker가 FAILED + last_error 기록, dashboard_worker는 잡 실패 처리)
+            logger.error("[layout] TTS 청크 %d 최종 실패 — 렌더 중단", idx)
+            if isinstance(exc, TTSError):
+                raise TTSError(
+                    f"TTS 렌더 청크 {idx}({scene_type}) 합성 실패: {exc}"
+                ) from exc
+            raise TTSError(
+                f"TTS 렌더 청크 {idx}({scene_type}) 합성 실패({type(exc).__name__}): {exc}"
+            ) from exc
 
     if not out_path.exists() or out_path.stat().st_size == 0:
-        return 0.0
+        raise TTSError(f"TTS 렌더 청크 {idx}({scene_type}) 합성 결과 파일 없음/비어있음")
 
     if scene_type == "outro" and cache_path is not None:
         # 캐시 전 loudnorm — 재사용 시에도 본문과 비슷한 음량 유지

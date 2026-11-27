@@ -142,8 +142,10 @@ def test_persistent_500_becomes_non_transient_tts_error(server, monkeypatch, tmp
     assert not isinstance(ei.value, synth.TTSUnavailable)
     posts = [r for r in srv.requests if r.method == "POST" and r.url.path == "/v1/jobs"]
     assert len(posts) == synth._SERVER_ERROR_ATTEMPTS == 2       # 무한 재시도 아님
-    # 같은 Idempotency-Key로 재시도(서버 중복 job 방지)
-    assert len({r.headers["idempotency-key"] for r in posts}) == 1
+    # 서버가 실패 job을 같은 키로 24h replay하므로 서버 오류 뒤 재시도는 새 키(`<base>-r1`)여야 한다.
+    keys = [r.headers["idempotency-key"] for r in posts]
+    assert keys[1] == f"{keys[0]}-r1"
+    assert [json.loads(r.content)["options"]["request_id"] for r in posts] == keys
     assert not (tmp_path / "x.wav").exists()
 
 
@@ -161,6 +163,78 @@ def test_single_500_then_success_recovers(server, monkeypatch, tmp_path) -> None
     monkeypatch.setattr(synth, "_new_client", lambda: LocalTTS(
         "http://tts.test", transport=httpx.MockTransport(flaky), sleep=lambda x: None, max_retries=1))
     assert run(synth.synthesize("테스트", output_path=tmp_path / "x.wav")).exists()
+
+
+def test_single_500_then_success_uses_new_key(server, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(synth, "_SERVER_ERROR_RETRY_SEC", 0)
+    posts, base = [], FakeServer()
+
+    def flaky(req):
+        if req.method == "POST" and req.url.path == "/v1/jobs":
+            posts.append(req)
+            if len(posts) == 1:
+                return httpx.Response(500, json={"error": {"code": "internal", "message": "boom"}})
+        return base(req)
+
+    monkeypatch.setattr(synth, "_new_client", lambda: LocalTTS(
+        "http://tts.test", transport=httpx.MockTransport(flaky), sleep=lambda x: None, max_retries=1))
+    assert run(synth.synthesize("테스트", output_path=tmp_path / "x.wav")).exists()
+    k0, k1 = (r.headers["idempotency-key"] for r in posts)
+    assert k1 == f"{k0}-r1"
+
+
+def test_replayed_failed_job_is_resubmitted_once_with_new_key(server, monkeypatch, tmp_path) -> None:
+    """같은 키의 실패 job이 replay(create 응답 state=failed)되면 대기 없이 새 키로 1회 재제출한다."""
+    monkeypatch.setattr(synth, "_SERVER_ERROR_RETRY_SEC", 0)
+    posts, base = [], FakeServer()
+
+    def replay(req):
+        if req.method == "POST" and req.url.path == "/v1/jobs":
+            posts.append(req)
+            if len(posts) == 1:
+                return httpx.Response(200, json={"id": "old", "state": "failed",
+                                                 "error": {"code": "engine", "message": "x"}})
+        return base(req)
+
+    monkeypatch.setattr(synth, "_new_client", lambda: LocalTTS(
+        "http://tts.test", transport=httpx.MockTransport(replay), sleep=lambda x: None, max_retries=1))
+    assert run(synth.synthesize("테스트", output_path=tmp_path / "x.wav")).exists()
+    assert len(posts) == 2
+    assert not any("/v1/jobs/old" in r.url.path and r.method == "GET" for r in base.requests)  # 대기 안 함
+    assert posts[1].headers["idempotency-key"] == posts[0].headers["idempotency-key"] + "-r1"
+
+    # 새 키로도 failed가 replay되면 더 반복하지 않고 TTSError
+    posts.clear()
+
+    def always_failed(req):
+        if req.method == "POST" and req.url.path == "/v1/jobs":
+            posts.append(req)
+            return httpx.Response(200, json={"id": "old", "state": "failed"})
+        return base(req)
+
+    monkeypatch.setattr(synth, "_new_client", lambda: LocalTTS(
+        "http://tts.test", transport=httpx.MockTransport(always_failed), sleep=lambda x: None, max_retries=1))
+    with pytest.raises(synth.TTSError) as ei:
+        run(synth.synthesize("테스트", output_path=tmp_path / "y.wav"))
+    assert not isinstance(ei.value, synth.TTSUnavailable)
+    assert len(posts) == 2
+
+
+def test_connection_failure_keeps_same_key(monkeypatch, tmp_path) -> None:
+    """연결 실패는 job 생성 여부를 모르므로 같은 키로만 재시도(중복 job 방지)."""
+    keys = []
+
+    def boom(req):
+        keys.append(req.headers.get("idempotency-key"))
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(synth, "prenormalize", lambda t: t)
+    monkeypatch.setattr(synth, "resolve_voice", lambda k, p=None: "M1")
+    monkeypatch.setattr(synth, "_new_client", lambda: LocalTTS(
+        "http://tts.test", transport=httpx.MockTransport(boom), sleep=lambda x: None, max_retries=2))
+    with pytest.raises(synth.TTSUnavailable):
+        run(synth.synthesize("테스트", output_path=tmp_path / "x.wav"))
+    assert len(keys) >= 2 and len(set(keys)) == 1 and not keys[0].endswith("-r1")
 
 
 def test_connection_refused_is_tts_unavailable(monkeypatch, tmp_path) -> None:

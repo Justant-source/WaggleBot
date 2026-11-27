@@ -28,6 +28,9 @@ public class SettingsService {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP_REF = new TypeReference<>() {};
 
+    /** tts_voice 자동 모드 — 워커 voice_resolver가 글(post_id)별로 10개 프리셋 중 결정적 랜덤 선택. */
+    public static final String AUTO_VOICE = "default";
+
     private static final Map<String, Object> DEFAULTS = Map.ofEntries(
         Map.entry("llm_model", "haiku"),
         Map.entry("llm_model_overrides", "{}"),
@@ -36,7 +39,7 @@ public class SettingsService {
         Map.entry("llm_prompt_cache", "true"),
         Map.entry("llm_cache_ttl", "5m"),
         Map.entry("tts_engine", "local-tts"),
-        Map.entry("tts_voice", "F1"),
+        Map.entry("tts_voice", AUTO_VOICE),
         Map.entry("auto_approve_enabled", "false"),
         Map.entry("auto_approve_threshold", "80"),
         Map.entry("auto_upload", "false"),
@@ -76,7 +79,19 @@ public class SettingsService {
             }
         }
         merged.putAll(config);
+        normalizeTtsVoice(merged);
         atomicWrite(path, MAPPER.writeValueAsString(merged));
+    }
+
+    /**
+     * tts_voice 정규화: 비어 있거나 "default"(대소문자 무관)이면 "default"(글별 랜덤)로 둔다.
+     * 프리셋·구 키는 그대로 보존한다 — 저장이 선택값을 F1 등으로 조용히 바꾸면 안 된다.
+     */
+    static void normalizeTtsVoice(Map<String, Object> cfg) {
+        if (!cfg.containsKey("tts_voice")) return;
+        Object v = cfg.get("tts_voice");
+        String key = v == null ? "" : v.toString().trim();
+        cfg.put("tts_voice", key.isEmpty() || key.equalsIgnoreCase(AUTO_VOICE) ? AUTO_VOICE : key);
     }
 
     public Map<String, Object> loadCredentialsConfig() {
