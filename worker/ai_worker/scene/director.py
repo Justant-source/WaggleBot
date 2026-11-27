@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from ai_worker.tts.voice_resolver import resolve_voice
 from ai_worker.scene.analyzer import ResourceProfile, estimate_tts_duration
 from config.settings import EMOTION_TAGS, MEDIA_DIR, get_domain_setting
 
@@ -1189,7 +1190,12 @@ class SceneDirector:
         self.mood = mood
         self.post_id = post_id
         self.image_cache_dir = image_cache_dir
-        self.narrator_voice = narrator_voice   # 사연자 내레이터 voice_key
+        # 사연자 내레이터 voice — post_id 시드로 프리셋(M1~F5)으로 확정해 보관한다.
+        # 렌더러/합성이 같은 (키, post_id)로 해석하므로 영상 전체에서 목소리가 일치하고,
+        # 댓글 풀 제외 비교도 원시 키 문자열이 아니라 해석된 프리셋 기준이 된다.
+        self.narrator_voice = (
+            resolve_voice(narrator_voice, post_id) if narrator_voice and narrator_voice.strip() else None
+        )
         # 외부 연동(예: Again Spring)에서 넘어온 고정 아웃트로 문구. 지정 시 mood
         # fixed_texts에서의 random.choice()를 건너뛰고 이 문구를 그대로 사용한다.
         self.outro_text = outro_text if outro_text and outro_text.strip() else None
@@ -1213,6 +1219,15 @@ class SceneDirector:
                 self.comment_voices = []
         else:
             self.comment_voices = comment_voices
+        # 댓글 풀도 해석된 프리셋으로 정규화(순서 유지·중복 제거) — 내레이터 제외를 프리셋 기준으로 비교.
+        _resolved_pool: list[str] = []
+        for _v in self.comment_voices or []:
+            if not _v or not str(_v).strip():
+                continue
+            _r = resolve_voice(str(_v), post_id)
+            if _r not in _resolved_pool:
+                _resolved_pool.append(_r)
+        self.comment_voices = _resolved_pool
 
     # ------------------------------------------------------------------
     # Public
@@ -1731,7 +1746,7 @@ class SceneDirector:
             return self._character_voices[label]
         from ai_worker.script.voice_assigner import pick_voice
         used = ({self.narrator_voice} if self.narrator_voice else set()) | set(self._character_voices.values())
-        voice = pick_voice(gender, age, exclude=used)
+        voice = resolve_voice(pick_voice(gender, age, exclude=used), self.post_id)
         self._character_voices[label] = voice
         logger.debug("[director] character '%s' → voice=%s", label, voice)
         return voice
@@ -1748,9 +1763,13 @@ class SceneDirector:
             side_mapping = get_domain_setting("scene", "comment_voice_mapping", default={})
             if side_mapping and side in side_mapping:
                 mapped_voice = side_mapping[side]
-                if mapped_voice and mapped_voice in (self.comment_voices or []):
-                    logger.info("[director] comment side '%s' → voice=%s (mapping)", side, mapped_voice)
-                    return mapped_voice
+                _mapped_resolved = (
+                    resolve_voice(mapped_voice, self.post_id)
+                    if mapped_voice and mapped_voice != "default" else None
+                )
+                if _mapped_resolved and _mapped_resolved in (self.comment_voices or []):
+                    logger.info("[director] comment side '%s' → voice=%s (mapping)", side, _mapped_resolved)
+                    return _mapped_resolved
                 elif mapped_voice == "default":
                     # "default" → narrator 사용
                     logger.info("[director] comment side '%s' → narrator (default)", side)
@@ -1786,7 +1805,7 @@ class SceneDirector:
         from ai_worker.script.voice_assigner import pick_voice
         used = ({self.narrator_voice} if self.narrator_voice else set()) \
             | set(self._chat_sender_voices.values()) | set(self._character_voices.values())
-        voice = pick_voice("", "", exclude=used)
+        voice = resolve_voice(pick_voice("", "", exclude=used), self.post_id)
         self._chat_sender_voices[key] = voice
         logger.debug("[director] chat sender '%s' → voice=%s", key, voice)
         return voice

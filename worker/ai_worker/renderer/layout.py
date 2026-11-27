@@ -70,6 +70,7 @@ from ai_worker.renderer._tts import (
     _tts_chunk_async, _generate_tts_chunks, _merge_chunks, _append_silence,
     _get_audio_duration, _unpack_line, _INTRO_PAUSE_SEC,
 )
+from ai_worker.tts.voice_resolver import resolve_voice
 from ai_worker.renderer._encode import (
     _render_video_segment, _render_static_segment,
     _resolve_codec, _get_encoder_args, _escape_ffmpeg_text,
@@ -1339,6 +1340,7 @@ def _render_pipeline(
                 _generate_tts_chunks(
                     plan, sentences, tmp_dir, voice, rate,
                     narration_audio=narration_audio,
+                    post_id=post_id,
                 )
             )
             total_dur = sum(durations)
@@ -2025,7 +2027,8 @@ def render_layout_video(
 
     layout = _load_layout()
     _pipeline_cfg = load_pipeline_config()
-    voice: str = voice_key or _pipeline_cfg.get("tts_voice", VOICE_DEFAULT)
+    # 레거시 키/'default'도 post.id 시드로 한 번 프리셋(M1~F5)으로 확정 — 이후 모든 합성이 같은 값을 쓴다.
+    voice: str = resolve_voice(voice_key or _pipeline_cfg.get("tts_voice", VOICE_DEFAULT), post.id)
     rate: str = getattr(s, "TTS_RATE", "+25%")
     sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
     max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)
@@ -2099,7 +2102,8 @@ def render_layout_video_from_scenes(
 
     layout = _load_layout()
     _pipeline_cfg = load_pipeline_config()
-    voice: str = voice_key or _pipeline_cfg.get("tts_voice", VOICE_DEFAULT)
+    # 레거시 키/'default'도 post.id 시드로 한 번 프리셋(M1~F5)으로 확정 — 이후 모든 합성이 같은 값을 쓴다.
+    voice: str = resolve_voice(voice_key or _pipeline_cfg.get("tts_voice", VOICE_DEFAULT), post.id)
     rate: str = getattr(s, "TTS_RATE", "+25%")
     sfx_offset: float = getattr(s, "SFX_OFFSET", -0.15)
     max_slots: int = layout["scenes"]["text_only"]["elements"]["text_area"].get("max_slots", 3)

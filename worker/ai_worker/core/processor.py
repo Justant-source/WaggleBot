@@ -25,6 +25,7 @@ from ai_worker.core.progress import (
 from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
 from ai_worker.tts.synth import TTSUnavailable, synthesize as tts_synthesize
+from ai_worker.core import tts_requeue
 from ai_worker.tts.voice_resolver import resolve_voice
 from db.models import ScriptData
 from config.settings import (
@@ -590,7 +591,7 @@ class RobustProcessor:
             else:
                 # TTS 생성 (Local-TTS 서버 요청)
                 await tts_synthesize(
-                    text=text, voice_key=voice_id, output_path=audio_path, post_id=post_id,
+                    text=text, voice_key=_preset, output_path=audio_path, post_id=post_id,
                 )
                 shutil.copy2(audio_path, cached_audio)  # 캐시 저장
 
@@ -611,6 +612,24 @@ class RobustProcessor:
         except Exception:
             logger.exception("TTS 생성 실패")
             raise
+
+    @staticmethod
+    def _persist_script_before_tts(session, post_id: int, script: ScriptData, voice: str) -> None:
+        """TTS 단계 전에 대본(summary_text)과 확정 보이스(tts_voice)를 저장한다.
+
+        TTS가 불가해 재큐돼도 다음 시도는 저장된 대본을 재사용(LLM 재호출 없음)한다.
+        오래 걸린 LLM 호출 동안 stamp_progress가 contents 행을 별도 세션으로 갱신했을 수 있어
+        MariaDB errno 1020을 피하려고 먼저 트랜잭션을 끝내고(rollback) 새 스냅샷에서 쓴다.
+        """
+        session.rollback()
+        content = session.query(Content).filter_by(post_id=post_id).first()
+        if content is None:
+            content = Content(post_id=post_id)
+            session.add(content)
+        content.summary_text = script.to_json()
+        content.tts_voice = voice
+        session.commit()
+        logger.info("[Pipeline LLM+TTS] 대본·보이스 선저장(TTS 전): post_id=%d voice=%s", post_id, voice)
 
     def _classify_error(self, error: Exception) -> FailureType:
         """
@@ -987,7 +1006,8 @@ class RobustProcessor:
 
             post.status = PostStatus.PROCESSING
             post.retry_count = (post.retry_count or 0) + 1
-            post.last_error = None
+            # TTS 재큐 연속 횟수 마커만 이어받는다(상한·백오프 판정용, tts_requeue 참고). 나머지 오류 문구는 비움.
+            post.last_error = tts_requeue.carry_marker(post.last_error)
             session.commit()
             logger.info("[Pipeline LLM+TTS] 시작: post_id=%d", post_id)
             stamp_progress(post_id, 1, "자원 분석")
@@ -1017,11 +1037,14 @@ class RobustProcessor:
                 )
                 # 와글봇 pipeline 기본 TTS만 사용 (성별/연령 pick_voice 금지 → 보이스 혼용 방지)
                 # 우선순위: contents.tts_voice(외부 ingest) > pipeline.json tts_voice > VOICE_DEFAULT
-                _narrator_voice = (
+                # 낭독 보이스는 post_id 시드로 여기서 한 번만 프리셋(M1~F5)으로 확정하고,
+                # 이후 낭독·outro·댓글·폴백 장면이 모두 이 값을 쓴다(영상 내 목소리 일치).
+                _narrator_voice = resolve_voice(
                     _resolve_post_voice(post_id)
                     or load_pipeline_config().get("tts_voice")
                     or VOICE_DEFAULT
-                    or "default"
+                    or "default",
+                    post_id,
                 )
                 script = None
                 _existing = session.query(Content).filter_by(post_id=post_id).first()
@@ -1100,9 +1123,18 @@ class RobustProcessor:
                 len(_narration), len(script.to_plain_text()),
             )
 
-            _post_voice = script.narrator_voice or _resolve_post_voice(post_id) or (
-                load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
+            _post_voice = resolve_voice(
+                script.narrator_voice or _resolve_post_voice(post_id) or (
+                    load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
+                ),
+                post_id,
             )
+            script.narrator_voice = _post_voice
+
+            # TTS 전에 대본·확정 보이스를 먼저 저장 — TTS 불가로 재큐돼도 다음 시도가 LLM을 다시 부르지 않고
+            # 이 대본(기존 대본 재사용 경로)과 같은 보이스 프리셋을 그대로 쓴다.
+            self._persist_script_before_tts(session, post_id, script, _post_voice)
+
             stamp_progress(post_id, 5, "TTS 합성")
             # Remote Claude work above can proceed while a video job owns GPU.
             # 합성은 Local-TTS 서버가 수행하므로 GPU 락은 영상 생성(Phase 7)과의 직렬화 용도만 남는다.
@@ -1142,10 +1174,12 @@ class RobustProcessor:
             content.audio_path = str(audio_path)
             # 사연 낭독 보이스를 contents.tts_voice에도 고정 (렌더 fallback=yohan 방지).
             # variant_config 음성(어드민/외부 ingest)이 있으면 그것을 최종 권위로 유지.
-            _locked = _resolve_post_voice(post_id) or script.narrator_voice
+            _raw_lock = _resolve_post_voice(post_id) or script.narrator_voice
+            _locked = resolve_voice(_raw_lock, post_id) if _raw_lock else None
             if _locked:
                 content.tts_voice = _locked
                 script.narrator_voice = _locked
+                content.summary_text = script.to_json()  # 확정 프리셋이 반영된 대본으로 갱신
             session.commit()
 
         return script, audio_path
@@ -1202,7 +1236,9 @@ class RobustProcessor:
             director = SceneDirector(
                 profile, images, script_dict, mood=script.mood,
                 post_id=post_id, comments=_db_cmts2,
-                narrator_voice=script.narrator_voice or None,
+                narrator_voice=(
+                    resolve_voice(script.narrator_voice, post_id) if script.narrator_voice else None
+                ),
                 chat_messages=script.chat_messages or None,
                 outro_text=_resolve_post_outro_text(post_id),
                 comment_voices=_comment_voices,
@@ -1217,6 +1253,7 @@ class RobustProcessor:
             if not _nv:
                 _nv = load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
             if _nv:
+                _nv = resolve_voice(_nv, post_id)  # 낭독과 같은 (키, post_id) 해석 → 같은 프리셋
                 for _sc in scenes:
                     if getattr(_sc, "type", None) in ("comments", "chat"):
                         continue
@@ -1233,7 +1270,8 @@ class RobustProcessor:
 
             stamp_progress(post_id, 8, "FFmpeg 렌더링")
             _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
-            _post_voice = _resolve_post_voice(post_id) or _nv
+            _raw_post_voice = _resolve_post_voice(post_id) or _nv
+            _post_voice = resolve_voice(_raw_post_voice, post_id) if _raw_post_voice else None
             video_path = render_layout_video_from_scenes(
                 post, scenes,
                 save_tts_cache=_tts_cache,

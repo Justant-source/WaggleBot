@@ -11,9 +11,11 @@ LLM+TTS 단계는 외부 Local-TTS 서버에 합성을 맡기며, 서버 장애�
 import asyncio
 import logging
 import signal
+import time
 from datetime import datetime, timezone
 from sqlalchemy import case
 
+from ai_worker.core import tts_requeue
 from ai_worker.core.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
 from ai_worker.tts.synth import TTSUnavailable, wait_for_tts_server
 from config.settings import (
@@ -241,6 +243,7 @@ def _post_priority(post: Post) -> int:
 _TTS_HOLD_RECHECK_SEC = 30.0   # 보류 중 서버 재확인 간격
 _TTS_PROBE_TIMEOUT_SEC = 3.0   # 집기 전 비차단 확인 한도
 _tts_hold_active: bool = False
+_POLL_CANDIDATE_LIMIT = 50     # 백오프 중인 글을 건너뛰고 고를 후보 수
 
 
 async def _tts_hold_check() -> bool:
@@ -265,7 +268,14 @@ async def _tts_hold_check() -> bool:
 
 
 class _TTSRequeued(Exception):
-    """TTS 서버 장애로 retry_count 소모 없이 APPROVED로 되돌렸다."""
+    """TTS 서버 장애로 retry_count 소모 없이 APPROVED로 되돌렸다.
+
+    exhausted=True면 연속 재큐 상한(TTS_REQUEUE_MAX)에 도달해 FAILED로 마킹했다는 뜻이다.
+    """
+
+    def __init__(self, msg: str = "", *, exhausted: bool = False) -> None:
+        super().__init__(msg)
+        self.exhausted = exhausted
 
 
 def _requeue_without_retry(post_id: int, retry_before: int, note: str) -> bool:
@@ -289,19 +299,68 @@ def _get_retry_count(post_id: int) -> int:
     return int((row[0] if row else 0) or 0)
 
 
+def _get_last_error(post_id: int) -> str | None:
+    with SessionLocal() as session:
+        row = session.query(Post.last_error).filter(Post.id == post_id).first()
+    return (row[0] if row else None)
+
+
+def _handle_tts_unavailable(post_id: int, retry_before: int, exc: Exception, where: str) -> bool:
+    """TTSUnavailable 처리: 연속 횟수 상한 전이면 APPROVED 재큐(+백오프 마커), 도달하면 FAILED.
+
+    Returns:
+        True면 상한 도달로 FAILED 마킹함, False면 재큐함.
+    횟수는 posts.last_error 선두 마커에 저장한다(스키마 변경 없음, tts_requeue 모듈 참고).
+    """
+    count = tts_requeue.next_count(_get_last_error(post_id))
+    if tts_requeue.is_exhausted(count):
+        _mark_post_failed(
+            post_id,
+            error=(
+                f"TTS_UNAVAILABLE_EXHAUSTED: {where} TTS 서버 불가가 연속 {count}회"
+                f"(상한 TTS_REQUEUE_MAX={tts_requeue.max_requeues()}) — 마지막 사유: {exc}"
+            ),
+        )
+        logger.error("✖ TTS 불가 연속 %d회 — FAILED 처리: post_id=%d | %s", count, post_id, exc)
+        return True
+    _requeue_without_retry(post_id, retry_before, tts_requeue.format_note(count, f"{where} TTS 서버 불가({exc})"))
+    logger.warning(
+        "↩ %s TTS 서버 불가 — APPROVED 재큐 %d/%d회(retry_count 유지=%d, 백오프 %ds): post_id=%d | %s",
+        where, count, tts_requeue.max_requeues(), retry_before,
+        int(tts_requeue.backoff_sec(count)), post_id, exc,
+    )
+    return False
+
+
 async def _run_llm_tts_supervised(processor, post_id: int):
-    """llm_tts_stage 실행. TTSUnavailable이면 APPROVED로 재큐(retry_count 유지)하고 _TTSRequeued를 던진다."""
+    """llm_tts_stage 실행. TTSUnavailable이면 APPROVED로 재큐(retry_count 유지, 횟수 상한·백오프)하고
+    _TTSRequeued를 던진다. 상한 도달 시에는 FAILED로 마킹하고 exhausted=True로 던진다."""
     retry_before = _get_retry_count(post_id)
     try:
         return await processor.llm_tts_stage(post_id)
     except TTSUnavailable as exc:
-        _requeue_without_retry(
-            post_id, retry_before,
-            f"TTS 서버 불가({exc}) → APPROVED 재큐(재시도 횟수 유지)",
+        exhausted = _handle_tts_unavailable(post_id, retry_before, exc, "LLM+TTS")
+        raise _TTSRequeued(str(exc), exhausted=exhausted) from exc
+
+
+def _pick_next_approved(now: float | None = None) -> tuple[int | None, str | None]:
+    """처리할 APPROVED 글 1건(id, site_code). TTS 재큐 백오프 중인 글은 건너뛰고 다음 글을 고른다.
+
+    정렬은 기존과 동일(again_spring 우선, 오래된 순). 앞 글이 백오프 중이어도 뒤 글이 진행된다.
+    """
+    with SessionLocal() as session:
+        candidates = (
+            session.query(Post.id, Post.site_code, Post.last_error)
+            .filter(Post.status == PostStatus.APPROVED)
+            .order_by(case((Post.site_code == "again_spring", 0), else_=1), Post.created_at.asc())
+            .limit(_POLL_CANDIDATE_LIMIT)
+            .all()
         )
-        logger.warning("↩ TTS 서버 불가 — APPROVED 재큐(retry_count 유지=%d): post_id=%d | %s",
-                       retry_before, post_id, exc)
-        raise _TTSRequeued(str(exc)) from exc
+    now = time.time() if now is None else now
+    for cid, csite, cerr in candidates:
+        if tts_requeue.is_eligible(cerr, now):
+            return cid, csite
+    return None, None
 
 
 async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
@@ -316,16 +375,7 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
         post_id: int | None = None
         post_site: str | None = None
         try:
-            with SessionLocal() as session:
-                post = (
-                    session.query(Post)
-                    .filter(Post.status == PostStatus.APPROVED)
-                    .order_by(case((Post.site_code == "again_spring", 0), else_=1), Post.created_at.asc())
-                    .first()
-                )
-                if post is not None:
-                    post_id = post.id
-                    post_site = post.site_code
+            post_id, post_site = _pick_next_approved()
         except Exception:
             # DB 끊김 등 일시 오류로 워커 태스크 전체가 죽지 않게 한다 (프로세스 종료 → 재시작 루프 방지).
             logger.warning("APPROVED 폴링 실패 — 다음 주기에 재시도", exc_info=True)
@@ -369,9 +419,9 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
                 try:
                     script, audio_path = await _run_llm_tts_supervised(processor, post_id)
                     result = (post_id, script, audio_path)
-                except _TTSRequeued:
+                except _TTSRequeued as rq:
                     _inflight_post_ids.discard(post_id)
-                    requeued_hold = True
+                    requeued_hold = not rq.exhausted  # 상한 도달(FAILED)이면 대기 없이 다음 글로
                 except Exception as exc:
                     from ai_worker.llm.transport import LLMContentRefusalError
                     if isinstance(exc, LLMContentRefusalError):
@@ -434,10 +484,7 @@ async def _render_worker(render_queue: asyncio.PriorityQueue) -> None:
         except TTSUnavailable as exc:
             # 렌더 중 댓글/outro TTS 폴백이 서버 장애로 실패 — FAILED 대신 APPROVED 재큐(재시도 횟수 유지).
             logger.warning("렌더 중 TTS 서버 불가 — APPROVED 재큐: post_id=%d | %s", post_id, exc)
-            _requeue_without_retry(
-                post_id, _get_retry_count(post_id),
-                f"렌더 중 TTS 서버 불가({exc}) → APPROVED 재큐",
-            )
+            _handle_tts_unavailable(post_id, _get_retry_count(post_id), exc, "렌더 중")
         except Exception as exc:
             logger.exception("렌더링 실패: post_id=%d", post_id)
             _mark_post_failed(post_id, error=repr(exc))

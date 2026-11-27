@@ -43,7 +43,12 @@ _READY_POLL_SEC = 2.0
 _SPEECH_CHAR = re.compile(r"[0-9A-Za-z가-힣]")
 
 # 일시 장애로 취급할 클라이언트 예외 (재시도 소진 후 도달)
-_TRANSIENT = (ConnectionFailed, RequestTimeout, RateLimited, Unavailable, ServerError, WaitTimeout)
+# ServerError는 여기 없다: 502/504(게이트웨이 = 서버 다운)만 일시 장애, 그 외 5xx(500 등)는
+# 같은 요청이 계속 500을 내는 "요청 고유 결함" 가능성이 높아 제한 횟수 후 TTSError로 승격한다.
+_TRANSIENT = (ConnectionFailed, RequestTimeout, RateLimited, Unavailable, WaitTimeout)
+_GATEWAY_STATUSES = (502, 504)
+_SERVER_ERROR_ATTEMPTS = 2     # 500류 서버 오류 총 시도 횟수(첫 시도 포함). 소진 시 TTSError.
+_SERVER_ERROR_RETRY_SEC = 2.0  # 500 재시도 전 대기(테스트가 0으로 monkeypatch)
 
 
 class TTSUnavailable(Exception):
@@ -51,7 +56,11 @@ class TTSUnavailable(Exception):
 
 
 class TTSError(RuntimeError):
-    """재시도해도 소용없는 합성 실패(요청 거부·job 영구 실패)."""
+    """재시도해도 소용없는 합성 실패(요청 거부·job 영구 실패·반복되는 서버 500)."""
+
+
+class _TTSServerFault(TTSError):
+    """서버가 500류로 응답(1회분). _synthesize_blocking이 제한 횟수 재시도한 뒤 TTSError로 확정한다."""
 
 
 def _new_client() -> LocalTTS:
@@ -83,6 +92,26 @@ def build_options(voice: str, request_id: str) -> dict:
 
 def _synthesize_blocking(text: str, voice: str, output_path: Path, request_id: str,
                          scene_type: str) -> Path:
+    """합성 1건. 500류 서버 오류는 최대 _SERVER_ERROR_ATTEMPTS회 시도 후 TTSError(비일시)로 확정한다.
+
+    같은 request_id(=Idempotency-Key)로 재시도하므로 서버가 중복 job을 만들지 않는다.
+    연결 실패·503·429·504/502·WaitTimeout은 기존대로 TTSUnavailable(일시 장애).
+    """
+    for attempt in range(1, _SERVER_ERROR_ATTEMPTS + 1):
+        try:
+            return _synthesize_once(text, voice, output_path, request_id, scene_type)
+        except _TTSServerFault as exc:
+            if attempt >= _SERVER_ERROR_ATTEMPTS:
+                raise TTSError(
+                    f"Local-TTS 서버 오류 {attempt}회 연속(비일시로 처리): {exc} [{request_id}]"
+                ) from exc
+            logger.warning("Local-TTS 서버 오류 — 재시도(%d/%d): %s", attempt, _SERVER_ERROR_ATTEMPTS, exc)
+            time.sleep(_SERVER_ERROR_RETRY_SEC)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _synthesize_once(text: str, voice: str, output_path: Path, request_id: str,
+                     scene_type: str) -> Path:
     t0 = time.monotonic()
     options = build_options(voice, request_id)
     try:
@@ -105,6 +134,10 @@ def _synthesize_blocking(text: str, voice: str, output_path: Path, request_id: s
                 pass
     except _TRANSIENT as exc:
         raise TTSUnavailable(f"Local-TTS 일시 장애({type(exc).__name__}): {exc} [{request_id}]") from exc
+    except ServerError as exc:
+        if exc.status in _GATEWAY_STATUSES:
+            raise TTSUnavailable(f"Local-TTS 게이트웨이 오류({exc.status}): {exc} [{request_id}]") from exc
+        raise _TTSServerFault(str(exc)) from exc
     except JobFailed as exc:
         if exc.retryable:
             raise TTSUnavailable(f"Local-TTS job 일시 실패: {exc} [{request_id}]") from exc

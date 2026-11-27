@@ -52,6 +52,7 @@ TTS는 외부 **Local-TTS 제공자**(`http://local-tts:8500`, Supertonic)에 �
 | `TTS_SERVER_TOKEN` | `""` | 서버가 `LOCAL_TTS_TOKEN`을 요구할 때만 설정(`.env`에서만 읽음) |
 | `TTS_SERVER_TIMEOUT_SEC` | `120` | 요청 1건 read 타임아웃(초) |
 | `TTS_SERVER_RETRIES` | `3` | 첫 시도 이후 추가 재시도(연결 실패·429·503) |
+| `TTS_REQUEUE_MAX` | `5` | 같은 글의 연속 TTSUnavailable 재큐 상한. 도달 시 FAILED (`TTS_REQUEUE_BACKOFF_BASE_SEC`=30·`_MAX_SEC`=600은 settings 기본값, compose 미노출) |
 | `TTS_SERVER_MAX_WAIT_SEC` | `3600` | job 완료·서버 준비 대기 상한(초). 소진 시 `TTSUnavailable` → APPROVED 재큐 |
 | `TTS_PROFILE` | `wagglebot/shorts-ko` | 서버 발음 프로필(비우면 미사용). 원본 `config/tts_profile/shorts-ko.yaml` |
 | `TTS_CLIENT_ID` | `wagglebot` | `X-Client-Id` = 프로필 네임스페이스(프로필 키 접두와 같아야 함) |

@@ -102,9 +102,10 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
 
     # ── narrator voice 결정 (사연자 연령/성별 기반) ────────────────
     from config.settings import load_pipeline_config, VOICE_DEFAULT
-    narrator_voice: str = (
-        load_pipeline_config().get("tts_voice") or VOICE_DEFAULT or "default"
-    )
+    from ai_worker.tts.voice_resolver import resolve_voice
+    narrator_voice: str = resolve_voice(
+        load_pipeline_config().get("tts_voice") or VOICE_DEFAULT or "default", post_id,
+    )  # post_id 시드로 프리셋 확정 — 이후 합성·씬 voice_override가 모두 같은 값
     logger.info(
         "[content_processor] narrator_voice=%s (pipeline tts_voice)",
         narrator_voice,

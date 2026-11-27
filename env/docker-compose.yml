@@ -129,6 +129,7 @@ services:
       TTS_SERVER_MAX_WAIT_SEC: "${TTS_SERVER_MAX_WAIT_SEC:-3600}"
       TTS_PROFILE: "${TTS_PROFILE:-wagglebot/shorts-ko}"
       TTS_CLIENT_ID: "${TTS_CLIENT_ID:-wagglebot}"
+      TTS_REQUEUE_MAX: "${TTS_REQUEUE_MAX:-5}"
       TTS_SPEED: "${TTS_SPEED:-1.1}"
       COMFYUI_URL: "http://comfyui:8188"
       VIDEO_GEN_ENABLED: "${VIDEO_GEN_ENABLED:-false}"

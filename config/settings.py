@@ -292,6 +292,11 @@ TTS_SERVER_RETRIES: int = int(os.getenv("TTS_SERVER_RETRIES", "3"))             
 TTS_SERVER_MAX_WAIT_SEC: float = float(os.getenv("TTS_SERVER_MAX_WAIT_SEC", "3600"))  # job 완료·서버 준비 대기 상한
 TTS_PROFILE: str = os.getenv("TTS_PROFILE", "wagglebot/shorts-ko")                # 서버 정규화 프로필(비우면 미사용)
 TTS_CLIENT_ID: str = os.getenv("TTS_CLIENT_ID", "wagglebot")                      # X-Client-Id = 프로필 네임스페이스
+# TTSUnavailable 재큐 상한·백오프 — 같은 글이 계속 실패(서버가 그 글에만 500/429/대기초과)할 때
+# 무한 재큐로 뒤 글이 막히는 것을 막는다. 연속 N회째에 FAILED, 그 전엔 30s·60s·120s… 최대 10분 백오프.
+TTS_REQUEUE_MAX: int = int(os.getenv("TTS_REQUEUE_MAX", "5"))
+TTS_REQUEUE_BACKOFF_BASE_SEC: float = float(os.getenv("TTS_REQUEUE_BACKOFF_BASE_SEC", "30"))
+TTS_REQUEUE_BACKOFF_MAX_SEC: float = float(os.getenv("TTS_REQUEUE_BACKOFF_MAX_SEC", "600"))
 
 # 같은 phase에서 진행 표시(stamp)가 이 시간(초) 넘게 없으면 inflight 하트비트 갱신 중단(경고 로그)
 PHASE_STALL_SEC = float(os.getenv("PHASE_STALL_SEC", "7200"))

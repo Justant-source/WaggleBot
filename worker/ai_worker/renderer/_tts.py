@@ -553,12 +553,17 @@ async def _tts_chunk_async(
     pre_audio: str | None = None,
     voice_key: str = "default",
     emotion: str = "",
+    post_id: int | None = None,
 ) -> float:
     """문장 TTS 생성. pre_audio가 유효하면 재사용, 없으면 Local-TTS 서버 호출.
 
     emotion은 호출 호환용으로만 받으며 무시한다(감정 마커 폐기).
 
     outro(클로징)는 voice+text 키로 디스크 캐시해 매번 같은 음량·톤을 재사용한다.
+
+    post_id: 게시글 ID. 레거시 키/'default'는 post_id 시드로 프리셋이 정해지므로, 캐시 키 해석과
+    실제 합성이 반드시 같은 post_id를 써야 한다(None으로 해석하면 시드 0 프리셋과 실제 합성 프리셋이
+    어긋나 같은 영상에서 낭독·outro 목소리가 달라진다).
     """
     import asyncio
     import shutil
@@ -579,7 +584,8 @@ async def _tts_chunk_async(
 
     # Fixed closing and deterministic comment speech can be reused across posts.
     # 캐시 키는 해석된 프리셋 기준(키 별칭·결정적 랜덤이 달라도 같은 목소리면 공유).
-    cache_voice = resolve_voice(voice_key, None)
+    # 합성에 쓰는 것과 동일한 (voice_key, post_id)로 한 번만 해석하고, 해석된 프리셋을 합성에도 그대로 넘긴다.
+    cache_voice = resolve_voice(voice_key, post_id)
     cache_path = None
     if scene_type == "outro":
         cache_path = _outro_cache_path(cache_voice, text)
@@ -604,8 +610,8 @@ async def _tts_chunk_async(
     for attempt in range(2):
         try:
             await tts_synthesize(
-                text=text, scene_type=scene_type, voice_key=voice_key,
-                output_path=out_path,
+                text=text, scene_type=scene_type, voice_key=cache_voice,
+                output_path=out_path, post_id=post_id,
             )
             break
         except TTSUnavailable:
@@ -649,6 +655,7 @@ async def _generate_tts_chunks(
     rate: str,
     outro_duration: float = 1.5,
     narration_audio: Path | None = None,
+    post_id: int | None = None,
 ) -> list[float]:
     """plan 순서로 TTS를 생성하고 각 프레임의 지속 시간 목록을 반환한다.
 
@@ -752,6 +759,7 @@ async def _generate_tts_chunks(
             chunk_emotion = sent.get("tts_emotion", "")
             dur = await _tts_chunk_async(
                 text, frame_idx, output_dir, scene_type, pre_audio, chunk_voice, chunk_emotion,
+                post_id=post_id,
             )
             chunk_path = output_dir / f"chunk_{frame_idx:03d}.wav"
             if dur > 0 and chunk_path.exists():
