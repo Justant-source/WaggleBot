@@ -1,6 +1,6 @@
 # WaggleBot — 파이프라인 런타임 동작
 
-> last-verified: 2026-11-22 · code-ref: `worker/ai_worker/core/main.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/`
+> last-verified: 2026-11-27 · code-ref: `worker/ai_worker/core/main.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/renderer/`
 > scope: ai_worker 처리 루프, 4단계 폴백, 피드백 루프, Phase5‖6 병렬 시퀀싱 — SSOT
 
 ## 처리 루프
@@ -12,19 +12,19 @@
 3. 8-Phase 실행 (`content_processor.py`)
 4. 성공 → `PREVIEW_RENDERED` / `RENDERED`
 5. 실패 → `FAILED`, `retry_count++`, `MAX_RETRY_COUNT=3` 초과 시 영구 FAILED
-6. **하트비트**: 워커가 소유한 post(LLM+TTS → 렌더 큐 대기 → 렌더)는 `_heartbeat_loop`가 `HEARTBEAT_INTERVAL_SEC`(30s)마다 `last_heartbeat_at`·`updated_at`만 원자적으로 갱신한다(`touch_runtime_heartbeat`, JSON_SET — 단계/문구 불변). 큐·GPU 락 대기, 렌더 중에도 '살아있음'이 보인다. 단, 같은 phase에서 진행 표시(`progress.stamped_at` — `stamp_progress`만 갱신, Fish 대기 라벨 stamp 포함)가 `PHASE_STALL_SEC`(기본 7200s)를 넘으면 해당 post의 하트비트 갱신을 멈추고 경고 로그만 남긴다(`done=true` 큐 대기·`stamped_at` 없는 레거시 행은 제외; 소유 코루틴은 취소하지 않으며 inflight는 회수 대상에서도 계속 제외). 소유자 없는 고착 PROCESSING은 `_stale_reclaim_loop`/시작 시 `reclaim_stuck_posts`가 회수한다([shared/60-runtime.md](../shared/60-runtime.md)). APPROVED 폴링의 DB 오류는 로그 후 다음 주기에 재시도한다(워커 태스크 종료 방지). Phase 경계에서도 `posts.updated_at`와 `content_runtime_state(progress).last_heartbeat_at`을 갱신한다. 진행률·Phase 7 체크포인트·SLA·품질 진단은 키별 원자적 upsert라 장시간 렌더 세션과 충돌하지 않는다.
+6. **하트비트**: 워커가 소유한 post(LLM+TTS → 렌더 큐 대기 → 렌더)는 `_heartbeat_loop`가 `HEARTBEAT_INTERVAL_SEC`(30s)마다 `last_heartbeat_at`·`updated_at`만 원자적으로 갱신한다(`touch_runtime_heartbeat`, JSON_SET — 단계/문구 불변). 큐·GPU 락 대기, 렌더 중에도 '살아있음'이 보인다. 단, 같은 phase에서 진행 표시(`progress.stamped_at` — `stamp_progress`만 갱신)가 `PHASE_STALL_SEC`(기본 7200s)를 넘으면 해당 post의 하트비트 갱신을 멈추고 경고 로그만 남긴다(`done=true` 큐 대기·`stamped_at` 없는 레거시 행은 제외; 소유 코루틴은 취소하지 않으며 inflight는 회수 대상에서도 계속 제외). 소유자 없는 고착 PROCESSING은 `_stale_reclaim_loop`/시작 시 `reclaim_stuck_posts`가 회수한다([shared/60-runtime.md](../shared/60-runtime.md)). APPROVED 폴링의 DB 오류는 로그 후 다음 주기에 재시도한다(워커 태스크 종료 방지). Phase 경계에서도 `posts.updated_at`와 `content_runtime_state(progress).last_heartbeat_at`을 갱신한다. 진행률·Phase 7 체크포인트·SLA·품질 진단은 키별 원자적 upsert라 장시간 렌더 세션과 충돌하지 않는다.
 
 렌더 단계는 진행률을 별도 세션으로 저장한 직후 기존 읽기 트랜잭션을 종료하고 최신 `contents` 행을 다시 읽는다. 마케팅 deadline 상태 저장이 같은 행의 오래된 스냅샷을 커밋해 MariaDB errno 1020으로 렌더를 실패시키는 것을 방지한다.
 
 기존 `contents.pipeline_state`는 롤링 업그레이드 중 읽기 폴백만 유지한다.
 
-**Fish 게이트 대기:** Fish 수명주기는 Flight-Brain `atomic_tts` GPU 데몬이 관리한다(유휴 10분 또는 Windows X-Plane 실행 시 Fish 정지, 2026-11-22 기준). `_llm_tts_worker`는 TTS 직전 Fish health가 실패하면 `fish_gate`로 문의·대기하며(blocked/미응답은 30분 재질의, 30초 heartbeat) post를 FAILED로 만들지 않는다. 대기 중 GPU 락을 쥐므로 뒤 post·렌더도 함께 대기하고, 총 1시간(`FISH_GATE_MAX_WAIT_SEC`, 요청 단위 합산) 초과 시에만 위 FAILED 경로를 탄다. GPU 데몬 임대는 실제 `/v1/tts` 요청 구간에만 잡고 recover 대기 중에는 풀어둔다. 바인딩은 `try/finally`에서 `fish_gate.unbind_post(post_id)`로 해제하며(post_id가 일치할 때만 해제 — Phase 5와 Phase 8 렌더 스레드가 겹쳐도 남의 바인딩을 지우지 않음), `_with_phase_heartbeat`의 progress 갱신 실패는 로그만 남기고 본 작업을 가리지 않는다. 실패 경로(`main.py`)도 `unbind_post()`를 호출한다. **Fish 차단 보류·재큐:** `_llm_tts_worker`는 APPROVED를 집기 전에 `fish_gate.blocked_reason()`을 확인해 blocked면 post를 집지 않고(PROCESSING·gpu_lock·retry_count 보존) `max(AI_POLL_INTERVAL, FISH_GATE_MIN_RECHECK_SEC)` 대기 후 재확인한다(상태 변화 시에만 INFO 로그; 게이트 비활성·예외·unavailable은 fail-open). LLM 단계도 함께 보류한다(단순성 우선). 처리 중 Phase 5 게이트 대기가 `FISH_GATE_REQUEUE_AFTER_SEC`(기본 600s)를 넘고 여전히 blocked면 `_run_llm_tts_supervised`가 처리 태스크를 취소하고 `retry_count`를 시작 전 값으로 복원한 채 APPROVED로 재큐한다(대본은 재생성될 수 있음, TTS 캐시 재사용). 상세는 [pipeline.md Phase 5](30-components/pipeline.md).
+**TTS 서버 장애 보류·재큐 (Local-TTS, [ADR-0006](../shared/90-adr/0006-local-tts-provider.md)):** TTS는 외부 Local-TTS 서버 요청이며 게이트·GPU 임대·컨테이너 제어·`docker.sock`은 없다. 서버 장애는 post를 FAILED로 만들지 않는다. (1) **집기 전 보류:** `_llm_tts_worker`는 APPROVED를 집기 전에 `wait_for_tts_server(timeout_sec=3)`로 `/readyz`를 비차단 확인해 실패하면 post를 집지 않고(PROCESSING·gpu_lock·retry_count 보존) `max(AI_POLL_INTERVAL, 30s)` 후 재확인한다(상태 변화 시에만 INFO 로그, 확인 중 예외는 fail-open). 워커 기동 시에도 같은 비차단 확인만 하고 서버가 없어도 기동은 계속한다. (2) **처리 중 재큐:** `synthesize()`가 `TTS_SERVER_MAX_WAIT_SEC`(기본 3600s) 안에 서버를 얻지 못하거나 재시도(`TTS_SERVER_RETRIES`)가 소진돼 `TTSUnavailable`을 던지면 `_run_llm_tts_supervised`가 `retry_count`를 시작 전 값으로 복원한 채 `PROCESSING → APPROVED`로 되돌리고, 다시 곧바로 집지 않도록 30초 대기한다(대본은 재생성될 수 있음, TTS 캐시 재사용). 렌더 단계에서 댓글/아웃트로 TTS 폴백이 `TTSUnavailable`이면 같은 방식으로 APPROVED 재큐한다. 대기 상한의 SSOT는 `TTS_SERVER_MAX_WAIT_SEC` 하나이며 processor에는 별도 대기 루프가 없다. 요청 거부·job 영구 실패(`TTSError`)와 정규화 후 빈 텍스트(`ValueError`)는 일반 실패 경로다. GPU 락은 영상 생성(Phase 7)과의 직렬화 용도만 남는다. 상세는 [pipeline.md Phase 5](30-components/pipeline.md).
 
 ## Again Spring 마케팅 고속 경로
 
-- 외부 요청이 `preScripted=true`이면 원격 Claude 청킹을 건너뛰고 제목/본문을 로컬 문장 분할해 TTS로 보낸다. Claude는 원격 호출이므로 GPU 락을 점유하지 않으며 Fish Speech와 비디오 구간만 같은 GPU 락을 사용한다.
+- 외부 요청이 `preScripted=true`이면 원격 Claude 청킹을 건너뛰고 제목/본문을 로컬 문장 분할해 TTS로 보낸다. Claude는 원격 호출이므로 GPU 락을 점유하지 않으며 비디오 구간만 같은 GPU 락을 사용한다(TTS는 외부 서버 요청).
 - `deadlineAt`을 넘긴 critical 작업은 `FAILED`로 고정하지 않고 `content_runtime_state(sla)`에 degraded 사유를 남긴다. `MARKETING_CRITICAL` 작업도 마감 시각이 지났다는 이유만으로 댓글 수를 줄이지 않는다. pre-scripted 마케팅 렌더의 댓글 정책은 SLA와 무관하게 좋아요 상위 2개(동률은 댓글 ID)다.
-- 댓글 보이스는 작성자 해시로 결정적으로 선택하며 voice/text/emotion 키의 전역 WAV 캐시를 Reels·Shorts 재시도 간 공유한다.
+- 댓글 보이스는 작성자 해시로 결정적으로 선택하며 프리셋(M1~F5)/text 키의 전역 WAV 캐시(감정 마커 폐기로 emotion 키 없음)를 Reels·Shorts 재시도 간 공유한다.
 - 본문 길이 품질 게이트는 hook·사연·CTA의 narrator WAV만 대상으로 한다. 댓글 2개와 아웃트로는 별도 tail이며 `generation_diagnostics`에 본문/댓글/아웃트로/최종 MP4 길이를 남긴다.
 
 ## 게시글별 video_gen 오버라이드
@@ -57,8 +57,7 @@ ai_worker가 root의 `/.cache/huggingface/xet`에 쓰려다 실패하는 것을 
   실제 첫 음절이 약 150ms에 오게 한다. WAV 음성/내부 휴지는 trim하지 않으며 발화 뒤 500ms 여백을 둔다.
 - 최종 FFmpeg mux는 합성 오디오 총 길이로 `-t`/`-shortest`를 적용한다. 정적 PNG concat은 terminal
   PNG를 중복하지 않고 `tpad=stop_mode=clone:stop=-1`로 마지막 프레임을 유지하며 CFR 30fps로 출력한다.
-- `processor._safe_generate_tts()` 디스크 캐시는 `voice:text:speed:pp_v4`를 사용한다. 따라서
-  기본 속도 1.1배 전환 후 기존 `pp_v3`(1.2배) 결과를 재사용하지 않는다.
+- `processor._safe_generate_tts()` 디스크 캐시는 `프리셋:text:speed:pp_v7`를 사용한다. Local-TTS 전환으로 구 `pp_v6`(Fish) 결과를 재사용하지 않는다. 렌더 타이밍 정렬(`tts/alignment.py`, faster-whisper ASR)은 이번 전환에서 **유지**했으며, Local-TTS 응답 `chunks[]` 기반 전환은 후속 과제다.
 
 **#449 실측 검증 (2026-08-05):** 31.122336초 narrator WAV의 연속 26줄을
 small/int8 CPU alignment으로 정렬했을 때 confidence `1.0`을 얻었다. 첫 150ms lead를 포함한
@@ -79,7 +78,7 @@ prepend했다. 최종 MP4의 첫 text→speech silence는 `0.149592s`, outro tex
 
 `video_gen_enabled_for_post(post_id)`가 `true`일 때만 실행. ComfyUI LTX-2 실패 시 순차 폴백:
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, worker/ai_worker/renderer/ -->
 
 ```mermaid
@@ -98,7 +97,7 @@ flowchart LR
 
 `VIDEO_GEN_ENABLED=true`일 때 `asyncio.gather(tts_phase(), video_prompt_phase())`로 동시 실행.
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, worker/ai_worker/renderer/ -->
 
 ```mermaid
@@ -117,11 +116,11 @@ sequenceDiagram
 ```
 
 - Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경 → 뮤텍스 불필요
-- GPU Phase(TTS·ComfyUI)를 병렬에 포함 **금지** → [ADR-0003](../shared/90-adr/0003-phase56-parallel.md)
+- GPU Phase(ComfyUI)를 병렬에 포함 **금지**(TTS는 외부 Local-TTS 서버 요청이라 Phase 5로 병렬에 포함됨) → [ADR-0003](../shared/90-adr/0003-phase56-parallel.md)
 
 ## 피드백 루프
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, worker/ai_worker/renderer/ -->
 
 ```mermaid

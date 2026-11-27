@@ -1,6 +1,6 @@
 # WaggleBot — 설정 레퍼런스
 
-> **last-verified:** 2026-11-22
+> **last-verified:** 2026-11-27
 > **scope:** settings.py 변수, pipeline.json, scene_policy.json, layout.json, .env — SSOT
 
 ## 설정 파일 구조
@@ -37,7 +37,6 @@ env/
 | `HEARTBEAT_INTERVAL_SEC` | `30` | 소유 중 post 하트비트 갱신 주기(초) |
 | `STALE_SCAN_INTERVAL_SEC` | `60` | 고착 PROCESSING 점검 주기(초) |
 | `PHASE_STALL_SEC` | `7200` | 같은 phase에서 진행 stamp가 이 시간 넘게 없으면 inflight 하트비트 갱신 중단(경고) |
-| `FISH_GATE_REQUEUE_AFTER_SEC` | `600` | Fish blocked 상태 Phase 5 대기가 이 시간 넘으면 retry_count 유지한 채 APPROVED 재큐 |
 | `LLM_WORKER_URL` | `http://llm-worker:8090` | LLM 게이트웨이 주소 |
 | `DEFAULT_LLM_MODEL` | `haiku` | 기본 LLM 모델 별칭 |
 | `MEDIA_DIR` | `assets/media` | 미디어 파일 루트 |
@@ -45,36 +44,28 @@ env/
 
 ### TTS 설정
 
-Fish(고품질 TTS) 수명주기는 Flight-Brain의 `atomic_tts` GPU 데몬이 관리한다(2026-11-22 기준: 유휴 10분 또는 Windows X-Plane 실행 시 Fish 정지). WaggleBot은 Fish가 내려가 있으면 게이트(`tts/fish_gate.py`)로 문의·대기한다. 게이트 변수 중 compose가 ai_worker에 전달하는 것은 `ATOMIC_TTS_FISH_GATE_URL`·`FISH_GATE_RECHECK_SEC`·`FISH_GATE_MAX_WAIT_SEC`뿐이며 나머지는 코드 기본값이다. `dashboard_worker`는 `FISH_GATE_ENABLED=0`.
+TTS는 외부 **Local-TTS 제공자**(`http://local-tts:8500`, Supertonic)에 요청만 보낸다. WaggleBot은 합성 코드·게이트·GPU 임대·컨테이너 제어를 갖지 않는다([ADR-0006](../shared/90-adr/0006-local-tts-provider.md)). 서버 정규화·청크 분할·loudnorm(-16)·속도 적용은 서버가 하고, 앱은 `prenorm.py` 전처리만 한다([ADR-0008](../shared/90-adr/0008-tts-normalization-standard.md)). 아래 `TTS_SERVER_*`·`TTS_PROFILE`·`TTS_CLIENT_ID`·`TTS_SPEED`는 compose가 `ai_worker`와 `dashboard_worker`에 같은 값으로 전달한다(`env/.env.example` 참조).
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `FISH_SPEECH_URL` | `http://fish-speech:8080` | OpenAudio S1 API (호스트 매핑 포트는 **8082**) |
-| `FISH_SPEECH_TIMEOUT` | `300` | TTS 요청 타임아웃 (초) |
-| `ATOMIC_TTS_FISH_GATE_URL` | `http://172.20.0.1:8100/api/gpu/fish/ensure` | Fish 게이트(Flight-Brain 호스트 서비스 :8100). compose 네트워크 게이트웨이로 도달 확인됨. 대안 `http://host.docker.internal:8100/api/gpu/fish/ensure`(extra_hosts host-gateway), 빈 값=게이트 호출 없이 health만 대기 |
-| `FISH_GATE_ENABLED` | `1` | `0`이면 게이트·대기 로직 전체 비활성(기존 동작) |
-| `FISH_GATE_RECHECK_SEC` | `1800` | blocked/unavailable/미응답 시 게이트 재질의 주기(30분). blocked 응답의 `retry_after_sec`가 있으면 `[FISH_GATE_MIN_RECHECK_SEC, RECHECK_SEC]`로 클램프해 그 간격을 따른다 |
-| `FISH_GATE_MIN_RECHECK_SEC` | `30` | `retry_after_sec` 하한 |
-| `FISH_LEASE_URL` | `<ATOMIC_TTS_FISH_GATE_URL에서 /ensure를 뗀 값>/lease` (`http://172.20.0.1:8100/api/gpu/fish/lease`) | Fish 임대 API base(`POST` base·`/heartbeat`·`/release`). `fish_gate.lease(why)`가 Fish를 실제로 쓰는 동안만 임대(ttl 90초)를 잡으며, 실패해도 TTS는 막히지 않는다 |
-| `FISH_LEASE_ENABLED` / `FISH_LEASE_HEARTBEAT_SEC` | `1` / `30` | 임대 기능 on/off, heartbeat 간격. `FISH_GATE_ENABLED=0`이면 임대도 no-op |
-| `FISH_GATE_MAX_WAIT_SEC` | `3600` | 총 대기 상한(1시간, 요청 단위 합산). 초과 시 `FishGateTimeout`→기존 FAILED 경로 |
-| `FISH_GATE_HEARTBEAT_SEC` | `30` | 대기 중 progress heartbeat·Fish health 확인 주기 |
-| `FISH_GATE_START_POLL_SEC` / `FISH_GATE_START_MAX_SEC` | `10` / `360` | `starting` 응답 시 Fish health 폴링 간격/상한 |
-| `FISH_SPEECH_TEMPERATURE` | `0.8` | 생성 다양성 (S1 기본값, ADR-0005) |
-| `FISH_SPEECH_TOP_P` | `0.8` | nucleus sampling |
-| `FISH_SPEECH_REPETITION_PENALTY` | `1.1` | 반복 억제 |
-| `FISH_SPEECH_NORMALIZE` | `False` | 서버 정규화 비활성 (자체 한국어 정규화 사용) |
-| `FISH_SPEECH_USE_MEMORY_CACHE` | `"on"` | reference_id 인코딩 캐시 |
-| `FISH_SPEECH_CHUNK_LENGTH` | `200` | 서버 청크 길이 |
+| `TTS_SERVER_URL` | `http://local-tts:8500` | Local-TTS 주소(외부 네트워크 `local_tts_net` 별칭) |
+| `TTS_SERVER_TOKEN` | `""` | 서버가 `LOCAL_TTS_TOKEN`을 요구할 때만 설정(`.env`에서만 읽음) |
+| `TTS_SERVER_TIMEOUT_SEC` | `120` | 요청 1건 read 타임아웃(초) |
+| `TTS_SERVER_RETRIES` | `3` | 첫 시도 이후 추가 재시도(연결 실패·429·503) |
+| `TTS_SERVER_MAX_WAIT_SEC` | `3600` | job 완료·서버 준비 대기 상한(초). 소진 시 `TTSUnavailable` → APPROVED 재큐 |
+| `TTS_PROFILE` | `wagglebot/shorts-ko` | 서버 발음 프로필(비우면 미사용). 원본 `config/tts_profile/shorts-ko.yaml` |
+| `TTS_CLIENT_ID` | `wagglebot` | `X-Client-Id` = 프로필 네임스페이스(프로필 키 접두와 같아야 함) |
+| `TTS_SPEED` | `1.1` | 서버 `speed` 옵션으로만 전달. 로컬 atempo 없음(이중 적용 금지). voices.json `params.speed` 오버라이드는 더 이상 합성에 쓰지 않는다 |
 | `TTS_OUTPUT_FORMAT` / `TTS_SAMPLE_RATE` | `wav` / `44100` | 출력 포맷·샘플레이트 |
-| `TTS_SPEED` | `1.1` | 자연스러움 우선 후처리 배속 (피치 보존). voices.json params로 per-voice 오버라이드. 디스크 TTS 캐시 키는 speed+`pp_v4`를 포함해 구 1.2배 WAV를 재사용하지 않음 |
-| `TTS_LOUDNORM_ENABLED` / `_PARAMS` | `True` / `I=-16:TP=-1.5:LRA=11` | EBU R128 음량 정규화 (후 aresample 44100 — concat 호환) |
-| `TTS_MAX_CHARS_PER_REQUEST` | `150` | 초과 시 문장 경계 분할·병합 |
-| `TTS_MAX/MIN_SECS_PER_CHAR` | `0.35` / `0.05` | 길이 검증 상·하한 (비한국어/잘림 감지) |
-| `TTS_EMOTION_ENABLED` | `True` | tts_emotion → 감정 마커 주입 |
-| `TTS_LAUGH_MARKER_ENABLED` | `False` | ㅋㅋ→(laughing) (실험적) |
-| `TTS_SHORT_TEXT_PADDING` | `False` | 짧은 텍스트 패딩 (S1+참조에선 불필요) |
-| `WHISPER_MODEL` / `_DEVICE` / `_COMPUTE_TYPE` | `large-v3` / `cpu` / `int8` | prepare_voice 전사 (CPU, VRAM 무경합) |
+| `TTS_LOUDNORM_ENABLED` / `_PARAMS` | `True` / `I=-16:TP=-1.5:LRA=11` | 렌더러 최종 믹스 단계용(`renderer/_tts.py`). 합성 결과 1차 loudnorm(-16, TP -1.5)은 서버가 수행 |
+
+고정값(코드 상수, `ai_worker/tts/synth.py`): 요청 옵션 `lang=ko`, `chunk={mode:max_chars, max_chars:120}`, `postprocess.loudnorm={i:-16, tp:-1.5}`, `output.format=wav`. 보이스는 `voice_resolver.resolve_voice()`가 항상 `M1~M5`·`F1~F5` 중 하나로 정한다.
+
+**삭제된 설정(Fish 시절):** `FISH_SPEECH_*`, `ATOMIC_TTS_FISH_GATE_URL`, `FISH_GATE_*`, `FISH_LEASE_*`, `TTS_EMOTION_ENABLED`, `TTS_LAUGH_MARKER_ENABLED`, `TTS_SHORT_TEXT_PADDING`, `TTS_MAX_CHARS_PER_REQUEST`, `TTS_MAX/MIN_SECS_PER_CHAR`, `TTS_EMOTION_MARKERS`, `VOICE_REFERENCE_TEXTS`. 감정 마커·ㅋㅋ 웃음 마커·웜업·참조 음성·품질 재시도(`quality.py`)는 폐기됐다.
+
+**디스크 TTS 캐시:** `processor.py`의 `_TTS_POST_PROCESS_CACHE_VERSION = "pp_v7"`, 키 `프리셋:텍스트:speed:pp_v7`. 캐시 키는 실제 해석된 프리셋(M1~F5) 기준이라, 구 `pp_v6`(Fish) WAV는 재사용되지 않는다.
+
+| `WHISPER_MODEL` / `_DEVICE` / `_COMPUTE_TYPE` | `large-v3` / `cpu` / `int8` | faster-whisper 설정(CPU, VRAM 무경합). `prepare_voice.py`는 삭제됨 — 현재 렌더 타이밍 정렬은 아래 `TTS_ALIGNMENT_*` |
 | `HF_HOME` / `HF_HUB_CACHE` / `HF_XET_CACHE` / `XDG_CACHE_HOME` | `assets/models/faster-whisper/huggingface/**` | settings import 시 writable `WHISPER_DOWNLOAD_ROOT` 하위로 강제. uid 1000 worker의 `/.cache` 권한 실패 방지 |
 | `HF_HUB_DISABLE_XET` | `1` | Xet 별도 cache를 비활성화해 Hub HTTP download만 사용 |
 | `TTS_ALIGNMENT_MODEL` / `_DEVICE` / `_COMPUTE_TYPE` | `small` / `cpu` / `int8` | 통합 내레이터 WAV의 줄별 실제 발화 시각을 구하는 faster-whisper 정렬 |
@@ -85,18 +76,13 @@ Fish(고품질 TTS) 수명주기는 Flight-Brain의 `atomic_tts` GPU 데몬이 �
 > `KOREAN_CHARS_PER_SEC=4.0`은 speed 1.1 가정값 — per-voice `speed` 오버라이드는
 > `estimate_tts_duration`/클립 길이 추정을 왜곡하므로 신중히 사용.
 
-**TTS_EMOTION_MARKERS (tts_emotion → S1 마커):**
-gentle→`(soft tone)`, cheerful→`(joyful)`, serious→`(serious)`, sad→`(sad)`,
-whispering→`(whispering)`, neutral→`""`, friendly→`(relaxed)`, surprised→`(surprised)`.
-⚠ 씬타입 키의 `EMOTION_TAGS`와는 다른 축.
-
-**VOICE_PRESETS (voices.json v3): `{key: {label, gender, age_range, ref_dir, file, params}}`**
-- `ref_dir`: `assets/voices/<key>/` 폴더 (NN.wav+NN.lab) = fish-speech `reference_id`
-- `file`: 대시보드 sampleUrl(`/api/media/voices/<file>`)·base64 폴백 경로 (`<key>/01.wav`)
-- `params`: per-voice 오버라이드 `{temperature, top_p, speed}` (없으면 전역 기본값)
-- `gender` / `age_range`: 다화자 TTS 자동 배정(`voice_assigner.py`)에서 사용하는 메타데이터
-- 등록/갱신: `python -m tools.prepare_voice --input <녹음> --key <키> --label <라벨>`
-- 키: `config/voices.json`의 `voices[].key`가 정본. 기본 세트는 default, anna, krys, sunny, yohan, anna_kim, blondie, callie, christian, deep_lax, han, hope, ivanna, krishna, lucy, manbo, manu, miguel, min_jun, norah, tara, theo, yohan_koo, yura.
+**VOICE_PRESETS (voices.json v4): `{key: {label, gender, engine}}`**
+- 키 10종: 남 `M1~M5`, 여 `F1~F5` (Supertonic 프리셋, `engine: supertonic`). 정본 = `config/voices.json`
+- 합성 보이스 결정은 `ai_worker/tts/voice_resolver.py`: 프리셋 키는 그대로, 구 키(`seohyeon_ref`·`kangil_ref`·`yura` 등 Fish 참조 음성 키)는 **성별 보존**으로 `random.Random(post_id)` 순열에서 구 키 서수로 매핑, `None`·빈 값·미지 키는 post_id 시드 결정적 랜덤(post_id도 없으면 `F1`). 단 `default`는 구 키 목록의 **남성 4번째 서수**라 성별 보존 규칙에 따라 남성 프리셋(M1~M5 순열 중 하나)으로 해석된다 → [ADR-0007](../shared/90-adr/0007-voice-presets.md)
+- 샘플: `assets/voices/voice_preview_<KEY>.mp3`(사전 생성, backend `/api/tts/voices/{key}/sample`)
+- `ref_dir`·`file`·`params(temperature/top_p/speed)`·`age_range`는 `settings.VOICE_PRESETS` 로더가 읽지만 v4 항목에는 없으며 합성에 쓰지 않는다(레거시 필드)
+- 기본값: `pipeline.json` `tts_engine=local-tts`, `tts_voice=default`(→ 남성 프리셋, post_id별 결정적), `comment_voices=["M2","F2","M3"]`, `scene/settings.yaml` `comment_voice_mapping`: author `M2` · partner `F2` · neutral `default`
+- 등록·갱신 도구(`prepare_voice.py`)는 삭제됨. 발음 프로필 동기화는 `worker/tools/sync_tts_profile.py`(`--dry-run`·업로드·`--activate`)
 
 ### 비디오 설정 (LTX-2)
 
@@ -200,15 +186,15 @@ whispering→`(whispering)`, neutral→`""`, friendly→`(relaxed)`, surprised�
 
 ```json
 {
-  "tts_engine": "fish-speech",
-  "tts_voice": "yohan",
+  "tts_engine": "local-tts",
+  "tts_voice": "default",
   "llm_backend": "api",
   "llm_model": "haiku",
   "llm_model_overrides": {},
   "llm_api_base_url": "https://api.clcocloud.com/claude/v1",
   "llm_prompt_cache": "true",
   "llm_cache_ttl": "5m",
-  "comment_voices": "[\"manbo\", \"anna\", \"han\", \"yura\"]",
+  "comment_voices": "[\"M2\", \"F2\", \"M3\"]",
   "video_resolution": "1080x1920",
   "video_codec": "h264_nvenc",
   "bgm_volume": "0.15",
@@ -374,8 +360,18 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 # AI Worker
 VIDEO_GEN_ENABLED=false
-TTS_ENGINE=fish-speech
-TTS_VOICE=yura
+TTS_ENGINE=local-tts
+TTS_VOICE=default
+
+# TTS (Local-TTS 제공자)
+TTS_SERVER_URL=http://local-tts:8500
+TTS_SERVER_TOKEN=
+TTS_SERVER_TIMEOUT_SEC=120
+TTS_SERVER_RETRIES=3
+TTS_SERVER_MAX_WAIT_SEC=3600
+TTS_PROFILE=wagglebot/shorts-ko
+TTS_CLIENT_ID=wagglebot
+TTS_SPEED=1.1
 LLM_MODEL=haiku
 
 # Telegram

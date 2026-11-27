@@ -1,38 +1,66 @@
 {
-  "version": 3,
-  "_comment": "음성 프리셋 v3. ref_dir=assets/voices/ 하위 폴더(=fish-speech reference_id, NN.wav+NN.lab). gender=male|female|neutral. age_range=[min,max]. worker/tools/prepare_voice.py로 등록/갱신. 2026-08-10: 서현(기본 내레이터)/진우/강일/김경화 앵커 4명으로 선택 범위 축소(사용자 지시) — 나머지 보이스(manbo/manu/yura/host_m/host_f/typecast_ref/hyoeun_ref)는 assets/voices/ 원본은 보존, 카탈로그에서만 제거.",
+  "version": 4,
+  "_comment": "음성 프리셋 v4 (Local-TTS Supertonic M1~M5/F1~F5). 구 키(Fish 참조 음성)는 worker/ai_worker/tts/voice_resolver.py가 성별 보존 매핑. 샘플: assets/voices/voice_preview_<KEY>.mp3",
   "voices": [
     {
-      "key": "seohyeon_ref",
-      "label": "서현 (S2-pro 참조, 기본 내레이터)",
-      "gender": "female",
-      "ref_dir": "seohyeon_ref",
-      "file": "seohyeon_ref/001.wav",
-      "params": {}
-    },
-    {
-      "key": "typecast_ref_v2",
-      "label": "진우 (S2-pro 참조, 8클립)",
+      "key": "M1",
+      "label": "남성 1",
       "gender": "male",
-      "ref_dir": "typecast_ref_v2",
-      "file": "typecast_ref_v2/01.wav",
-      "params": {}
+      "engine": "supertonic"
     },
     {
-      "key": "kangil_ref",
-      "label": "강일 (S2-pro 참조)",
+      "key": "M2",
+      "label": "남성 2",
       "gender": "male",
-      "ref_dir": "kangil_ref",
-      "file": "kangil_ref/001.wav",
-      "params": {}
+      "engine": "supertonic"
     },
     {
-      "key": "kyunghwa_ref",
-      "label": "김경화 앵커 (S2-pro 참조)",
+      "key": "M3",
+      "label": "남성 3",
+      "gender": "male",
+      "engine": "supertonic"
+    },
+    {
+      "key": "M4",
+      "label": "남성 4",
+      "gender": "male",
+      "engine": "supertonic"
+    },
+    {
+      "key": "M5",
+      "label": "남성 5",
+      "gender": "male",
+      "engine": "supertonic"
+    },
+    {
+      "key": "F1",
+      "label": "여성 1",
       "gender": "female",
-      "ref_dir": "kyunghwa_ref",
-      "file": "kyunghwa_ref/001.wav",
-      "params": {}
+      "engine": "supertonic"
+    },
+    {
+      "key": "F2",
+      "label": "여성 2",
+      "gender": "female",
+      "engine": "supertonic"
+    },
+    {
+      "key": "F3",
+      "label": "여성 3",
+      "gender": "female",
+      "engine": "supertonic"
+    },
+    {
+      "key": "F4",
+      "label": "여성 4",
+      "gender": "female",
+      "engine": "supertonic"
+    },
+    {
+      "key": "F5",
+      "label": "여성 5",
+      "gender": "female",
+      "engine": "supertonic"
     }
   ]
 }

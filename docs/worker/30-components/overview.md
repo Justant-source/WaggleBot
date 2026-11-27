@@ -1,11 +1,11 @@
 # WaggleBot — 컴포넌트 개요 (L3)
 
-> last-verified: 2026-08-31 · code-ref: `worker/ai_worker/`, `worker/crawlers/`, `worker/uploaders/`, `backend/`, `frontend/`
+> last-verified: 2026-11-27 · code-ref: `worker/ai_worker/`, `worker/crawlers/`, `worker/uploaders/`, `backend/`, `frontend/`
 > scope: 컨테이너 내부 모듈 책임 — SSOT
 
 ## ai_worker 내부 모듈 구조
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: worker/ai_worker/, worker/crawlers/, worker/uploaders/, backend/, frontend/ -->
 
 ```mermaid
@@ -35,8 +35,11 @@ flowchart LR
     end
 
     subgraph TTS["tts/"]
-        FISH[fish_client.py<br/>OpenAudio S1-mini]
-        TNRM[normalizer.py]
+        SYN[synth.py<br/>Local-TTS 요청]
+        LCL[local_tts_client.py]
+        VRS[voice_resolver.py]
+        PRN[prenorm.py]
+        ALN[alignment.py]
     end
 
     subgraph Video["video/"]
@@ -62,7 +65,6 @@ flowchart LR
     CP --> Video
     CP --> Renderer
     CP --> LLM
-    GPU -.->|컨텍스트 매니저| TTS
     GPU -.->|컨텍스트 매니저| Video
 ```
 
@@ -76,7 +78,11 @@ flowchart LR
 | `pipeline/content_processor.py` | `worker/ai_worker/pipeline/content_processor.py` | Phase 1~8 순차 실행, Phase5‖6 asyncio.gather | GPU Phase를 Phase5‖6 병렬에 포함 금지 |
 | `scene/director.py` | `worker/ai_worker/scene/director.py` | SceneDirector LLM 호출, 씬 타입/mood 할당 | 모델: sonnet |
 | `script/chunker.py` | `worker/ai_worker/script/chunker.py` | LLM 청킹(Phase 2), validate_and_fix(Phase 3) | 모델: sonnet |
-| `tts/fish_client.py` | `worker/ai_worker/tts/fish_client.py` | Fish Speech TTS, reference_id 클로닝, 감정 마커 | `ai_worker/video`에서 import 금지 |
+| `tts/synth.py` | `worker/ai_worker/tts/synth.py` | Local-TTS 합성 요청(`synthesize`·`wait_for_tts_server`·`TTSUnavailable`). 전처리→보이스 해석→job→wav | `ai_worker/video`에서 import 금지 |
+| `tts/local_tts_client.py` | `worker/ai_worker/tts/local_tts_client.py` | Local-TTS 클라이언트 **복사본**(앱 간 import 금지, 원본 `Local-TTS/client` 수정 금지) | — |
+| `tts/voice_resolver.py` | `worker/ai_worker/tts/voice_resolver.py` | 보이스 키·post_id → 프리셋 M1~M5/F1~F5 (구 키 성별 보존 매핑) | — |
+| `tts/prenorm.py` | `worker/ai_worker/tts/prenorm.py` | 앱 고유 전처리(화자 접두어·URL·해시태그·자모·`N대`/`N기`). 숫자·슬랭은 서버·프로필 | — |
+| `tts/alignment.py` | `worker/ai_worker/tts/alignment.py` | 렌더 발화 타이밍 faster-whisper 정렬(유지) | — |
 | `video/comfy_client.py` | `worker/ai_worker/video/comfy_client.py` | ComfyUI API, LTX-2 워크플로우 제출, 4단계 폴백 | `ai_worker/tts` import 금지 |
 | `video/prompt_engine.py` | `worker/ai_worker/video/prompt_engine.py` | video_prompt V3 생성, 비주얼 앵커, I2V brief | 모델: haiku |
 | `video/video_utils.py` | `worker/ai_worker/video/video_utils.py` | `validate_frame_count()`, `validate_resolution()` | 프레임 = 1+8k (9~145) |
@@ -87,7 +93,7 @@ flowchart LR
 
 ## 크롤러 / 업로더 플러그인
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: worker/ai_worker/, worker/crawlers/, worker/uploaders/, backend/, frontend/ -->
 
 ```mermaid

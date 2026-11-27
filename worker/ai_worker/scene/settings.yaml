@@ -43,8 +43,8 @@ scene_director:
 
 # ── WS3.4: 댓글 화자 음성 매핑 (고정) ──
 comment_voice_mapping:
-  author:   kangil_ref        # A 진영 (작성자)
-  partner:  kyunghwa_ref      # B 진영 (상대방)
+  author:   M2        # A 진영 (작성자)
+  partner:  F2      # B 진영 (상대방)
   neutral:  default           # 중립
 
 # ── WS4.5: TTS 문장 간 pause 시간 ──

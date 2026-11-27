@@ -24,8 +24,8 @@ from ai_worker.core.progress import (
 )
 from ai_worker.script.client import generate_script
 from ai_worker.renderer.thumbnail import generate_thumbnail, get_thumbnail_path
-from ai_worker.tts.fish_client import synthesize as tts_synthesize
-from ai_worker.tts.fish_gate import gate as fish_gate
+from ai_worker.tts.synth import TTSUnavailable, synthesize as tts_synthesize
+from ai_worker.tts.voice_resolver import resolve_voice
 from db.models import ScriptData
 from config.settings import (
     MAX_RETRY_COUNT,
@@ -40,7 +40,7 @@ from db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
 
-_TTS_POST_PROCESS_CACHE_VERSION = "pp_v6"
+_TTS_POST_PROCESS_CACHE_VERSION = "pp_v7"
 
 
 def _tts_cache_key(voice_id: str, text: str) -> str:
@@ -245,10 +245,9 @@ async def _with_phase_heartbeat(awaitable, post_id: int, phase: int, phase_name:
     async def beat() -> None:
         while True:
             await asyncio.sleep(30)
-            # Fish 게이트 대기 중이면 "TTS 대기: ..." 문구를 유지한다 (heartbeat는 계속 갱신).
             # DB 일시 오류로 heartbeat 태스크가 죽으면 finally의 await가 본 작업 결과를 가리므로 삼킨다.
             try:
-                stamp_progress(post_id, phase, fish_gate.wait_label(post_id) or phase_name)
+                stamp_progress(post_id, phase, phase_name)
             except Exception:
                 logger.warning("[heartbeat] progress 갱신 실패 post_id=%d", post_id, exc_info=True)
 
@@ -352,10 +351,9 @@ class RobustProcessor:
                     if hasattr(script, "to_narration_text")
                     else script.to_plain_text()
                 )
-                with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                    audio_path = await self._safe_generate_tts(
-                        _narration, post.id, post.site_code, post.origin_id
-                    )
+                audio_path = await self._safe_generate_tts(
+                    _narration, post.id, post.site_code, post.origin_id
+                )
                 logger.info("[Step 2/3] ✓ 음성 완료: %s", audio_path)
 
                 # ===== Step 3: 렌더링 =====
@@ -402,7 +400,7 @@ class RobustProcessor:
                     _scenes, script, post.title or "", post.id
                 )
 
-                # Phase 5: 렌더링 — 통합 낭독 wav 재사용 (장면별 Fish Speech 생략)
+                # Phase 5: 렌더링 — 통합 낭독 wav 재사용 (장면별 TTS 생략)
                 video_path = render_layout_video_from_scenes(
                     post,
                     _scenes,
@@ -582,14 +580,18 @@ class RobustProcessor:
             # TTS 캐시 확인 (동일 텍스트+목소리 → 재합성 스킵)
             tts_cache_dir = MEDIA_DIR / "tmp" / "tts_cache"
             tts_cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_hash = hashlib.md5(_tts_cache_key(voice_id, text).encode()).hexdigest()
+            # 캐시 키는 실제 프리셋(M1~F5) 기준 — 같은 글은 항상 같은 보이스로 해석된다.
+            _preset = resolve_voice(voice_id, post_id)
+            cache_hash = hashlib.md5(_tts_cache_key(_preset, text).encode()).hexdigest()
             cached_audio = tts_cache_dir / f"{cache_hash}.{TTS_OUTPUT_FORMAT}"
             if cached_audio.exists():
                 shutil.copy2(cached_audio, audio_path)
                 logger.info("[TTS 캐시 히트] post_id=%d", post_id)
             else:
-                # TTS 생성 (Fish Speech 직접 호출)
-                await tts_synthesize(text=text, voice_key=voice_id, output_path=audio_path)
+                # TTS 생성 (Local-TTS 서버 요청)
+                await tts_synthesize(
+                    text=text, voice_key=voice_id, output_path=audio_path, post_id=post_id,
+                )
                 shutil.copy2(audio_path, cached_audio)  # 캐시 저장
 
             # 파일 존재 확인
@@ -602,7 +604,11 @@ class RobustProcessor:
 
             return audio_path
 
-        except Exception as e:
+        except TTSUnavailable:
+            # 일시 장애 — main이 hold/재큐로 처리한다(스택트레이스 불필요).
+            logger.warning("TTS 서버 사용 불가 — post_id=%d", post_id)
+            raise
+        except Exception:
             logger.exception("TTS 생성 실패")
             raise
 
@@ -820,11 +826,7 @@ class RobustProcessor:
             sum(1 for s in scenes if getattr(s, "video_prompt", None)),
         )
 
-        # ★ VRAM 정리: fish-speech 컨테이너 실제 정지 (2026-08-10, S2-pro 대응)
-        #   S1-mini는 유휴 VRAM이 작아(~3-5GB) 로컬 캐시 정리+소프트 체크만으로
-        #   충분했으나, S2-pro는 유휴 상태에서도 ~20GB를 점유해 컨테이너를
-        #   실제로 내리지 않으면 ComfyUI GGUF UNet(~12.7GB) 로드가 OOM된다.
-        #   (경위: .result/tts/failures-2026-08-09.md 실패 9)
+        # VRAM 정리: TTS는 외부 Local-TTS 서버가 담당하므로 이 프로세스는 자체 캐시만 비운다.
         try:
             import torch
             torch.cuda.empty_cache()
@@ -832,14 +834,7 @@ class RobustProcessor:
             pass
         gc.collect()
 
-        from ai_worker.core.container_control import start_fish_speech, stop_fish_speech
         from ai_worker.core.gpu_manager import GPUMemoryManager
-
-        stopped = await stop_fish_speech()
-        if not stopped:
-            logger.warning(
-                "[video] fish-speech 정지 실패 — VRAM이 해제되지 않았을 수 있음",
-            )
 
         _gm = self.gpu_manager
         _video_vram = _gm.MODEL_VRAM_REQUIREMENTS.get(ModelType.VIDEO, 12.0)
@@ -853,126 +848,112 @@ class RobustProcessor:
         else:
             logger.info("[video] Phase 7 진입 VRAM 확인: %.1fGB 여유", _available)
 
-        try:
-            # Phase 7: video clip 생성 (ComfyUI 경유)
-            from ai_worker.video.comfy_client import ComfyUIClient
-            from ai_worker.video.manager import VideoCheckpoint, VideoManager
-            from config.settings import (
-                VIDEO_GEN_TIMEOUT,
-                VIDEO_GEN_TIMEOUT_DISTILLED,
-                VIDEO_MAX_CLIPS_PER_POST,
-                VIDEO_MAX_RETRY,
-                VIDEO_NUM_FRAMES,
-                VIDEO_NUM_FRAMES_FALLBACK,
-                VIDEO_NUM_FRAMES_MAX,
-                VIDEO_RESOLUTION,
-                VIDEO_RESOLUTION_FALLBACK,
-                VIDEO_STEPS,
-                VIDEO_STEPS_DISTILLED,
-                VIDEO_CFG,
-                VIDEO_CFG_DISTILLED,
-                VIDEO_FPS,
-                VIDEO_WORKFLOW_MODE,
-                get_comfyui_url,
-            )
+        # Phase 7: video clip 생성 (ComfyUI 경유)
+        from ai_worker.video.comfy_client import ComfyUIClient
+        from ai_worker.video.manager import VideoCheckpoint, VideoManager
+        from config.settings import (
+            VIDEO_GEN_TIMEOUT,
+            VIDEO_GEN_TIMEOUT_DISTILLED,
+            VIDEO_MAX_CLIPS_PER_POST,
+            VIDEO_MAX_RETRY,
+            VIDEO_NUM_FRAMES,
+            VIDEO_NUM_FRAMES_FALLBACK,
+            VIDEO_NUM_FRAMES_MAX,
+            VIDEO_RESOLUTION,
+            VIDEO_RESOLUTION_FALLBACK,
+            VIDEO_STEPS,
+            VIDEO_STEPS_DISTILLED,
+            VIDEO_CFG,
+            VIDEO_CFG_DISTILLED,
+            VIDEO_FPS,
+            VIDEO_WORKFLOW_MODE,
+            get_comfyui_url,
+        )
 
-            logger.info("[video] Phase 7: 비디오 클립 생성 시작 (mode=%s)", VIDEO_WORKFLOW_MODE)
+        logger.info("[video] Phase 7: 비디오 클립 생성 시작 (mode=%s)", VIDEO_WORKFLOW_MODE)
 
-            comfy = ComfyUIClient(base_url=get_comfyui_url())
-            video_config = {
-                "VIDEO_RESOLUTION": VIDEO_RESOLUTION,
-                "VIDEO_RESOLUTION_FALLBACK": VIDEO_RESOLUTION_FALLBACK,
-                "VIDEO_NUM_FRAMES": VIDEO_NUM_FRAMES,
-                "VIDEO_NUM_FRAMES_FALLBACK": VIDEO_NUM_FRAMES_FALLBACK,
-                "VIDEO_NUM_FRAMES_MAX": VIDEO_NUM_FRAMES_MAX,
-                "VIDEO_GEN_TIMEOUT": VIDEO_GEN_TIMEOUT,
-                "VIDEO_GEN_TIMEOUT_DISTILLED": VIDEO_GEN_TIMEOUT_DISTILLED,
-                "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
-                "VIDEO_MAX_RETRY": VIDEO_MAX_RETRY,
-                "VIDEO_STEPS": VIDEO_STEPS,
-                "VIDEO_STEPS_DISTILLED": VIDEO_STEPS_DISTILLED,
-                "VIDEO_CFG": VIDEO_CFG,
-                "VIDEO_CFG_DISTILLED": VIDEO_CFG_DISTILLED,
-                "VIDEO_FPS": VIDEO_FPS,
-                "VIDEO_WORKFLOW_MODE": VIDEO_WORKFLOW_MODE,
-            }
+        comfy = ComfyUIClient(base_url=get_comfyui_url())
+        video_config = {
+            "VIDEO_RESOLUTION": VIDEO_RESOLUTION,
+            "VIDEO_RESOLUTION_FALLBACK": VIDEO_RESOLUTION_FALLBACK,
+            "VIDEO_NUM_FRAMES": VIDEO_NUM_FRAMES,
+            "VIDEO_NUM_FRAMES_FALLBACK": VIDEO_NUM_FRAMES_FALLBACK,
+            "VIDEO_NUM_FRAMES_MAX": VIDEO_NUM_FRAMES_MAX,
+            "VIDEO_GEN_TIMEOUT": VIDEO_GEN_TIMEOUT,
+            "VIDEO_GEN_TIMEOUT_DISTILLED": VIDEO_GEN_TIMEOUT_DISTILLED,
+            "VIDEO_MAX_CLIPS_PER_POST": VIDEO_MAX_CLIPS_PER_POST,
+            "VIDEO_MAX_RETRY": VIDEO_MAX_RETRY,
+            "VIDEO_STEPS": VIDEO_STEPS,
+            "VIDEO_STEPS_DISTILLED": VIDEO_STEPS_DISTILLED,
+            "VIDEO_CFG": VIDEO_CFG,
+            "VIDEO_CFG_DISTILLED": VIDEO_CFG_DISTILLED,
+            "VIDEO_FPS": VIDEO_FPS,
+            "VIDEO_WORKFLOW_MODE": VIDEO_WORKFLOW_MODE,
+        }
 
-            manager = VideoManager(
-                comfy_client=comfy,
-                prompt_engine=prompt_engine,
-                config=video_config,
-            )
+        manager = VideoManager(
+            comfy_client=comfy,
+            prompt_engine=prompt_engine,
+            config=video_config,
+        )
 
-            # 체크포인트 로드
-            checkpoint: VideoCheckpoint | None = None
-            _checkpoint_state = load_render_checkpoint(post_id)
-            if _checkpoint_state:
-                try:
-                    checkpoint = VideoCheckpoint.from_dict(_checkpoint_state)
-                    logger.info(
-                        "[video] 체크포인트 로드: post=%d, 완료=%d/%d씬",
-                        post_id, len(checkpoint.video_scenes_done), checkpoint.total_scenes,
-                    )
-                except Exception:
-                    logger.warning("[video] 체크포인트 파싱 실패 — 처음부터 시작", exc_info=True)
-                    checkpoint = None
-
-            # 씬 완료 콜백: DB에 즉시 체크포인트 커밋
-            _done_scenes: list[int] = list(checkpoint.video_scenes_done) if checkpoint else []
-            _done_clips: dict[str, str] = dict(checkpoint.video_clips) if checkpoint else {}
-
-            stamp_progress(post_id, 7, "비디오 클립", scenes_done=0, total_scenes=len(scenes))
-
-            def _on_scene_complete(scene_idx: int, clip_path: str) -> None:
-                _done_scenes.append(scene_idx)
-                _done_clips[str(scene_idx)] = clip_path
-                checkpoint_dict = VideoCheckpoint(
-                    phase=7, video_scenes_done=list(_done_scenes),
-                    video_clips=dict(_done_clips), total_scenes=len(scenes),
-                ).to_dict()
-                save_render_checkpoint(post_id, checkpoint_dict)
-                stamp_progress(post_id, 7, "비디오 클립", scenes_done=len(_done_scenes), total_scenes=len(scenes))
-
-            scenes = await manager.generate_all_clips(
-                scenes=scenes,
-                mood=script.mood,
-                post_id=post_id,
-                title=post_title,
-                body_summary=body_summary,
-                checkpoint=checkpoint,
-                on_scene_complete=_on_scene_complete,
-            )
-
-            # Phase 7 정상 완료 → 체크포인트 클리어 (progress 보존)
+        # 체크포인트 로드
+        checkpoint: VideoCheckpoint | None = None
+        _checkpoint_state = load_render_checkpoint(post_id)
+        if _checkpoint_state:
             try:
-                clear_checkpoint_keep_progress(post_id)
-            except Exception:
-                logger.warning("[video] 체크포인트 클리어 실패 (비치명적)", exc_info=True)
-
-            try:
-                import torch
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
-            gc.collect()
-
-            video_ok = sum(1 for s in scenes if getattr(s, "video_clip_path", None))
-            logger.info("[video] Phase 7 완료: 성공=%d, 최종 씬=%d", video_ok, len(scenes))
-
-            return scenes
-        finally:
-            # ★ fish-speech 재기동 — Phase 7 성공/실패와 무관하게 항상 복구 시도
-            #   (다음 LLM+TTS 요청이 이 컨테이너에 의존함)
-            #   단, Fish 게이트가 blocked(X-Plane 등)면 올리지 않는다 — 다음 TTS가 게이트 대기로 처리.
-            if await fish_gate.should_skip_start():
-                restarted = True
-            else:
-                restarted = await start_fish_speech()
-            if not restarted:
-                logger.error(
-                    "[video] fish-speech 재기동 실패 — 다음 TTS 요청이 실패할 수 있음. "
-                    "수동 확인 필요: post_id=%d", post_id,
+                checkpoint = VideoCheckpoint.from_dict(_checkpoint_state)
+                logger.info(
+                    "[video] 체크포인트 로드: post=%d, 완료=%d/%d씬",
+                    post_id, len(checkpoint.video_scenes_done), checkpoint.total_scenes,
                 )
+            except Exception:
+                logger.warning("[video] 체크포인트 파싱 실패 — 처음부터 시작", exc_info=True)
+                checkpoint = None
+
+        # 씬 완료 콜백: DB에 즉시 체크포인트 커밋
+        _done_scenes: list[int] = list(checkpoint.video_scenes_done) if checkpoint else []
+        _done_clips: dict[str, str] = dict(checkpoint.video_clips) if checkpoint else {}
+
+        stamp_progress(post_id, 7, "비디오 클립", scenes_done=0, total_scenes=len(scenes))
+
+        def _on_scene_complete(scene_idx: int, clip_path: str) -> None:
+            _done_scenes.append(scene_idx)
+            _done_clips[str(scene_idx)] = clip_path
+            checkpoint_dict = VideoCheckpoint(
+                phase=7, video_scenes_done=list(_done_scenes),
+                video_clips=dict(_done_clips), total_scenes=len(scenes),
+            ).to_dict()
+            save_render_checkpoint(post_id, checkpoint_dict)
+            stamp_progress(post_id, 7, "비디오 클립", scenes_done=len(_done_scenes), total_scenes=len(scenes))
+
+        scenes = await manager.generate_all_clips(
+            scenes=scenes,
+            mood=script.mood,
+            post_id=post_id,
+            title=post_title,
+            body_summary=body_summary,
+            checkpoint=checkpoint,
+            on_scene_complete=_on_scene_complete,
+        )
+
+        # Phase 7 정상 완료 → 체크포인트 클리어 (progress 보존)
+        try:
+            clear_checkpoint_keep_progress(post_id)
+        except Exception:
+            logger.warning("[video] 체크포인트 클리어 실패 (비치명적)", exc_info=True)
+
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        gc.collect()
+
+        video_ok = sum(1 for s in scenes if getattr(s, "video_clip_path", None))
+        logger.info("[video] Phase 7 완료: 성공=%d, 최종 씬=%d", video_ok, len(scenes))
+
+        return scenes
 
     def _generate_video_clips_sync(
         self,
@@ -1123,31 +1104,25 @@ class RobustProcessor:
                 load_pipeline_config().get("tts_voice") or VOICE_DEFAULT
             )
             stamp_progress(post_id, 5, "TTS 합성")
-            fish_gate.bind_post(post_id, 5, "TTS 합성")  # Fish 대기 시 heartbeat·문구 갱신용
             # Remote Claude work above can proceed while a video job owns GPU.
-            # Only Fish Speech itself takes the shared GPU lock.
+            # 합성은 Local-TTS 서버가 수행하므로 GPU 락은 영상 생성(Phase 7)과의 직렬화 용도만 남는다.
             if tts_lock is not None and tts_lock.locked():
                 logger.info("[resource] video/TTS GPU lock 대기: post_id=%d", post_id)
-            try:
-                if tts_lock is not None:
-                    async with tts_lock:
-                        with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                            audio_path = await _with_phase_heartbeat(
-                                self._safe_generate_tts(
-                                    _narration, post_id, post.site_code, post.origin_id,
-                                    voice_override=_post_voice,
-                                ), post_id, 5, "TTS 합성",
-                            )
-                else:
-                    with self.gpu_manager.managed_inference(ModelType.TTS, "tts_engine"):
-                        audio_path = await _with_phase_heartbeat(
-                            self._safe_generate_tts(
-                                _narration, post_id, post.site_code, post.origin_id,
-                                voice_override=_post_voice,
-                            ), post_id, 5, "TTS 합성",
-                        )
-            finally:
-                fish_gate.unbind_post(post_id)  # 예외·취소에도 바인딩 해제(다른 post heartbeat 오염 방지)
+            if tts_lock is not None:
+                async with tts_lock:
+                    audio_path = await _with_phase_heartbeat(
+                        self._safe_generate_tts(
+                            _narration, post_id, post.site_code, post.origin_id,
+                            voice_override=_post_voice,
+                        ), post_id, 5, "TTS 합성",
+                    )
+            else:
+                audio_path = await _with_phase_heartbeat(
+                    self._safe_generate_tts(
+                        _narration, post_id, post.site_code, post.origin_id,
+                        voice_override=_post_voice,
+                    ), post_id, 5, "TTS 합성",
+                )
             stamp_progress(post_id, 5, "TTS 합성", done=True)
             logger.info("[Pipeline LLM+TTS] ✓ 음성 완료: %s", audio_path)
 
@@ -1257,18 +1232,14 @@ class RobustProcessor:
             )
 
             stamp_progress(post_id, 8, "FFmpeg 렌더링")
-            fish_gate.bind_post(post_id, 8, "FFmpeg 렌더링")  # Phase 8 댓글/outro TTS 캐시 미스 대기용
             _tts_cache = MEDIA_DIR / "tmp" / "tts_scene_cache" / str(post_id)
             _post_voice = _resolve_post_voice(post_id) or _nv
-            try:
-                video_path = render_layout_video_from_scenes(
-                    post, scenes,
-                    save_tts_cache=_tts_cache,
-                    voice_key=_post_voice,
-                    narration_audio=audio_path if audio_path and Path(audio_path).exists() else None,
-                )
-            finally:
-                fish_gate.unbind_post(post_id)
+            video_path = render_layout_video_from_scenes(
+                post, scenes,
+                save_tts_cache=_tts_cache,
+                voice_key=_post_voice,
+                narration_audio=audio_path if audio_path and Path(audio_path).exists() else None,
+            )
             _persist_marketing_duration_diagnostics(post_id, scenes, audio_path, video_path)
 
             # 렌더링 후 트랜잭션 갱신 ─ 장시간 렌더링(15분+) 중 대시보드가

@@ -1,6 +1,6 @@
 # WaggleBot — 정책 및 하드 제약
 
-> last-verified: 2026-08-31 · code-ref: `CLAUDE.md`, `AGENTS.md`, `worker/ai_worker/`, `docs/shared/90-adr/`
+> last-verified: 2026-11-27 · code-ref: `CLAUDE.md`, `AGENTS.md`, `worker/ai_worker/`, `docs/shared/90-adr/`
 > scope: 하드 제약·코딩 금지·git/배포 금지·ADR 연동 — SSOT (비협상)
 
 ## 하드 제약 (절대 위반 금지)
@@ -9,7 +9,8 @@ AI agent의 작업 시작 절차와 검증 매트릭스는 [`docs/shared/00-agen
 
 | 제약 | 규칙 | 코드 가드 | ADR |
 |------|------|-----------|-----|
-| **VRAM** | LLM은 원격(claude CLI/API) — 로컬 GPU는 TTS(~5GB)+VIDEO(~12.7GB)=~17GB만. 단계 후 `torch.cuda.empty_cache()`+`gc.collect()` | `gpu_manager.managed_inference()` 컨텍스트 매니저 **필수** | — |
+| **VRAM** | LLM은 원격(claude CLI/API), **TTS는 외부 Local-TTS 제공자(WaggleBot 소유 VRAM 없음, 이전 TTS ~5GB 항목 삭제)** — WaggleBot 로컬 GPU는 VIDEO(~12.7GB)만. 단계 후 `torch.cuda.empty_cache()`+`gc.collect()` | 프로세스 내 로컬 GPU 모델은 `gpu_manager.managed_inference()` 컨텍스트 매니저 **필수**. TTS(외부 서버)·ComfyUI(컨테이너) 호출은 대상 아님 | [ADR-0006](90-adr/0006-local-tts-provider.md) |
+| **TTS 제공자 경계** | WaggleBot은 합성 코드·게이트·임대·컨테이너 제어(`docker.sock`)를 갖지 않고 Local-TTS `POST /v1/jobs` 요청만 한다. 서버 장애는 FAILED가 아니라 APPROVED 재큐. 앱 간 import 금지(클라이언트는 복사본) | `ai_worker/tts/synth.py`, `local_tts_client.py` | [ADR-0006](90-adr/0006-local-tts-provider.md) |
 | **FFmpeg** | `h264_nvenc` 필수, `libx264` 지정 금지. 렌더러는 filter_complex 단일 NVENC 패스 — 중간 재인코딩 금지 | `renderer/composer.py` | [ADR-0002](90-adr/0002-single-nvenc.md) |
 | **ComfyUI** | `--lowvram --reserve-vram 2` 고정, `--normalvram` 금지 (텍스트 인코딩 OOM) | docker-compose 실행 플래그 | [ADR-0001](90-adr/0001-comfyui-lowvram.md) |
 | **LTX-2 프레임** | 프레임 수 `1+8k`(9~145), 해상도 8의 배수 | `video_utils.validate_frame_count()` / `validate_resolution()` **필수** | [ADR-0004](90-adr/0004-clip-4-6s-frames-145.md) |
@@ -19,11 +20,11 @@ AI agent의 작업 시작 절차와 검증 매트릭스는 [`docs/shared/00-agen
 ## GPU 작업 필수 패턴
 
 ```python
-with gpu_manager.managed_inference(ModelType.TTS, "fish-speech"):
-    result = tts.synthesize(text)
+with gpu_manager.managed_inference(ModelType.OTHER, "model-name"):
+    result = run_local_gpu_model(...)
 ```
 
-GPU 작업은 반드시 컨텍스트 매니저 안에서 실행. 직접 torch 호출 금지.
+ai_worker 프로세스 안에서 직접 GPU 모델을 올리는 작업은 반드시 컨텍스트 매니저 안에서 실행. 직접 torch 호출 금지. 2026-11-27 기준 이 프로세스에서 `managed_inference`를 호출하는 곳은 없다 — TTS는 외부 Local-TTS 서버 요청(`await synthesize(...)`), 비디오는 ComfyUI 컨테이너 API라서 컨텍스트 매니저 대상이 아니다. 새로 프로세스 내 GPU 모델을 도입하면 이 패턴을 따른다.
 
 ## 코딩 금지 규칙
 

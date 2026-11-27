@@ -30,6 +30,7 @@ export function VoicePicker({ selectedVoice, onSelect }: Props) {
       setPlayingKey(null)
       return
     }
+    if (!voice.sampleUrl) return
     const audio = new Audio(voice.sampleUrl)
     audio.onended = () => setPlayingKey(null)
     audio.onerror = () => {
@@ -50,6 +51,13 @@ export function VoicePicker({ selectedVoice, onSelect }: Props) {
     { key: null, label: '전역 기본값 사용' },
     ...voices.map((v) => ({ key: v.key, label: v.label, sampleUrl: v.sampleUrl })),
   ]
+  // 구 키(Fish 참조 음성 등)가 저장돼 있어도 선택 상태가 사라지지 않도록 별도 카드로 표시.
+  // 합성 시에는 워커가 성별을 보존해 프리셋으로 자동 매핑한다.
+  const isLegacySelection =
+    voices.length > 0 && selectedVoice !== null && !voices.some((v) => v.key === selectedVoice)
+  if (isLegacySelection) {
+    allCards.push({ key: selectedVoice, label: `기존: ${selectedVoice} (자동 매핑)` })
+  }
 
   return (
     <div>

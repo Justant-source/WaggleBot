@@ -200,7 +200,7 @@ def test_leading_silence_ignores_brief_loud_click_before_speech(tmp_path: Path) 
 
 
 def test_initial_text_lead_pads_only_missing_native_pcm_silence(tmp_path: Path, monkeypatch) -> None:
-    """A Fish WAV's 118ms native lead receives only the missing 32ms."""
+    """A TTS WAV's 118ms native lead receives only the missing 32ms."""
     from ai_worker.renderer import _tts
 
     wav_path = tmp_path / "narration_first.wav"
@@ -234,13 +234,13 @@ def test_initial_text_lead_does_not_stack_on_long_native_silence(tmp_path: Path,
 
 def test_tts_cache_key_invalidates_pre_1_1x_audio() -> None:
     """Speed/post-process changes must not reuse a pp_v3 (1.2x) narrator WAV."""
-    from ai_worker.core.processor import _tts_cache_key
+    from ai_worker.core.processor import _TTS_POST_PROCESS_CACHE_VERSION, _tts_cache_key
     from config.settings import TTS_SPEED
 
     key = _tts_cache_key("yohan", "캐시 검증 대사")
 
-    assert key == f"yohan:캐시 검증 대사:{TTS_SPEED:.3f}:pp_v4"
-    assert "pp_v3" not in key
+    assert key == f"yohan:캐시 검증 대사:{TTS_SPEED:.3f}:{_TTS_POST_PROCESS_CACHE_VERSION}"
+    assert "pp_v3" not in key and "pp_v4" not in key
 
 
 def test_huggingface_cache_is_writable_before_whisper_import(monkeypatch) -> None:

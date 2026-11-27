@@ -1,11 +1,11 @@
 # WaggleBot — 컨테이너 토폴로지 (L2)
 
-> last-verified: 2026-08-31 · code-ref: `env/docker-compose.yml`
+> last-verified: 2026-11-27 · code-ref: `env/docker-compose.yml`
 > scope: Docker 서비스 포트·볼륨·환경변수·의존성·GPU 배분 — SSOT
 
 ## 서비스 레이어 구조
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
@@ -23,8 +23,10 @@ flowchart LR
     end
     subgraph Layer4["AI 서비스"]
         L[llm-worker :8090]
-        FS[fish-speech :8082]
         CUI[comfyui :8188]
+    end
+    subgraph Ext["외부 제공자 (별도 저장소)"]
+        LT[Local-TTS :8500<br/>local_tts_net]
     end
     subgraph Layer5["영속성"]
         DB[(MariaDB :3306)]
@@ -34,6 +36,7 @@ flowchart LR
     Layer1 --> Layer5
     Layer2 <--> Layer5
     Layer3 --> Layer4
+    Layer3 --> Ext
     Layer3 <--> Layer5
     Layer4 --> Layer5
     F <--> B
@@ -41,16 +44,16 @@ flowchart LR
 
 ## GPU VRAM 배분 (RTX 3090 24GB)
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
-pie title VRAM 사용 배분 (~16.7GB / 24GB)
+pie title WaggleBot 로컬 VRAM 사용 배분 (~12.7GB / 24GB)
     "LTX-2 distilled GGUF Q4 UNet" : 12.7
-    "OpenAudio S1-mini TTS" : 4.0
-    "안전 마진" : 7.3
+    "안전 마진 (Local-TTS 등 외부 제공자 몫 포함)" : 11.3
 ```
 
+> TTS(Local-TTS, Supertonic)는 WaggleBot 컨테이너가 아니라 별도 저장소(`/home/justant/Data/Local-TTS`)가 운영하는 외부 제공자이며 VRAM 소량만 쓴다. WaggleBot은 TTS용 VRAM 예산·GPU 핸드오프·컨테이너 제어를 갖지 않는다([ADR-0006](90-adr/0006-local-tts-provider.md)).
 > Gemma-3-12B 텍스트 인코더(~15GB)는 `--lowvram` 플래그로 CPU에서 실행 (VRAM 미사용).
 
 ## 기술 스택
@@ -62,7 +65,7 @@ pie title VRAM 사용 배분 (~16.7GB / 24GB)
 | **프론트엔드** | Next.js 14 (App Router), TypeScript |
 | **LLM 게이트웨이** | Java 21, Spring Boot 3.3, Claude CLI subprocess |
 | **LLM** | Claude haiku-4-5 / sonnet-4-6 — CLI 백엔드(구독) 또는 API 백엔드(`ANTHROPIC_API_KEY`) |
-| **TTS** | OpenAudio S1-mini (reference_id 클로닝 + 감정 마커, ADR-0005) |
+| **TTS** | Local-TTS 제공자(Supertonic, 보이스 프리셋 M1~M5·F1~F5, 서버 정규화·프로필, ADR-0006~0008) |
 | **비디오** | ComfyUI + LTX-2 19B distilled GGUF Q4 (8-step) |
 | **렌더링** | FFmpeg (h264_nvenc) |
 | **컨테이너** | Docker Compose, NVIDIA Container Runtime |
@@ -72,7 +75,7 @@ pie title VRAM 사용 배분 (~16.7GB / 24GB)
 
 ## 서비스 의존성 그래프
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
@@ -88,7 +91,7 @@ graph TD
     BACKEND[backend<br/>Java :8080]
     FRONTEND[frontend<br/>Next.js :3000]
 
-    FISH[fish-speech<br/>TTS :8082]
+    LTTS[Local-TTS<br/>외부 제공자 :8500]
     COMFY[comfyui<br/>LTX-2 :8188]
     TG[telegram-bridge<br/>:3847]
 
@@ -99,7 +102,8 @@ graph TD
     DB --> BACKEND
     LLM --> AI
     LLM --> DW
-    FISH --> AI
+    LTTS --> AI
+    LTTS --> DW
     COMFY --> AI
     BACKEND --> FRONTEND
     BACKEND --> TG
@@ -173,40 +177,34 @@ graph TD
 - **환경변수:**
   ```
   LLM_WORKER_URL=http://llm-worker:8090
-  FISH_SPEECH_URL=http://fish-speech:8080
-  # Fish 게이트(Flight-Brain 호스트 :8100, compose 게이트웨이 172.20.0.1로 도달 확인). 평소 Fish는 stop이며
-  # Flight-Brain atomic_tts GPU 데몬이 수명주기를 관리(유휴 10분 또는 Windows X-Plane 실행 시 정지, 2026-11-22 기준)
-  ATOMIC_TTS_FISH_GATE_URL=http://172.20.0.1:8100/api/gpu/fish/ensure
-  FISH_GATE_RECHECK_SEC=1800
-  FISH_GATE_MAX_WAIT_SEC=3600
-  # (FISH_GATE_ENABLED·HEARTBEAT·START_* 는 compose 미전달 — 코드 기본값 사용, 필요 시 환경에 추가)
+  # Local-TTS 제공자 (외부 네트워크 local_tts_net, 별칭 local-tts) — dashboard_worker와 동일 값
+  TTS_SERVER_URL=http://local-tts:8500
+  TTS_SERVER_TOKEN=            # 서버가 LOCAL_TTS_TOKEN을 요구할 때만 (.env에서만 읽음)
+  TTS_SERVER_TIMEOUT_SEC=120   # 요청 1건 read 타임아웃
+  TTS_SERVER_RETRIES=3         # 연결·429·503 추가 재시도
+  TTS_SERVER_MAX_WAIT_SEC=3600 # job 완료·서버 준비 대기 상한
+  TTS_PROFILE=wagglebot/shorts-ko
+  TTS_CLIENT_ID=wagglebot      # X-Client-Id = 프로필 네임스페이스
+  TTS_SPEED=1.1                # 서버 speed 옵션으로만 전달 (로컬 atempo 없음)
   COMFYUI_URL=http://comfyui:8188
   VIDEO_GEN_ENABLED=false   (기본값, true로 변경 시 Phase 4.5~7 활성화)
   # comfyui는 compose profile `video-gen` — VIDEO_GEN=false면 기본 up에서 제외
-  # TTS는 S2-pro 단일 fish-speech만. S1-mini VRAM 로드·fish-speech-* 병렬 금지
+  # TTS 컨테이너·docker.sock·group_add 없음 — WaggleBot은 합성 요청만 보낸다 (ADR-0006)
   DATABASE_URL=...
   MEDIA_DIR=/app/media
   ```
 - **종료 유예:** `stop_grace_period: 120s` (진행 중인 파이프라인 보호)
-- **depends_on:** db, fish-speech, llm-worker (healthy). comfyui는 `required: false`(profile video-gen)
+- **depends_on:** db, llm-worker (healthy). comfyui는 `required: false`(profile video-gen). Local-TTS는 compose 의존이 아니다 — 서버 불가 시 `ai_worker`가 APPROVED 집기를 보류한다([60-runtime](../worker/60-runtime.md))
+- **네트워크:** `default` + 외부 `local_tts_net`(사전 생성 필수). TTS 서버 사설 주소는 `http://local-tts:8500`
 
 ---
 
-### fish-speech
-- **역할:** Zero-shot 음성 클로닝 TTS (**OpenAudio S1-mini**, ADR-0005)
-- **이미지:** `wagglebot/fish-speech-s1:cuda` (S1 커밋 d3df50에서 로컬 빌드 — 사전빌드 태그는 s1-mini 비호환)
-  - 재빌드: `scripts/build_fish_speech_s1.sh`
-- **포트:** `8082→8080`
-- **GPU:** RTX 3090, VRAM ~4GB
-- **볼륨:**
-  - `../checkpoints/openaudio-s1-mini:/app/checkpoints/openaudio-s1-mini` — 모델 가중치 (서브디렉토리만)
-  - `../assets/voices:/app/references` — 참조 음성 (**UID 1000 소유 필수** — validate_env 쓰기 권한 검사)
-- **모델:** `checkpoints/openaudio-s1-mini/` (`download_openaudio_s1.sh`, gated HF — 로그인 필요)
-- **참조 구조:** `assets/voices/<key>/NN.wav + NN.lab` → `reference_id` 클로닝 (`prepare_voice.py`로 등록)
-- **env 오버라이드(필수):** `LLAMA_CHECKPOINT_PATH`/`DECODER_CHECKPOINT_PATH` — 이미지 기본값 s2-pro(VRAM 초과) 차단
-- **시작 시간:** `start_period: 180s` (모델 로딩 대기)
-- **healthcheck:** `curl`로 포트 리스닝 검사 (라우트 독립)
-- **롤백:** ADR-0005 참조 (구 v1.5.1 블록 복원, `checkpoints/fish-speech-1.5/` 보존)
+### Local-TTS (외부 제공자 — 이 compose에 없음)
+- **역할:** 한국어 TTS 합성·텍스트 정규화·청크·loudnorm을 제공하는 별도 저장소 서비스(`/home/justant/Data/Local-TTS`, 컨테이너 `local-tts`, Supertonic 엔진). WaggleBot은 REST(`/v1/jobs`)로 요청만 보낸다. 상세 → [backend/50-api.md](../backend/50-api.md#local-tts-api-8500)
+- **포트:** 컨테이너 네트워크 `local_tts_net` 별칭 `local-tts` 사내 `:8500`, 호스트 `127.0.0.1:8500`
+- **네트워크 전제:** `local_tts_net`은 `external: true`라 **사전 생성** 필요(Local-TTS `ops/prepare_data.sh` 또는 `docker network create local_tts_net`). 없으면 `ai_worker`·`dashboard_worker` 기동이 실패한다. 이 네트워크에 합류하는 서비스는 `ai_worker`, `dashboard_worker` 둘뿐이다.
+- **클라이언트 ID·프로필:** `X-Client-Id: wagglebot`, 발음 프로필 `wagglebot/shorts-ko`(v1) — 원본 `config/tts_profile/shorts-ko.yaml`, 업로드·검증·활성화는 `worker/tools/sync_tts_profile.py`
+- **폐기된 것:** `fish-speech` 컨테이너(`8082→8080`), `/var/run/docker.sock` 마운트, `group_add: "989"`, `FISH_*` env, Flight-Brain Fish 게이트·임대(`ATOMIC_TTS_FISH_GATE_URL` 등), `assets/voices` 참조 음성 합성 사용. ADR-0005는 폐기됨.
 
 ---
 
@@ -236,7 +234,7 @@ graph TD
 
 - **실행 플래그:** `--lowvram --reserve-vram 2 --fp8_e4m3fn-text-enc`
   - `--lowvram`: Gemma 텍스트 인코더 CPU 오프로드 필수 (BF16 24GB → VRAM 초과)
-  - `--reserve-vram 2`: 2GB 예약 (Fish Speech 동시 실행 안전 마진)
+  - `--reserve-vram 2`: 2GB 예약 (VRAM 안전 마진)
 - **주의:** `--normalvram` 절대 금지 (텍스트 인코딩 OOM 발생)
 - **시작 시간:** `start_period: 300s` (Gemma 모델 로딩 5분)
 - **빌드 시 자동 패치** (`env/ltxvideo_patches.py`):
@@ -288,8 +286,7 @@ graph TD
   ```
   DATABASE_URL=...
   LLM_WORKER_URL=http://llm-worker:8090
-  FISH_SPEECH_URL=http://fish-speech:8080
-  FISH_GATE_ENABLED=0   # 대시보드 TTS 미리듣기는 즉시 실패해야 하므로 Fish 게이트 대기 비활성
+  TTS_SERVER_URL=http://local-tts:8500   # 대시보드 TTS 미리듣기용. ai_worker와 동일한 TTS_* 8종을 전달(TOKEN·TIMEOUT·RETRIES·MAX_WAIT·PROFILE·CLIENT_ID·SPEED)
   MEDIA_DIR=/app/media
   ```
 
@@ -340,19 +337,20 @@ graph TD
 
 공유 마운트 경로:
   ../assets/media/tmp/videos  ← comfyui output ↔ ai_worker 공유 (핵심)
-  ../assets/voices            ← Fish Speech 참조 오디오
-  ../checkpoints/             ← 모델 가중치 (fish-speech, ltx-2 등)
+  ../assets/voices            ← 보이스 미리듣기 샘플(voice_preview_<KEY>.mp3, backend 읽기 전용)
+  ../checkpoints/             ← 모델 가중치 (ltx-2 등)
   ../config/                  ← Python 설정 (crawler, ai_worker, dashboard_worker)
   ~/.claude                   ← Claude CLI 인증 (llm-worker 전용)
 
 네트워크:
   기본 bridge 네트워크 (서비스명으로 DNS 해석)
+  local_tts_net (external, 사전 생성 필요): ai_worker·dashboard_worker가 Local-TTS(local-tts:8500)에 접속
   ai_worker: extra_hosts - host.docker.internal:host-gateway (WSL2 호스트 접근)
 ```
 
 ## 시작 순서
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: env/docker-compose.yml -->
 
 ```mermaid
@@ -363,7 +361,7 @@ flowchart LR
     DB --> BACKEND[backend]
     LLM --> AI[ai_worker]
     LLM --> DW[dashboard_worker]
-    FISH[fish-speech<br/>healthy] --> AI
+    LTTS[Local-TTS<br/>외부 제공자] -.-> AI
     COMFY[comfyui<br/>healthy] --> AI
     BACKEND --> FRONTEND[frontend]
 ```

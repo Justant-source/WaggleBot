@@ -8,7 +8,7 @@ Phase 2: script.chunker.chunk_with_llm()
 Phase 3: scene.validator.validate_and_fix()
 Phase 4: scene.director.SceneDirector.direct()
 Phase 4.5: scene.director.assign_video_modes()
-Phase 5: tts.fish_client.synthesize()
+Phase 5: tts.synth.synthesize() (Local-TTS 서버)
 Phase 6: video.prompt_engine.VideoPromptEngine.generate_batch()
 Phase 7: video.manager.VideoManager.generate_all_clips()
 """
@@ -23,7 +23,7 @@ from ai_worker.script.chunker import chunk_with_llm
 from ai_worker.scene.analyzer import ResourceProfile, analyze_resources
 from ai_worker.scene.director import SceneDecision, SceneDirector
 from ai_worker.scene.validator import validate_and_fix
-from ai_worker.tts.fish_client import synthesize
+from ai_worker.tts.synth import TTSUnavailable, synthesize
 from db.models import Post
 from db.session import SessionLocal
 
@@ -204,13 +204,15 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
                     tts_kwargs: dict = {
                         "text": text,
                         "scene_type": scene.type,
-                        "emotion": getattr(scene, "tts_emotion", ""),
+                        "post_id": post_id,
                     }
                     if scene.voice_override:
                         tts_kwargs["voice_key"] = scene.voice_override
                     audio_path = await synthesize(**tts_kwargs)
                     scene.text_lines[j] = {"text": text, "audio": str(audio_path)}
                     ok += 1
+                except TTSUnavailable:
+                    raise  # 서버 일시 장애는 씬 단위 무음 처리 대신 상위 hold/재큐로 전파
                 except Exception as exc:
                     logger.warning(
                         "[content_processor] TTS 실패 (씬=%s, 줄=%d): %s",
@@ -380,32 +382,16 @@ async def process_content(post, images: list[str], cfg: dict | None = None) -> l
 async def _clear_vram_for_video() -> None:
     """Phase 7 진입 전 — LLM/TTS VRAM 완전 해제 시퀀스.
 
-    1막(TTS) → 2막(비디오) 전환 시 Fish Speech의 VRAM을
-    명시적으로 해제하고, nvidia-smi로 실제 여유 VRAM을 확인한다.
+    1막 → 2막(비디오) 전환 시 이 프로세스의 VRAM을 정리하고
+    nvidia-smi로 실제 여유 VRAM을 확인한다(TTS는 외부 서버라 해제 대상이 아님).
     """
     import gc
 
     from ai_worker.core.gpu_manager import GPUMemoryManager, get_gpu_manager
-    from config.settings import FISH_SPEECH_URL
 
-    logger.info("[VRAM] 2막 전환 시작: TTS VRAM 해제 시퀀스")
+    logger.info("[VRAM] 2막 전환 시작: VRAM 정리 시퀀스")
 
-    # 1) Fish Speech 모델 언로드 — 컨테이너는 유지하되 GPU 메모리만 해제
-    try:
-        import httpx
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{FISH_SPEECH_URL}/v1/models/unload",
-                timeout=10.0,
-            )
-            if resp.status_code in (200, 404):
-                logger.info("[VRAM] Fish Speech 모델 언로드 완료")
-            else:
-                logger.warning("[VRAM] Fish Speech 언로드 응답: %d", resp.status_code)
-    except Exception as e:
-        logger.warning("[VRAM] Fish Speech 언로드 실패 (계속 진행): %s", e)
-
-    # 2) ai_worker 자체 PyTorch 캐시 정리
+    # 1) ai_worker 자체 PyTorch 캐시 정리
     try:
         import torch
         torch.cuda.empty_cache()
@@ -413,7 +399,7 @@ async def _clear_vram_for_video() -> None:
         pass
     gc.collect()
 
-    # 3) 실제 여유 VRAM 확인 (nvidia-smi 기반 — 모든 프로세스 포함)
+    # 2) 실제 여유 VRAM 확인 (nvidia-smi 기반 — 모든 프로세스 포함)
     _gm = get_gpu_manager()
     free_vram = GPUMemoryManager.get_system_available_vram()
     if free_vram > 0:

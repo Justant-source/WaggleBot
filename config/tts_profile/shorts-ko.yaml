@@ -1,0 +1,78 @@
+schema: ltts.pronunciation/1
+profile: wagglebot/shorts-ko
+label: WaggleBot 슬랭·영문 약어 v1 (normalizer.py 이식)
+options:
+  boundary: true
+  case: by-kind
+  longest_first: true
+  josa_fix: true
+  digit_after_key: false
+  english_reading: hangul
+entries:
+  - { type: word, key: "남친", value: "남자친구" }
+  - { type: word, key: "여친", value: "여자친구" }
+  - { type: word, key: "베댓", value: "베스트 댓글" }
+  - { type: word, key: "갑분싸", value: "갑자기 분위기 싸해짐" }
+  - { type: word, key: "시모", value: "시어머니" }
+  - { type: word, key: "장모", value: "장모님" }
+  - { type: word, key: "솔까말", value: "솔직히 까놓고 말해서" }
+  - { type: word, key: "킹받", value: "화가 남" }
+  - { type: word, key: "억까", value: "억지로 까는" }
+  - { type: word, key: "N잡", value: "엔잡" }
+  - { type: word, key: "U턴", value: "유턴" }
+  - { type: keep, key: "장모님" }
+  - { type: word, key: "TMI", value: "티엠아이" }
+  - { type: word, key: "MBTI", value: "엠비티아이" }
+  - { type: word, key: "CCTV", value: "씨씨티비" }
+  - { type: word, key: "SNS", value: "에스엔에스" }
+  - { type: word, key: "USB", value: "유에스비" }
+  - { type: word, key: "OTT", value: "오티티" }
+  - { type: word, key: "GPS", value: "지피에스" }
+  - { type: word, key: "ATM", value: "에이티엠" }
+  - { type: word, key: "CEO", value: "씨이오" }
+  - { type: word, key: "AS", value: "에이에스" }
+  - { type: word, key: "DM", value: "디엠" }
+  - { type: word, key: "PC", value: "피씨" }
+  - { type: word, key: "TV", value: "티비" }
+  - { type: word, key: "AI", value: "에이아이" }
+  - { type: word, key: "IT", value: "아이티" }
+  - { type: word, key: "PT", value: "피티" }
+  - { type: word, key: "MT", value: "엠티" }
+  - { type: word, key: "QR", value: "큐알" }
+  - { type: word, key: "VIP", value: "브이아이피" }
+  - { type: word, key: "FAQ", value: "에프에이큐" }
+  - { type: word, key: "PPT", value: "피피티" }
+  - { type: word, key: "API", value: "에이피아이" }
+  - { type: word, key: "URL", value: "유알엘" }
+  - { type: word, key: "ID", value: "아이디" }
+  - { type: word, key: "OS", value: "오에스" }
+  - { type: word, key: "5G", value: "오지" }
+  - { type: word, key: "LTE", value: "엘티이" }
+tests:
+  - { input: "남친과 헤어졌어", expect: "남자친구와 헤어졌어." }
+  - { input: "남친이 생겼어", expect: "남자친구가 생겼어." }
+  - { input: "베댓을 봤다", expect: "베스트 댓글을 봤다." }
+  - { input: "여친을 만났다", expect: "여자친구를 만났다." }
+  - { input: "시모와 장모님 그리고 장모", expect: "시어머니와 장모님 그리고 장모님." }
+  - { input: "갑분싸 솔까말 킹받 억까", expect: "갑자기 분위기 싸해짐 솔직히 까놓고 말해서 화가 남 억지로 까는." }
+  - { input: "N잡 U턴", expect: "엔잡 유턴." }
+  - { input: "CCTV와 SNS 확인", expect: "씨씨티비와 에스엔에스 확인." }
+  - { input: "AI 기술", expect: "에이아이 기술." }
+  - { input: "AI가 대세", expect: "에이아이가 대세." }
+  - { input: "TMI MBTI QR VIP", expect: "티엠아이 엠비티아이 큐알 브이아이피." }
+  - { input: "5G 요금제", expect: "오지 요금제." }
+  - { input: "5GB 메모리", expect: "오 기가바이트 메모리." }
+  - { input: "3.5초 걸렸다", expect: "삼 쩜 오초 걸렸다." }
+  - { input: "50.5% 할인", expect: "오십 쩜 오 퍼센트 할인." }
+  - { input: "1,200,000원", expect: "백이십만 원." }
+  - { input: "6월과 10월", expect: "유월과 시월." }
+  - { input: "3~4명 참석", expect: "세에서 네 명 참석." }
+  - { input: "20명", expect: "스무 명." }
+  - { input: "175cm 70kg", expect: "백칠십오 센티미터 칠십 킬로그램." }
+  - { input: "3.5km 거리", expect: "삼 쩜 오 킬로미터 거리." }
+  - { input: "010-1234-5678로 연락", expect: "공 일 공 일 이 삼 사 오 육 칠 팔로 연락." }
+  - { input: "가격은 3000원. 끝.", expect: "가격은 삼천 원. 끝." }
+  - { input: "마을 사람들", expect: "마을 사람들." }
+  - { input: "가을 하늘", expect: "가을 하늘." }
+  - { input: "사과 두 개", expect: "사과 두 개." }
+  - { input: "안녕하세요", expect: "안녕하세요." }

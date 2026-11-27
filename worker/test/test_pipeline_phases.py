@@ -376,11 +376,11 @@ logger.info("Phase 4.5 결과: %s", mode_counts)
 # ─────────────────────────────────────────────────────────────────────
 # Phase 5: TTS 합성 (샘플 1~2개)
 # ─────────────────────────────────────────────────────────────────────
-banner("Phase 5", "TTS 합성 (Fish Speech)")
+banner("Phase 5", "TTS 합성 (Local-TTS)")
 
 tts_results = []
 try:
-    from ai_worker.tts.fish_client import synthesize as fish_synthesize
+    from ai_worker.tts.synth import synthesize as tts_synthesize
 
     # 첫 2개 body 씬에 대해서만 TTS 테스트
     test_scenes = [s for s in scenes if s.type in ("image_text", "text_only")][:2]
@@ -391,7 +391,7 @@ try:
         logger.info("TTS 합성 시도 [%d]: '%s'", i, text[:40])
         t0 = time.time()
         try:
-            audio_path = asyncio.run(fish_synthesize(text, scene.type))
+            audio_path = asyncio.run(tts_synthesize(text, scene.type))
             elapsed_tts = (time.time() - t0) * 1000
             file_size = audio_path.stat().st_size if audio_path and audio_path.exists() else 0
             tts_results.append({
@@ -421,7 +421,7 @@ except Exception as e:
 
 RESULTS["phase5"] = {
     "input": {
-        "tts_engine": "fish-speech",
+        "tts_engine": "local-tts",
         "test_count": len([r for r in tts_results if "text" in r]),
     },
     "output": tts_results,
@@ -529,12 +529,12 @@ try:
 except Exception as e:
     comfy_status = {"error": str(e)}
 
-# Fish Speech 상태
+# Local-TTS 상태
 try:
-    fish_resp = requests.get("http://localhost:8080/v1/health", timeout=5)
-    fish_status = "healthy" if fish_resp.ok else f"unhealthy ({fish_resp.status_code})"
+    tts_resp = requests.get("http://127.0.0.1:8500/health", timeout=5)
+    tts_status = "healthy" if tts_resp.ok else f"unhealthy ({tts_resp.status_code})"
 except Exception as e:
-    fish_status = f"unreachable ({e})"
+    tts_status = f"unreachable ({e})"
 
 # Ollama 상태
 try:
@@ -548,7 +548,7 @@ RESULTS["phase7_8"] = {
     "existing_results": existing_results,
     "service_status": {
         "comfyui": comfy_status,
-        "fish_speech": fish_status,
+        "local_tts": tts_status,
         "ollama": ollama_status,
         "ollama_models": ollama_models if "ollama_models" in dir() else [],
     },
@@ -556,9 +556,9 @@ RESULTS["phase7_8"] = {
 }
 
 logger.info("기존 결과물: %s", json.dumps(existing_results, ensure_ascii=False, default=str))
-logger.info("서비스 상태: ComfyUI=%s, Fish=%s, Ollama=%s",
+logger.info("서비스 상태: ComfyUI=%s, TTS=%s, Ollama=%s",
             "OK" if isinstance(comfy_status, dict) and "error" not in comfy_status else comfy_status,
-            fish_status, ollama_status)
+            tts_status, ollama_status)
 
 
 # ─────────────────────────────────────────────────────────────────────

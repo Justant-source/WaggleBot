@@ -51,12 +51,14 @@ ai_worker/
 │   ├── validator.py         #   Phase 3: validate_and_fix() + smart_split_korean()
 │   └── settings.yaml        #   전략 임계값, 스택 크기, 강조 키워드
 │
-├── tts/                     # TTS 음성 합성 (Fish Speech)
-│   ├── __init__.py
-│   ├── fish_client.py       #   synthesize(), wait_for_fish_speech(), _post_process_audio()
-│   ├── normalizer.py        #   normalize_for_tts() — 5단계 한국어 전처리 파이프라인
-│   ├── number_reader.py     #   sino_number(), native_number() — 숫자→한국어 변환
-│   └── settings.yaml        #   음성, 타임아웃, 후처리, 품질 검증
+├── tts/                     # TTS 음성 합성 (Local-TTS 서버 요청 클라이언트)
+│   ├── __init__.py          #   synthesize / wait_for_tts_server / TTSUnavailable re-export
+│   ├── synth.py             #   synthesize(), wait_for_tts_server(), TTSUnavailable
+│   ├── local_tts_client.py  #   Local-TTS 클라이언트 사본 (원본 수정 금지)
+│   ├── voice_resolver.py    #   resolve_voice() — 키·post_id → M1~M5/F1~F5
+│   ├── prenorm.py           #   prenormalize() — 앱 고유 전처리 (화자 접두어·URL·해시태그·자모)
+│   ├── alignment.py         #   렌더 발화 타이밍 ASR 정렬 (유지)
+│   └── settings.yaml        #   참고용 (런타임 값은 config/settings.py TTS_*)
 │
 ├── video/                   # LTX-2 비디오 생성 (ComfyUI 통신)
 │   ├── __init__.py
@@ -110,8 +112,8 @@ ai_worker/
 | 함수 | 역할 |
 |------|------|
 | `main()` | 로깅 초기화 → DB 초기화 → 고착 포스트 복구 → 워커 시작 |
-| `_startup()` | Fish Speech 기동 대기 + 웜업 |
-| `_llm_tts_worker()` | APPROVED 폴링 → CUDA 세마포어 획득 → LLM+TTS → 큐 적재 |
+| `_startup()` | Local-TTS 서버 비차단 확인(없어도 기동 계속, 집기 전 보류 로직이 처리) |
+| `_llm_tts_worker()` | TTS 서버 확인(불가 시 집기 보류) → APPROVED 폴링 → CUDA 세마포어 획득 → LLM+TTS(`TTSUnavailable`이면 APPROVED 재큐) → 큐 적재 |
 | `_render_worker()` | 큐 소비 → `run_in_executor` CPU 렌더링 |
 | `_upload_loop()` | RENDERED 폴링 → `upload_post()` 호출 |
 | `upload_once()` | 단일 포스트 업로드 (`auto_upload=true` 시) |
@@ -178,7 +180,7 @@ RTX 3090 24GB VRAM을 2막 구조로 운영하기 위한 메모리 관리자.
 ```python
 class ModelType(Enum):
     LLM = "llm"      # ~14GB (qwen2.5:14b 8-bit)
-    TTS = "tts"       # ~5GB  (Fish Speech 1.5)
+    TTS = "tts"       # 레거시 enum — TTS는 외부 Local-TTS 서버라 합성 호출에서 사용하지 않음
     VIDEO = "video"   # ~12GB (LTX-2 GGUF Q4)
     OTHER = "other"   # ~2GB
 
@@ -235,7 +237,7 @@ Phase 4   SceneDirector        → list[SceneDecision] (씬 배분 + 감정 태�
 Phase 4.5 assign_video_modes   → video_mode = t2v | i2v | static
   │         ↳ scene/director.py + video/image_filter.py
 Phase 5   TTS 생성              → scene.text_lines = [{"text", "audio"}]
-  │         ↳ tts/fish_client.py
+  │         ↳ tts/synth.py → Local-TTS 서버
 Phase 6   video_prompt 생성     → scene.video_prompt (한국어→영어)
   │         ↳ video/prompt_engine.py + script/client.py
 Phase 7   video_clip 생성       → scene.video_clip_path (ComfyUI LTX-2)
@@ -299,17 +301,19 @@ Phase 1~7 실행 순서와 VRAM 전환만 담당. 비즈니스 로직은 각 도
 
 ### tts/ — TTS 음성 합성
 
-Fish Speech 1.5 zero-shot 클로닝 기반 TTS. 한국어 텍스트 정규화 파이프라인 내장.
+외부 Local-TTS 서버(`http://local-tts:8500`, Supertonic)에 `POST /v1/jobs`로 요청만 한다. 합성 모델·게이트·GPU 임대·컨테이너 제어는 WaggleBot에 없다([ADR-0006](../../docs/shared/90-adr/0006-local-tts-provider.md)).
 
 | 파일 | 핵심 기능 |
 |------|----------|
-| `fish_client.py` | `synthesize()` — HTTP 호출 + 동시성 제어 + FFmpeg 후처리 |
-| `normalizer.py` | `normalize_for_tts()` — 5단계 전처리 (축약어→조사→자모→숫자→발음) |
-| `number_reader.py` | `sino_number()`, `native_number()` — 숫자→한국어 읽기 변환 |
+| `synth.py` | `synthesize()` — 전처리→보이스 해석→job 생성·대기→wav 저장. `wait_for_tts_server()`, `TTSUnavailable`(일시 장애) |
+| `local_tts_client.py` | Local-TTS 클라이언트 사본(재시도·429/503 처리) |
+| `voice_resolver.py` | `resolve_voice()` — 보이스 키·post_id → 프리셋 M1~M5/F1~F5 (성별 보존·결정적, [ADR-0007](../../docs/shared/90-adr/0007-voice-presets.md)) |
+| `prenorm.py` | `prenormalize()` — 서버·프로필이 못 하는 앱 규칙만(화자 접두어·URL·해시태그·자모 삭제·`N대`/`N기` 한자어 수사) |
+| `alignment.py` | 렌더 타이밍용 faster-whisper 정렬(유지, 후속에 응답 `chunks[]` 기반으로 전환 예정) |
 
-**한국어 전처리 파이프라인**: 축약어 치환 → 조사 교정 → 자모 제거 → 숫자 읽기 → 발음 교정 → 후처리(무음 단축 + 1.2배속)
+**정규화 분담**: 숫자·단위·월·범위·소수점(`쩜`)·말줄임·종결부호는 서버 내장 정규화, 슬랭·영문 약어는 발음 프로필(`config/tts_profile/shorts-ko.yaml` → `wagglebot/shorts-ko`), 나머지는 `prenorm.py` ([ADR-0008](../../docs/shared/90-adr/0008-tts-normalization-standard.md)). 구 `normalizer.py`·`number_reader.py`는 삭제됐다.
 
-**동시성 제어**: `threading.Lock` — 단일 GPU 모델 직렬화.
+**장애 처리**: 서버 불가·타임아웃·큐 포화는 `TTSUnavailable` → 처리 루프가 FAILED가 아니라 APPROVED로 재큐(retry_count 유지).
 
 ---
 
@@ -371,9 +375,10 @@ ComfyUI 서버에 LTX-2 워크플로우를 제출하여 T2V/I2V 비디오 클립
               │               │               ├── video/image_filter
               │               │               └── video/video_utils
               │               │
-              │               ├── tts/normalizer
-              │               │    └── tts/number_reader
-              │               └── tts/fish_client
+              │               ├── tts/synth
+              │               │    ├── tts/prenorm
+              │               │    ├── tts/voice_resolver
+              │               │    └── tts/local_tts_client
               │
               ├── script/client
               │    └── script/parser
@@ -391,14 +396,14 @@ ComfyUI 서버에 LTX-2 워크플로우를 제출하여 T2V/I2V 비디오 클립
          ai_worker/pipeline
               └── content_processor ──────── scene/analyzer, scene/validator
                                               scene/director, script/chunker
-                                              tts/fish_client
+                                              tts/synth
                                               video/prompt_engine, video/manager
               │
               ▼
          ai_worker/renderer
               ├── composer.py ────────────── renderer/layout, renderer/thumbnail
               ├── layout.py ─────────────── _frames, _tts, _encode
-              │                              tts/fish_client (TTS 생성)
+              │                              tts/synth (TTS 생성)
               │                              video/video_utils (리사이즈)
               ├── _frames.py ────────────── layout (_load_font, lazy import)
               ├── _tts.py ───────────────── (standalone)
@@ -409,7 +414,7 @@ ComfyUI 서버에 LTX-2 워크플로우를 제출하여 T2V/I2V 비디오 클립
          ai_worker/core
               ├── processor.py ──────────── script/, tts/, renderer/, pipeline/, video/
               ├── gpu_manager.py ────────── (standalone, PyTorch)
-              ├── main.py ───────────────── core/processor, tts/fish_client, core/shutdown
+              ├── main.py ───────────────── core/processor, tts/synth, core/shutdown
               └── shutdown.py ───────────── (standalone)
 ```
 
@@ -441,11 +446,11 @@ RTX 3090 24GB에서 모든 AI 모델을 운영하기 위한 2막 구조.
 └────────────────────────────────────────────────────────────────┘
           │
           ▼  _clear_vram_for_video()
-          ▼  Ollama keep_alive=0 + Fish Speech unload + empty_cache + gc
+          ▼  empty_cache + gc (TTS는 외부 서버 — 컨테이너 stop/start 없음)
           │
 ┌─── 2막: 미디어 (Phase 5, 7, 8) ───────────────────────────────┐
-│  Fish Speech 1.5 (~5GB) + LTX-2 GGUF Q4 (~12.7GB)             │
-│  ├── Phase 5: TTS 합성                                         │
+│  LTX-2 GGUF Q4 (~12.7GB) — TTS는 외부 Local-TTS 서버          │
+│  ├── Phase 5: TTS 합성 (서버 요청)                             │
 │  ├── Phase 7: 비디오 클립 생성 (ComfyUI --lowvram)              │
 │  └── Phase 8: FFmpeg 렌더링 (GPU h264_nvenc or CPU libx264)     │
 └────────────────────────────────────────────────────────────────┘
@@ -455,7 +460,7 @@ RTX 3090 24GB에서 모든 AI 모델을 운영하기 위한 2막 구조.
 |------|-----|
 | 동시 모델 합계 상한 | 20GB (24GB - 4GB 안전마진) |
 | LLM VRAM | 0GB (Claude API — llm-worker 컨테이너, 원격 실행) |
-| TTS VRAM | ~5GB (Fish Speech 1.5) |
+| TTS VRAM | 0GB (WaggleBot 소유 아님 — 외부 Local-TTS 제공자) |
 | VIDEO VRAM | ~12GB (LTX-2 GGUF Q4 + ComfyUI --lowvram) |
 
 ---
@@ -519,7 +524,7 @@ core/main.py
 |------|------|
 | **script** | Ollama HTTP 2회 재시도 + JSON 3단계 폴백 + 댓글 자동 주입 |
 | **scene** | 텍스트 자동 분할 보정 + I2V 부적합 → T2V 전환 |
-| **tts** | HTTP 3회 재시도 + 품질 검증 3회 + FFmpeg 후처리 실패 무시 |
+| **tts** | 클라이언트 연결·429/503 재시도(`TTS_SERVER_RETRIES`) + 서버 장애는 `TTSUnavailable` → APPROVED 재큐 |
 | **video** | 4단계 폴백 + CUBLAS 2회 연속 → 씬 스킵 + 실패 씬 병합 |
 | **renderer** | 이미지 2회 재시도 + NVENC→libx264 폴백 + TTS 2회 재시도 |
 
@@ -536,8 +541,10 @@ core/main.py
 | | `MAX_RETRY_COUNT` | 3 |
 | **LLM** | `LLM_WORKER_URL` | `http://llm-worker:8090` |
 | | `LLM_DEFAULT_MODEL` | `haiku` / `sonnet` |
-| **TTS** | `FISH_SPEECH_URL` | `http://fish-speech:8080` |
-| | `VOICE_DEFAULT` | `"default"` |
+| **TTS** | `TTS_SERVER_URL` | `http://local-tts:8500` |
+| | `TTS_PROFILE` / `TTS_CLIENT_ID` | `wagglebot/shorts-ko` / `wagglebot` |
+| | `TTS_SPEED` | `1.1` |
+| | `VOICE_DEFAULT` | `"default"` (→ 남성 프리셋) |
 | **비디오** | `VIDEO_GEN_ENABLED` | `false` |
 | | `VIDEO_RESOLUTION` | `(1280, 720)` |
 | | `VIDEO_WORKFLOW_MODE` | `full` |
@@ -564,7 +571,7 @@ fps = get_domain_setting("video", "sampling", "fps", default=24)
 | `core/settings.yaml` | 폴링 간격, CUDA 동시성, 재시도 정책, GPU 메모리 |
 | `script/settings.yaml` | Ollama 파라미터 (num_predict, temperature), 품질 기준 |
 | `scene/settings.yaml` | 전략 임계값, 스택 크기, body 항목 범위, 강조 키워드 |
-| `tts/settings.yaml` | 음성, 타임아웃, 후처리 (무음 제거, 배속), 품질 검증 |
+| `tts/settings.yaml` | 참고용(engine, 출력 포맷, intro 숨고르기). 런타임 값은 `config/settings.py` |
 | `video/settings.yaml` | 해상도, 프레임, 샘플링 (steps, CFG), I2V, ComfyUI, 제한 |
 | `renderer/settings.yaml` | 코덱 (h264_nvenc), 품질 (CQ 23), FPS, 오디오, 썸네일 |
 
@@ -583,9 +590,8 @@ fps = get_domain_setting("video", "sampling", "fps", default=24)
 
 ```yaml
 services:
-  ai_worker:      # 이 모듈 — 8-Phase 파이프라인
+  ai_worker:      # 이 모듈 — 8-Phase 파이프라인 (+ 외부 네트워크 local_tts_net)
   db:             # MariaDB 11 (3306)
-  fish-speech:    # TTS 서버 (8080) — ~5GB VRAM
   comfyui:        # LTX-2 비디오 생성 (8188) — ~12.7GB VRAM (--lowvram)
   backend:        # Spring Boot API (8080)
   frontend:       # Next.js 14 대시보드 (3000)
@@ -606,6 +612,6 @@ services:
 | 서비스 | 프로토콜 | 사용 Phase |
 |--------|---------|-----------|
 | llm-worker (Claude) | HTTP `POST :8090/v1/invoke` | Phase 2, 6 |
-| Fish Speech | HTTP `POST /v1/tts` | Phase 5 |
+| Local-TTS (외부 제공자) | HTTP `POST /v1/jobs` (`http://local-tts:8500`) | Phase 5, 8(댓글·아웃트로) |
 | ComfyUI | HTTP `POST /prompt` + polling | Phase 7 |
 | MariaDB | SQLAlchemy | 전 Phase (상태 관리) |

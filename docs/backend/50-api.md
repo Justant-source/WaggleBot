@@ -1,7 +1,7 @@
 # WaggleBot — API 명세 (L5)
 
-> last-verified: 2026-08-31 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/`, `worker/ai_worker/tts/fish_client.py`, `worker/ai_worker/core/main.py`, `worker/ai_worker/core/progress.py`
-> scope: llm-worker·backend·Fish Speech·ComfyUI API 엔드포인트 명세 — SSOT
+> last-verified: 2026-11-27 · code-ref: `backend/src/main/java/com/wagglebot/controller/`, `backend/src/main/java/com/wagglebot/external/`, `backend/src/main/java/com/wagglebot/config/ExternalApiKeyFilter.java`, `worker/llm/src/main/java/com/wagglebot/llmworker/`, `worker/ai_worker/tts/synth.py`, `worker/ai_worker/tts/local_tts_client.py`, `worker/ai_worker/core/main.py`, `worker/ai_worker/core/progress.py`
+> scope: llm-worker·backend·Local-TTS(외부)·ComfyUI API 엔드포인트 명세 — SSOT
 
 ## 서비스별 Base URL
 
@@ -9,7 +9,7 @@
 |--------|----------|------|
 | `llm-worker` | `http://llm-worker:8090` | Claude CLI 게이트웨이 (완전 구현) |
 | `backend` | `http://backend:8080` | Spring Boot REST API (완전 구현) |
-| `fish-speech` | `http://fish-speech:8080` | OpenAudio S1-mini TTS 서비스 |
+| `local-tts` | `http://local-tts:8500` | Local-TTS 외부 제공자(Supertonic). 네트워크 `local_tts_net`, 이 compose 서비스 아님 |
 | `comfyui` | `http://comfyui:8188` | 비디오 생성 (외부 이미지) |
 
 ---
@@ -191,7 +191,8 @@ Spring Boot 3.3 REST API. 전체 Controller 구현 완료.
 
 | Method | Path | 설명 |
 |--------|------|------|
-| `GET` | `/api/tts/voices` | 등록된 음성 키 목록 |
+| `GET` | `/api/tts/voices` | 보이스 프리셋 목록(`M1~M5`·`F1~F5`, `config/voices.json` v4) + `defaultVoice` |
+| `GET` | `/api/tts/voices/{key}/sample` | 사전 생성 샘플 `assets/voices/voice_preview_{KEY}.mp3` 스트리밍(없으면 404) |
 
 ### External Jobs (`/api/external/jobs`) — 외부 연동 ingest+render
 
@@ -277,41 +278,44 @@ Spring 프로퍼티 `app.external.api-key`). 누락·불일치 시 `401 {"error"
 
 ---
 
-## Fish Speech API (:8082 외부, :8080 컨테이너 내부)
+## Local-TTS API (:8500, 외부 제공자)
 
-Python `worker/ai_worker/tts/fish_client.py`가 직접 호출한다. 컨테이너는 OpenAudio S1-mini를 로드한 Fish Speech API 서버이며, 참조 음성은 우선 `reference_id` 폴더 구조를 사용한다.
+Python `worker/ai_worker/tts/synth.py`가 `local_tts_client.py`(Local-TTS 클라이언트 **복사본**)로 호출한다. 서버는 별도 저장소(`/home/justant/Data/Local-TTS`)가 운영하며 이 compose에는 없다. 컨테이너 간 주소 `http://local-tts:8500`(외부 네트워크 `local_tts_net`), 호스트 `127.0.0.1:8500`. 전체 계약은 Local-TTS `docs/api.md`·`docs/CONTRACT.md`가 정본이고, 아래는 WaggleBot이 쓰는 부분만 요약한다.
 
-**주요 엔드포인트:**
-```http
-POST /v1/tts
-```
+**공통 헤더:** `X-Client-Id: wagglebot`(= 프로필 네임스페이스), 토큰이 설정된 서버면 `Authorization: Bearer <TTS_SERVER_TOKEN>`, 생성 시 `Idempotency-Key`(= `options.request_id`).
 
-**Request Body (reference_id 경로):**
+| 호출 | 용도 |
+|------|------|
+| `POST /v1/jobs` | 합성 job 생성(202) |
+| `GET /v1/jobs/{id}` | 상태 대기(long-poll) |
+| `GET /v1/jobs/{id}/audio` | 최종 wav |
+| `DELETE /v1/jobs/{id}` | 결과 파일 삭제 |
+| `POST /v1/jobs/{id}:cancel` | 대기 시간 초과 시 취소 |
+| `GET /readyz` | 서버 준비 확인(`wait_for_tts_server`) |
+| `POST /v1/profiles/wagglebot/shorts-ko/versions` 등 | 발음 프로필 업로드·검증·미리보기·활성화 — `worker/tools/sync_tts_profile.py`만 사용 |
+
+**Request (job 생성, `synth.build_options` 기준):**
 ```json
 {
-  "text": "(joyful) 안녕하세요.",
-  "format": "wav",
-  "chunk_length": 200,
-  "normalize": false,
-  "temperature": 0.8,
-  "top_p": 0.8,
-  "repetition_penalty": 1.1,
-  "reference_id": "yura",
-  "use_memory_cache": "on"
+  "text": "<prenormalize 결과>",
+  "options": {
+    "voice": "F2",
+    "lang": "ko",
+    "speed": 1.1,
+    "normalize": {"enabled": true, "profile": "wagglebot/shorts-ko"},
+    "chunk": {"mode": "max_chars", "max_chars": 120},
+    "postprocess": {"loudnorm": {"enabled": true, "i": -16, "tp": -1.5}},
+    "output": {"format": "wav"},
+    "request_id": "wb-<post_id>-<scene_type>-<uuid8>"
+  }
 }
 ```
 
-**레거시 base64 폴백:** `reference_id` 폴더가 없고 평면 파일만 있으면 `references: [{audio, text}]`를 보낸다. 둘 다 없으면 `references: []`로 기본 음색 합성을 시도하고 경고 로그를 남긴다.
+**오류 분류:** 연결 실패·타임아웃·429·503·5xx·대기 초과는 클라이언트가 `TTS_SERVER_RETRIES`회 재시도한 뒤 `TTSUnavailable`(일시 장애 → APPROVED 재큐). `empty_input` 등 요청 거부는 `ValueError`/`TTSError`(일반 실패). 재시도 가능한 job 실패는 `TTSUnavailable`, 영구 실패는 `TTSError`.
 
-**Response:** `audio/wav` binary.
+**설정값 (config/settings.py):** `TTS_SERVER_URL`, `TTS_SERVER_TOKEN`, `TTS_SERVER_TIMEOUT_SEC=120`, `TTS_SERVER_RETRIES=3`, `TTS_SERVER_MAX_WAIT_SEC=3600`, `TTS_PROFILE=wagglebot/shorts-ko`, `TTS_CLIENT_ID=wagglebot`, `TTS_SPEED=1.1` → [worker/20-containers](../worker/20-containers.md#tts-설정)
 
-**설정값 (config/settings.py):**
-- `FISH_SPEECH_TIMEOUT = 300s`
-- `FISH_SPEECH_TEMPERATURE = 0.8`
-- `FISH_SPEECH_TOP_P = 0.8`
-- `FISH_SPEECH_REPETITION_PENALTY = 1.1`
-- `FISH_SPEECH_USE_MEMORY_CACHE = "on"`
-- `FISH_SPEECH_NORMALIZE = false`
+> 폐기: Fish Speech API(`POST /v1/tts`, `reference_id`·`use_memory_cache`, 감정 마커), `fish-speech:8080`/`:8082`. ADR-0005는 폐기됨 → [ADR-0006](../shared/90-adr/0006-local-tts-provider.md).
 
 ---
 

@@ -18,8 +18,8 @@
 
 - **자동 크롤링**: 네이트판·보배드림·DC인사이드·FM코리아·인스티즈·더쿠·MLB파크 인기 게시글 수집 + 시간감쇠 인기도 스코어링
 - **AI 대본**: Claude(haiku/sonnet/opus) 기반 8-Phase 파이프라인 — 의미 단위 청킹 → 씬 배분 → 감정 태그
-- **TTS**: OpenAudio S1-mini 기반 Fish Speech 서버 (reference_id 음성 클로닝, 감정 마커 지원)
-- **Mood 기반 씬 연출**: 9가지 감성 톤(humor/touching/horror 등) 프리셋 → 비주얼·BGM·TTS 감정 자동 배분
+- **TTS**: 외부 **Local-TTS** 서버(Supertonic, `http://local-tts:8500`) 요청 — 보이스 프리셋 `M1~M5`·`F1~F5`, 서버 정규화·발음 프로필(`wagglebot/shorts-ko`)
+- **Mood 기반 씬 연출**: 9가지 감성 톤(humor/touching/horror 등) 프리셋 → 비주얼·BGM 자동 배분
 - **비디오 생성**: LTX-2 19B (ComfyUI, T2V/I2V, 720p) — `VIDEO_GEN_ENABLED=true`일 때 활성
 - **영상 렌더링**: FFmpeg + NVENC GPU 가속, ASS 동적 자막, 정적+비디오 하이브리드 합성, 썸네일 자동 생성
 - **대시보드**: Next.js 14 어드민 UI(수신함/편집실/갤러리/분석/설정/LLM 로그/진행상황) + Spring Boot REST API
@@ -46,7 +46,7 @@ flowchart TD
         DASH[frontend<br/>Next.js :3000]
         AI[ai_worker<br/>8-Phase Pipeline]
         LLM_W[llm-worker<br/>Claude CLI :8090]
-        FISH[TTS<br/>:8082]
+        LTTS[Local-TTS<br/>외부 :8500]
         COMFY[ComfyUI LTX-2<br/>:8188]
     end
 
@@ -61,7 +61,7 @@ flowchart TD
     SPRING -->|Job enqueue| AI
     AI -->|LLM 호출| LLM_W
     LLM_W -->|subprocess| CLAUDE_API
-    AI -->|TTS| FISH
+    AI -->|TTS| LTTS
     AI -->|비디오 생성| COMFY
     AI -->|업로드| YT
 ```
@@ -82,7 +82,7 @@ Phase 2   chunk_with_llm       LLM 의미 단위 청킹 (raw script)
 Phase 3   validate_and_fix     max_chars 검증 + 한국어 분할
 Phase 4   SceneDirector        씬 배분 + 감정 태그 (list[SceneDecision])
 Phase 4.5 assign_video_modes   씬별 t2v/i2v 모드 할당
-Phase 5   TTS 생성             OpenAudio S1-mini (scene.text_lines)
+Phase 5   TTS 생성             Local-TTS 서버 요청 (scene.text_lines)
 Phase 6   video_prompt 생성    한국어 → 영어 프롬프트
 Phase 7   video_clip 생성      ComfyUI LTX-2 클립
 Phase 8   FFmpeg 렌더링        최종 9:16 영상 + 썸네일
@@ -97,7 +97,7 @@ Phase 8   FFmpeg 렌더링        최종 9:16 영상 + 썸네일
 | 워커 | Python 3.12 (크롤러 · 8-Phase AI 파이프라인 · 업로더 · 분석 · 모니터링) |
 | LLM | **Claude** — `haiku` / `sonnet` / `opus`, call_type별 자동 라우팅 |
 | LLM 백엔드 | **CLI**(llm-worker Spring Boot 게이트웨이 + `claude` CLI, 구독 인증) 또는 **API**(Anthropic API, `ANTHROPIC_API_KEY`) — 대시보드에서 전환 |
-| TTS | OpenAudio S1-mini 기반 Fish Speech 서버 (`wagglebot/fish-speech-s1:cuda`, reference_id 클로닝) |
+| TTS | 외부 Local-TTS 제공자(Supertonic, 프리셋 M1~M5·F1~F5, 서버 정규화·loudnorm) — 네트워크 `local_tts_net` 사전 생성 필요 |
 | 비디오 | LTX-2 19B (ComfyUI, T2V/I2V, 720p) — GGUF Q4 UNet + Gemma 3 텍스트 인코더 |
 | DB | MariaDB 11 + SQLAlchemy ORM(Python) + Flyway 마이그레이션(backend) |
 | 영상 | FFmpeg (`h264_nvenc` GPU 가속) |
@@ -163,21 +163,20 @@ claude   # 로그인 진행
 > `video_prompt`/`translate`/`comment_summarize` → **haiku**.
 > `config/pipeline.json`의 `llm_model_overrides`로 call_type별 override 가능합니다.
 
-### 4. OpenAudio S1-mini TTS 모델 다운로드
+### 4. Local-TTS 제공자 준비
+
+TTS 합성은 별도 저장소 서비스 **Local-TTS**(`/home/justant/Data/Local-TTS`)가 담당하며 WaggleBot compose에는 포함되지 않습니다. `ai_worker`·`dashboard_worker`는 외부 Docker 네트워크 `local_tts_net`에 합류해 `http://local-tts:8500`으로 요청합니다.
 
 ```bash
-pip install huggingface_hub               # 없는 경우
-huggingface-cli login                     # gated 모델 접근 권한 필요
-bash scripts/download_openaudio_s1.sh     # 모델 다운로드
+# Local-TTS를 먼저 기동 (그 저장소의 절차 — ops/prepare_data.sh 가 local_tts_net 도 만든다)
+docker network create local_tts_net      # 이미 있으면 생략. compose의 external 네트워크라 사전 생성 필수
+
+# 발음 프로필 업로드·검증 (호스트, 저장소 루트)
+PYTHONPATH=.:worker venv/bin/python worker/tools/sync_tts_profile.py --dry-run   # 검증만
+PYTHONPATH=.:worker venv/bin/python worker/tools/sync_tts_profile.py --activate  # 운영 반영(명시 요청 시에만)
 ```
 
-다운로드 후 구조 확인:
-```
-checkpoints/openaudio-s1-mini/
-├── model.pth
-├── codec.pth
-└── (기타 config 파일)
-```
+서버가 LOCAL_TTS_TOKEN을 요구하면 `env/.env`의 `TTS_SERVER_TOKEN`에 같은 값을 넣습니다. 서버가 내려가 있으면 포스트는 FAILED가 아니라 APPROVED로 대기·재큐됩니다.
 
 ### 5. LTX-2 모델 다운로드 (비디오 생성 사용 시)
 
@@ -196,24 +195,9 @@ checkpoints/
 ├── diffusion_models/  vae/                   ← GGUF UNet / VAE
 ```
 
-### 6. 참조 음성 준비
+### 6. 보이스 프리셋
 
-OpenAudio S1-mini는 `reference_id` 기반 음성 클로닝을 사용합니다. 원하는 목소리의 WAV 파일을 준비한 뒤 voice key별 폴더 구조로 등록합니다.
-
-```
-assets/voices/
-└── yura/
-    ├── 01.wav   ← 10~30초, 16kHz 이상, 깨끗한 음성
-    └── 01.lab   ← 01.wav에서 실제로 말한 내용
-```
-
-자동 전사 기반 등록:
-```bash
-cd worker
-python -m tools.prepare_voice --input ../assets/raw/my_voice.wav --key yura --label "Yura"
-```
-
-음성 메타데이터는 `config/voices.json`이 정본입니다. 컨테이너의 `assets/voices` 마운트는 UID 1000 쓰기 권한이 필요합니다.
+참조 음성 준비는 필요 없습니다. 보이스는 Supertonic 프리셋 `M1~M5`(남)·`F1~F5`(여)이며, 글별 보이스가 없으면 `post_id` 시드로 결정적으로 정해집니다(같은 글은 항상 같은 보이스). 구 키(`yura`, `kangil_ref` 등)는 성별을 보존해 프리셋으로 매핑됩니다. 보이스 메타데이터 정본은 `config/voices.json`(v4), 샘플은 `assets/voices/voice_preview_<KEY>.mp3`입니다.
 
 ### 7. 환경 변수 설정 및 실행
 
@@ -269,7 +253,7 @@ DB 스키마는 **Spring Boot backend가 기동 시 Flyway 마이그레이션을
 ```
 수신함 승인 → 편집실(대본 수정)
 → Phase 1~4: Claude 대본/씬 생성(sonnet, llm-worker 또는 API)
-→ Phase 5: OpenAudio S1-mini TTS → VRAM 해제
+→ Phase 5: Local-TTS 서버 합성(외부 제공자)
 → Phase 6~7: LTX-2 비디오 클립 생성(ComfyUI, 씬당 1~3분) → VRAM 해제
 → Phase 8: FFmpeg 하이브리드 렌더링(정적+비디오 합성) → 썸네일 생성
 → 갤러리 확인 → 업로드
@@ -277,12 +261,7 @@ DB 스키마는 **Spring Boot backend가 기동 시 Flyway 마이그레이션을
 
 ### TTS 음성 변경
 
-`config/voices.json`에 등록된 voice key를 사용합니다. 신규 음성은 `assets/voices/<key>/NN.wav + NN.lab` 구조로 준비한 뒤 등록합니다.
-
-```bash
-cd worker
-python -m tools.prepare_voice --input ../assets/raw/new_voice.wav --key new_voice --label "New Voice"
-```
+`config/voices.json`의 프리셋 키(`M1~M5`, `F1~F5`)를 편집실·설정 화면에서 선택합니다. 프리셋 외 키를 쓰면 `voice_resolver`가 성별 보존 매핑 또는 `post_id` 시드 랜덤으로 프리셋을 정합니다. 발음 규칙 변경은 `config/tts_profile/shorts-ko.yaml` 수정 후 `worker/tools/sync_tts_profile.py`로 서버에 올립니다.
 
 ---
 
@@ -292,7 +271,6 @@ python -m tools.prepare_voice --input ../assets/raw/new_voice.wav --key new_voic
 |--------|------|------|
 | `db` | MariaDB 11 | 3306:3306 |
 | `crawler` | 크롤링 루프 (`python main.py`) | — |
-| `fish-speech` | OpenAudio S1-mini TTS (reference_id 클로닝) | 8082:8080 |
 | `comfyui` | LTX-2 비디오 생성 | 8188:8188 |
 | `ai_worker` | 8-Phase 파이프라인 (`ai_worker.core.main`) | — |
 | `monitoring` | 헬스체크/알림 데몬 | — |
@@ -302,6 +280,7 @@ python -m tools.prepare_voice --input ../assets/raw/new_voice.wav --key new_voic
 | `dashboard_worker` | `jobs` 테이블 폴링 실행 데몬 | — |
 | `telegram-bridge` | 텔레그램 봇 브리지 (선택) | 3847:3847 |
 
+> TTS는 compose 서비스가 아니라 외부 Local-TTS(`local-tts:8500`, 네트워크 `local_tts_net`)입니다.
 > `dashboard_worker`는 Java backend가 `jobs` 테이블에 enqueue한 작업을 Python이 폴링·실행합니다.
 > `llm-worker`는 `POST :8090/v1/invoke`로 호출되는 `claude` CLI subprocess 게이트웨이입니다
 > (소스: `worker/llm/`, `~/.claude` 마운트 인증).
@@ -315,7 +294,7 @@ WaggleBot/
 ├── CLAUDE.md                          # AI 개발 규칙 (코딩 컨벤션, 하드 제약)
 ├── README.md
 ├── env/                               # ★ Docker Compose 단위
-│   ├── docker-compose.yml             # 11개 서비스 정의 (RTX 3090 GPU)
+│   ├── docker-compose.yml             # 서비스 정의 (RTX 3090 GPU)
 │   ├── .env / .env.example
 │   └── Dockerfile.comfyui             # ComfyUI 이미지 (CUDA, LTX-2 노드)
 ├── backend/                           # Spring Boot 3.3 REST API (Java)
@@ -341,7 +320,7 @@ WaggleBot/
 │   │   ├── script/                    # client · chunker · normalizer · parser · logger
 │   │   ├── scene/                     # director · validator · analyzer
 │   │   ├── pipeline/content_processor.py  # Phase 1~8 통합 진입점
-│   │   ├── tts/                       # fish_client · normalizer · number_reader
+│   │   ├── tts/                       # synth · local_tts_client · voice_resolver · prenorm · alignment
 │   │   ├── video/                     # manager · comfy_client · prompt_engine · image_filter · video_utils · workflows/
 │   │   └── renderer/                  # composer(진입점) · layout · _frames · _tts · _encode · thumbnail
 │   ├── llm/                           # ★ llm-worker 게이트웨이 (Spring Boot, claude CLI 브릿지)
@@ -362,10 +341,10 @@ WaggleBot/
 ├── assets/
 │   ├── backgrounds/  fonts/  image/   # 배경 영상 · 폰트 · Mood Intro/Outro
 │   ├── bgm/                           # Mood별 BGM (9개 카테고리)
-│   ├── voices/                        # Fish Speech 참조 오디오 (WAV)
+│   ├── voices/                        # 보이스 미리듣기 샘플 voice_preview_<KEY>.mp3 (구 참조 음성 폴더는 합성에 미사용)
 │   └── media/                         # 생성물 (tmp/videos 등, ComfyUI 공유 볼륨)
-├── checkpoints/                       # 모델 파일 (Fish Speech / LTX-2 / Gemma 3 / 업스케일러)
-├── scripts/                           # setup_docker_gpu · download_openaudio_s1 · download_ltx2 · youtube_auth · tiktok_auth
+├── checkpoints/                       # 모델 파일 (LTX-2 / Gemma 3 / 업스케일러)
+├── scripts/                           # setup_docker_gpu · download_ltx2 · youtube_auth · tiktok_auth
 └── docs/                              # 상세 문서 (00-agent / 10-context / 20-containers / 30-components / ...)
 ```
 
@@ -377,7 +356,6 @@ WaggleBot/
 # 항상 --tail 옵션 사용 (토큰/메모리 낭비 방지)
 docker compose -f env/docker-compose.yml logs --tail 50 ai_worker
 docker compose -f env/docker-compose.yml logs --tail 50 llm-worker
-docker compose -f env/docker-compose.yml logs --tail 50 fish-speech
 docker compose -f env/docker-compose.yml logs --tail 50 crawler
 
 # GPU 사용 현황
@@ -398,6 +376,6 @@ nvidia-smi
 | [`docs/30-components/overview.md`](docs/30-components/overview.md) | 모듈 책임, 크롤러/업로더 구조 |
 | [`docs/30-components/implementation-status.md`](docs/30-components/implementation-status.md) | 구현 완료 현황과 주요 변경 이력 |
 | [`docs/40-data/schema.md`](docs/40-data/schema.md) | DB 스키마 ER, 테이블 컬럼, ScriptData JSON 구조 |
-| [`docs/50-api/rest-spec.md`](docs/50-api/rest-spec.md) | backend, llm-worker, Fish Speech, ComfyUI API 명세 |
+| [`docs/50-api/rest-spec.md`](docs/50-api/rest-spec.md) | backend, llm-worker, Local-TTS(외부), ComfyUI API 명세 |
 | [`docs/60-runtime/pipeline-runtime.md`](docs/60-runtime/pipeline-runtime.md) | 처리 루프, 폴백, 피드백 루프 |
 | [`docs/70-policy/constraints.md`](docs/70-policy/constraints.md) | 하드 제약과 금지 규칙 |

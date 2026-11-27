@@ -1334,8 +1334,6 @@ def _render_pipeline(
                 logger.warning("[layout] TTS 캐시 로드 실패 (%s) — 재생성", _e)
         if not _cache_valid:
             logger.info("[layout] TTS 생성 시작")
-            from ai_worker.tts.fish_client import _warmup_model
-            _run_async(_warmup_model())
             t0 = time.time()
             durations = _run_async(
                 _generate_tts_chunks(

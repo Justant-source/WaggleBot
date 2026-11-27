@@ -51,21 +51,21 @@ requires_db = pytest.mark.skipif(
 )
 
 
-def _check_fish_reachable() -> bool:
-    """Fish Speech HTTP 연결 가능 여부를 확인한다."""
+def _check_tts_reachable() -> bool:
+    """Local-TTS 서버 연결 가능 여부를 확인한다."""
     try:
         import httpx
-        url = os.getenv("FISH_SPEECH_URL", "http://localhost:8082")
-        resp = httpx.get(f"{url}/", timeout=3.0)
-        return resp.status_code < 400
+        url = os.getenv("TTS_SERVER_URL", "http://127.0.0.1:8500")
+        resp = httpx.get(f"{url}/health", timeout=3.0)
+        return resp.status_code < 500
     except Exception:
         return False
 
 
-_FISH_OK = _check_fish_reachable()
-requires_fish = pytest.mark.skipif(
-    not _FISH_OK,
-    reason="Fish Speech 서버 연결 불가 (fish-speech 컨테이너가 실행 중이어야 합니다)",
+_TTS_OK = _check_tts_reachable()
+requires_tts = pytest.mark.skipif(
+    not _TTS_OK,
+    reason="Local-TTS 서버 연결 불가 (local-tts 컨테이너가 실행 중이어야 합니다)",
 )
 
 
@@ -334,86 +334,6 @@ class TestMarkPostFailedSignature:
         )
 
 
-@pytest.mark.unit
-class TestWarmupSentinel:
-    """WP-7: Fish Speech warmup sentinel — 저장/로드 로직 검증."""
-
-    def test_load_warmup_sentinel_valid(self, tmp_path: Path, monkeypatch):
-        """유효한 sentinel 파일(6시간 이내)을 로드하면 dict를 반환해야 한다."""
-        from ai_worker.tts import fish_client
-
-        sentinel_path = tmp_path / "fish_warmup_state.json"
-        sentinel_data = {"warmed_at": time.time(), "url": "http://fish-speech:8080"}
-        sentinel_path.write_text(json.dumps(sentinel_data), encoding="utf-8")
-
-        monkeypatch.setattr(fish_client, "_get_warmup_sentinel_path", lambda: sentinel_path)
-
-        result = fish_client._load_warmup_sentinel()
-        assert result is not None, "유효한 sentinel 파일이 있으면 None을 반환하면 안 됨"
-        assert "warmed_at" in result, "로드된 sentinel에 warmed_at 키가 있어야 함"
-        assert "url" in result, "로드된 sentinel에 url 키가 있어야 함"
-
-    def test_load_warmup_sentinel_missing(self, tmp_path: Path, monkeypatch):
-        """sentinel 파일이 없으면 None을 반환해야 한다."""
-        from ai_worker.tts import fish_client
-
-        missing_path = tmp_path / "nonexistent_sentinel.json"
-        monkeypatch.setattr(fish_client, "_get_warmup_sentinel_path", lambda: missing_path)
-
-        result = fish_client._load_warmup_sentinel()
-        assert result is None, "sentinel 파일이 없으면 None을 반환해야 함"
-
-    def test_load_warmup_sentinel_corrupt(self, tmp_path: Path, monkeypatch):
-        """손상된 sentinel 파일은 None을 반환해야 한다."""
-        from ai_worker.tts import fish_client
-
-        corrupt_path = tmp_path / "corrupt_sentinel.json"
-        corrupt_path.write_text("{invalid json:::", encoding="utf-8")
-        monkeypatch.setattr(fish_client, "_get_warmup_sentinel_path", lambda: corrupt_path)
-
-        result = fish_client._load_warmup_sentinel()
-        assert result is None, "파싱 불가 sentinel은 None을 반환해야 함"
-
-    def test_save_warmup_sentinel(self, tmp_path: Path, monkeypatch):
-        """_save_warmup_sentinel()이 warmed_at과 url을 포함한 JSON을 기록해야 한다."""
-        from ai_worker.tts import fish_client
-
-        sentinel_path = tmp_path / "fish_warmup_state.json"
-        monkeypatch.setattr(fish_client, "_get_warmup_sentinel_path", lambda: sentinel_path)
-
-        fish_client._save_warmup_sentinel()
-
-        assert sentinel_path.exists(), "sentinel 파일이 생성돼야 함"
-        data = json.loads(sentinel_path.read_text(encoding="utf-8"))
-        assert "warmed_at" in data, "sentinel에 warmed_at 필드가 있어야 함"
-        assert "url" in data, "sentinel에 url 필드가 있어야 함"
-        # warmed_at이 현재 시각 근처여야 함 (10초 이내)
-        assert abs(data["warmed_at"] - time.time()) < 10, (
-            "sentinel의 warmed_at이 현재 시각과 너무 다름"
-        )
-
-    def test_sentinel_expired_detection(self, tmp_path: Path, monkeypatch):
-        """만료된(7시간 전) sentinel의 age 계산이 올바르게 이루어져야 한다."""
-        from ai_worker.tts import fish_client
-
-        sentinel_path = tmp_path / "fish_warmup_state.json"
-        # 7시간 전에 워밍업한 것처럼 기록
-        old_time = time.time() - (7 * 3600)
-        sentinel_data = {"warmed_at": old_time, "url": fish_client.FISH_SPEECH_URL}
-        sentinel_path.write_text(json.dumps(sentinel_data), encoding="utf-8")
-        monkeypatch.setattr(fish_client, "_get_warmup_sentinel_path", lambda: sentinel_path)
-
-        result = fish_client._load_warmup_sentinel()
-        assert result is not None, "만료됐어도 파일은 로드돼야 함 (_load는 파싱만 수행)"
-
-        # age 계산 — 6시간 기준(WARMUP_SENTINEL_MAX_AGE_HOURS)으로 만료 확인
-        age_h = (time.time() - result["warmed_at"]) / 3600.0
-        assert age_h > fish_client._WARMUP_SENTINEL_MAX_AGE_HOURS, (
-            f"sentinel age({age_h:.1f}h)가 최대 유효 시간"
-            f"({fish_client._WARMUP_SENTINEL_MAX_AGE_HOURS}h)보다 커야 만료로 판정됨"
-        )
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # 그룹 2: FFmpeg 테스트
 # ─────────────────────────────────────────────────────────────────────────────
@@ -664,10 +584,10 @@ class TestMarkPostFailedDB:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 그룹 4: Fish Speech 테스트
+# 그룹 4: Local-TTS 테스트
 # ─────────────────────────────────────────────────────────────────────────────
 
-@requires_fish
+@requires_tts
 class TestTtsPreviewHandler:
     """dashboard_worker/handlers.py: _handle_tts_preview — 오디오 경로 반환 검증."""
 

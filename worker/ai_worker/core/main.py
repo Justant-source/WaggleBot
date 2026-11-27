@@ -6,7 +6,7 @@
 
 두 워커가 asyncio.gather로 동시 실행되지만, _gpu_stage_lock으로
 GPU 작업(LLM+TTS vs Phase 7 LTX-2)을 직렬화하여 VRAM 충돌을 방지한다.
-Fish Speech(~5GB)와 LTX-2(~12.7GB)는 RTX 3090 24GB에 동시 로드 불가.
+LLM+TTS 단계는 외부 Local-TTS 서버에 합성을 맡기며, 서버 장애는 FAILED가 아닌 hold/재큐로 처리한다.
 """
 import asyncio
 import logging
@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from sqlalchemy import case
 
 from ai_worker.core.shutdown import get_shutdown_event, is_shutting_down, request_shutdown
-from ai_worker.tts.fish_gate import gate as fish_gate
+from ai_worker.tts.synth import TTSUnavailable, wait_for_tts_server
 from config.settings import (
-    AI_POLL_INTERVAL, CUDA_CONCURRENCY, FISH_GATE_MIN_RECHECK_SEC, FISH_GATE_REQUEUE_AFTER_SEC,
+    AI_POLL_INTERVAL, CUDA_CONCURRENCY,
     HEARTBEAT_INTERVAL_SEC, PHASE_STALL_SEC, STALE_SCAN_INTERVAL_SEC,
 )
 from db.models import Post, Content, PostStatus
@@ -70,7 +70,7 @@ def _classify_failure(error: str) -> tuple[str, str, bool]:
         return "RENDER_FFMPEG_ERROR", "ffmpeg_render", True
 
     # Audio/TTS errors (retryable — may recover with retry)
-    if "tts" in lower or "audio" in lower or "fish" in lower.replace("_", ""):
+    if "tts" in lower or "audio" in lower:
         if "not found" in lower or "missing" in lower:
             return "RENDER_ASSET_MISSING", "tts", False
         return "TTS_GENERATION_FAILED", "tts", True
@@ -208,8 +208,7 @@ def _get_cuda_sem() -> asyncio.Semaphore:
     return _cuda_sem
 
 
-# GPU 단계 락 — LLM+TTS(Fish Speech)와 렌더(Phase 7 LTX-2) 간 VRAM 충돌 방지.
-# Fish Speech(~5GB)와 LTX-2(~12.7GB)는 RTX 3090 24GB에 동시 로드 불가.
+# GPU 단계 락 — LLM+TTS 단계와 렌더(Phase 7 LTX-2) 직렬화.
 # 이 락으로 두 워커의 GPU 작업을 직렬화한다.
 _gpu_stage_lock: asyncio.Lock | None = None
 
@@ -230,34 +229,43 @@ def _post_priority(post: Post) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Fish 차단 시 보류·재큐
+# TTS 서버 일시 장애 시 보류·재큐
 # ---------------------------------------------------------------------------
+#
+# Local-TTS 서버가 불가하면 포스트를 FAILED로 만들지 않는다.
+#  1) 집기 전: 서버 확인이 실패하면 APPROVED 폴링을 보류한다(상태·retry_count 변화 없음).
+#  2) 처리 중: synthesize가 TTS_SERVER_MAX_WAIT_SEC 안에 서버를 못 얻어 TTSUnavailable을 던지면
+#     PROCESSING → APPROVED로 되돌리고 retry_count를 원복한다(재시도 횟수 소모 없음).
+# 합성 대기 상한은 synth 쪽 TTS_SERVER_MAX_WAIT_SEC가 단일 SSOT이며, 여기서는 대기 루프를 두지 않는다.
 
-_fish_hold_reason: str | None = None
+_TTS_HOLD_RECHECK_SEC = 30.0   # 보류 중 서버 재확인 간격
+_TTS_PROBE_TIMEOUT_SEC = 3.0   # 집기 전 비차단 확인 한도
+_tts_hold_active: bool = False
 
 
-async def _fish_hold_check() -> str | None:
-    """Fish가 blocked면 사유, 아니면 None. 게이트 비활성·예외·unavailable은 None(fail-open).
+async def _tts_hold_check() -> bool:
+    """TTS 서버가 불가하면 True(보류). 확인 중 예외는 fail-open(False).
 
     상태가 바뀔 때만 INFO 로그(반복 로그 폭주 방지).
     """
-    global _fish_hold_reason
+    global _tts_hold_active
     try:
-        reason = await fish_gate.blocked_reason()
+        ok = await wait_for_tts_server(timeout_sec=_TTS_PROBE_TIMEOUT_SEC)
     except Exception:
-        logger.debug("Fish 차단 확인 실패 — 진행(fail-open)", exc_info=True)
-        reason = None
-    if reason != _fish_hold_reason:
-        if reason:
-            logger.info("⏸ Fish 차단 중 — APPROVED 집기 보류: %s", reason)
+        logger.debug("TTS 서버 확인 실패 — 진행(fail-open)", exc_info=True)
+        ok = True
+    held = not ok
+    if held != _tts_hold_active:
+        if held:
+            logger.info("⏸ TTS 서버 불가 — APPROVED 집기 보류")
         else:
-            logger.info("▶ Fish 차단 해제 — APPROVED 처리 재개")
-        _fish_hold_reason = reason
-    return reason
+            logger.info("▶ TTS 서버 복구 — APPROVED 처리 재개")
+        _tts_hold_active = held
+    return held
 
 
-class _FishRequeued(Exception):
-    """Fish 차단이 길어져 retry_count 소모 없이 APPROVED로 되돌렸다."""
+class _TTSRequeued(Exception):
+    """TTS 서버 장애로 retry_count 소모 없이 APPROVED로 되돌렸다."""
 
 
 def _requeue_without_retry(post_id: int, retry_before: int, note: str) -> bool:
@@ -275,53 +283,25 @@ def _requeue_without_retry(post_id: int, retry_before: int, note: str) -> bool:
     return bool(changed)
 
 
-async def _run_llm_tts_supervised(
-    processor, post_id: int, *, requeue_after: float = FISH_GATE_REQUEUE_AFTER_SEC,
-    check_interval: float = 30.0, clock=None,
-):
-    """llm_tts_stage 실행 중 Fish 게이트 대기가 requeue_after초를 넘고 여전히 blocked면 취소·재큐.
-
-    취소 지점은 fish_gate 대기 라벨이 있을 때(= 게이트 대기 루프 안)뿐이다.
-    재큐 시 _FishRequeued를 던진다(호출부는 락을 풀고 다음 post/보류로 진행).
-    """
-    import time
-
-    clock = clock or time.monotonic
+def _get_retry_count(post_id: int) -> int:
     with SessionLocal() as session:
         row = session.query(Post.retry_count).filter(Post.id == post_id).first()
-    retry_before = int((row[0] if row else 0) or 0)
+    return int((row[0] if row else 0) or 0)
 
-    task = asyncio.ensure_future(processor.llm_tts_stage(post_id))
-    waiting_since: float | None = None
+
+async def _run_llm_tts_supervised(processor, post_id: int):
+    """llm_tts_stage 실행. TTSUnavailable이면 APPROVED로 재큐(retry_count 유지)하고 _TTSRequeued를 던진다."""
+    retry_before = _get_retry_count(post_id)
     try:
-        while True:
-            done, _ = await asyncio.wait({task}, timeout=check_interval)
-            if done:
-                return task.result()
-            if fish_gate.wait_label(post_id) is None:
-                waiting_since = None
-                continue
-            now = clock()
-            if waiting_since is None:
-                waiting_since = now
-            if now - waiting_since < requeue_after:
-                continue
-            reason = await _fish_hold_check()
-            if not reason:
-                continue
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-            fish_gate.unbind_post(post_id)
-            _requeue_without_retry(
-                post_id, retry_before,
-                f"Fish 차단({reason})으로 {int(now - waiting_since)}초 대기 → APPROVED 재큐(재시도 횟수 유지)",
-            )
-            logger.warning("↩ Fish 차단 지속 — APPROVED 재큐(retry_count 유지=%d): post_id=%d | %s",
-                           retry_before, post_id, reason)
-            raise _FishRequeued(reason)
-    except asyncio.CancelledError:
-        task.cancel()
-        raise
+        return await processor.llm_tts_stage(post_id)
+    except TTSUnavailable as exc:
+        _requeue_without_retry(
+            post_id, retry_before,
+            f"TTS 서버 불가({exc}) → APPROVED 재큐(재시도 횟수 유지)",
+        )
+        logger.warning("↩ TTS 서버 불가 — APPROVED 재큐(retry_count 유지=%d): post_id=%d | %s",
+                       retry_before, post_id, exc)
+        raise _TTSRequeued(str(exc)) from exc
 
 
 async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
@@ -365,13 +345,12 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
                 pass
             continue
 
-        # Fish가 blocked면 post를 집지 않는다(PROCESSING·gpu_lock·retry_count 보존).
-        # LLM 대본 단계는 Fish가 불필요하지만, 대본 후 TTS에서 어차피 막혀 락을 쥐게 되므로
-        # 단순함을 우선해 전부 보류한다. 게이트 비활성/예외/unavailable이면 None → 기존대로 진행.
-        if await _fish_hold_check():
+        # TTS 서버가 불가하면 post를 집지 않는다(PROCESSING·gpu_lock·retry_count 보존).
+        # 확인 예외는 fail-open → 기존대로 진행.
+        if await _tts_hold_check():
             try:
                 await asyncio.wait_for(
-                    shutdown_event.wait(), timeout=max(AI_POLL_INTERVAL, FISH_GATE_MIN_RECHECK_SEC),
+                    shutdown_event.wait(), timeout=max(AI_POLL_INTERVAL, _TTS_HOLD_RECHECK_SEC),
                 )
             except asyncio.TimeoutError:
                 pass
@@ -379,6 +358,7 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
 
         # GPU 작업: LLM + TTS (gpu_lock으로 렌더 Phase 7과 직렬화)
         result = None
+        requeued_hold = False
         _inflight_post_ids.add(post_id)
         if gpu_lock.locked():
             logger.info(
@@ -389,8 +369,9 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
                 try:
                     script, audio_path = await _run_llm_tts_supervised(processor, post_id)
                     result = (post_id, script, audio_path)
-                except _FishRequeued:
+                except _TTSRequeued:
                     _inflight_post_ids.discard(post_id)
+                    requeued_hold = True
                 except Exception as exc:
                     from ai_worker.llm.transport import LLMContentRefusalError
                     if isinstance(exc, LLMContentRefusalError):
@@ -399,10 +380,17 @@ async def _llm_tts_worker(render_queue: asyncio.PriorityQueue) -> None:
                         _inflight_post_ids.discard(post_id)
                     else:
                         logger.exception("LLM+TTS 실패: post_id=%d", post_id)
-                        fish_gate.unbind_post()
                         _mark_post_failed(post_id, error=repr(exc))
                         _inflight_post_ids.discard(post_id)
                     await asyncio.sleep(5)
+
+        if requeued_hold:
+            # 재큐 직후 곧바로 다시 집어 LLM 단계를 반복하지 않도록 서버 복구를 기다린다.
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=_TTS_HOLD_RECHECK_SEC)
+            except asyncio.TimeoutError:
+                pass
+            continue
 
         # gpu_lock 해제 후 큐 적재 (데드락 방지: 큐 만석 시 render_worker가 lock 필요)
         if result is not None:
@@ -443,9 +431,15 @@ async def _render_worker(render_queue: asyncio.PriorityQueue) -> None:
                 await loop.run_in_executor(
                     None, processor.render_stage, post_id, script, audio_path
                 )
+        except TTSUnavailable as exc:
+            # 렌더 중 댓글/outro TTS 폴백이 서버 장애로 실패 — FAILED 대신 APPROVED 재큐(재시도 횟수 유지).
+            logger.warning("렌더 중 TTS 서버 불가 — APPROVED 재큐: post_id=%d | %s", post_id, exc)
+            _requeue_without_retry(
+                post_id, _get_retry_count(post_id),
+                f"렌더 중 TTS 서버 불가({exc}) → APPROVED 재큐",
+            )
         except Exception as exc:
             logger.exception("렌더링 실패: post_id=%d", post_id)
-            fish_gate.unbind_post()
             _mark_post_failed(post_id, error=repr(exc))
         finally:
             _inflight_post_ids.discard(post_id)
@@ -580,10 +574,10 @@ async def _main_loop() -> None:
 
 async def _startup() -> None:
     """앱 시작 시 외부 서비스 준비 대기."""
-    from ai_worker.tts.fish_client import wait_for_fish_speech
-    ready = await wait_for_fish_speech(retries=10, delay=5.0)
+    # 비차단 확인: 서버가 없어도 기동은 계속한다(집기 전 hold 로직이 APPROVED 처리를 보류).
+    ready = await wait_for_tts_server(timeout_sec=_TTS_PROBE_TIMEOUT_SEC)
     if not ready:
-        logger.warning("Fish Speech 서버 미준비 — TTS 생성 실패 시 해당 씬만 무음 처리")
+        logger.warning("Local-TTS 서버 미준비 — 복구될 때까지 APPROVED 처리를 보류합니다")
 
 
 def main() -> None:

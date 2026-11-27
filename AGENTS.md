@@ -52,7 +52,7 @@
 - **Mood 9종:** humor·touching·anger·sadness·horror·info·controversy·daily·shock
 - **dashboard_worker:** Java backend가 `jobs` 테이블에 enqueue → Python이 execute.
 - **볼륨 공유:** ComfyUI `/comfyui/output` ↔ ai_worker `media/tmp/videos` 동일 Docker 볼륨 (비디오 전달 경로).
-- **포트:** db 3306 · backend 8080 · frontend 3000 · llm-worker 8090 · fish-speech 8082→8080 · comfyui 8188 <!-- SSOT: docs/shared/20-containers.md -->
+- **포트:** db 3306 · backend 8080 · frontend 3000 · llm-worker 8090 · local-tts 8500(외부, `local_tts_net`) · comfyui 8188 <!-- SSOT: docs/shared/20-containers.md -->
 - **실행/로그:** `docker compose -f env/docker-compose.yml up -d` · `docker compose logs --tail 50 ai_worker`
 
 ## 모듈 맵
@@ -71,10 +71,10 @@
 
 ## 하드 제약 (절대 위반 금지)
 
-**VRAM (RTX 3090 24GB):** LLM은 원격(claude CLI/API) — 로컬 LLM VRAM 없음. 로컬 GPU는 TTS(~5GB)+VIDEO(~12.7GB)=~17GB만. 각 단계 후 `torch.cuda.empty_cache()`+`gc.collect()`. GPU 작업은 컨텍스트 매니저 필수:
+**VRAM (RTX 3090 24GB):** LLM은 원격(claude CLI/API) — 로컬 LLM VRAM 없음. 로컬 GPU는 VIDEO(~12.7GB)만(TTS는 별도 Local-TTS 컨테이너가 보유). 각 단계 후 `torch.cuda.empty_cache()`+`gc.collect()`. GPU 작업은 컨텍스트 매니저 필수:
 ```python
-with gpu_manager.managed_inference(ModelType.TTS, "fish-speech"):
-    result = tts.synthesize(text)
+with gpu_manager.managed_inference(ModelType.VIDEO, "comfyui"):
+    result = run_video(...)
 ```
 **FFmpeg:** `h264_nvenc` 필수, `libx264` 지정 금지 (프리뷰 480×854만 CPU 허용). 렌더러는 filter_complex 단일 NVENC 패스 — 중간 재인코딩 금지 → [ADR-0002](docs/shared/90-adr/0002-single-nvenc.md)
 **ComfyUI:** `--lowvram --reserve-vram 2` 고정, `--normalvram` 금지 (텍스트 인코딩 OOM) → [ADR-0001](docs/shared/90-adr/0001-comfyui-lowvram.md)

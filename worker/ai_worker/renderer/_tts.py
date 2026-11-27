@@ -530,12 +530,16 @@ def _unpack_line(item) -> tuple[str, str | None]:
     return str(item), None
 
 
-def _comment_cache_path(voice_key: str, text: str, emotion: str) -> Path:
-    """Cross-post cache for deterministic comment voices (Reels/Shorts share it)."""
+def _comment_cache_path(voice_key: str, text: str) -> Path:
+    """Cross-post cache for deterministic comment voices (Reels/Shorts share it).
+
+    voice_key는 프리셋(M1~F5) 또는 레거시 키 — 호출부가 resolve_voice로 프리셋을 넘긴다.
+    감정 마커는 폐기되어 캐시 키에 포함하지 않는다.
+    """
     import hashlib
     from config.settings import MEDIA_DIR
 
-    digest = hashlib.sha256(f"{voice_key}\0{emotion}\0{text}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{voice_key}\0{text}".encode("utf-8")).hexdigest()
     cache_dir = Path(MEDIA_DIR) / "audio" / "comment_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir / f"{digest}.wav"
@@ -550,13 +554,16 @@ async def _tts_chunk_async(
     voice_key: str = "default",
     emotion: str = "",
 ) -> float:
-    """문장 TTS 생성. pre_audio가 유효하면 재사용, 없으면 Fish Speech 호출.
+    """문장 TTS 생성. pre_audio가 유효하면 재사용, 없으면 Local-TTS 서버 호출.
+
+    emotion은 호출 호환용으로만 받으며 무시한다(감정 마커 폐기).
 
     outro(클로징)는 voice+text 키로 디스크 캐시해 매번 같은 음량·톤을 재사용한다.
     """
     import asyncio
     import shutil
-    from ai_worker.tts.fish_client import synthesize as fish_synthesize
+    from ai_worker.tts.synth import TTSUnavailable, synthesize as tts_synthesize
+    from ai_worker.tts.voice_resolver import resolve_voice
 
     out_path = output_dir / f"chunk_{idx:03d}.wav"
     if not text or not text.strip():
@@ -571,9 +578,11 @@ async def _tts_chunk_async(
             return _get_audio_duration(out_path)
 
     # Fixed closing and deterministic comment speech can be reused across posts.
+    # 캐시 키는 해석된 프리셋 기준(키 별칭·결정적 랜덤이 달라도 같은 목소리면 공유).
+    cache_voice = resolve_voice(voice_key, None)
     cache_path = None
     if scene_type == "outro":
-        cache_path = _outro_cache_path(voice_key, text)
+        cache_path = _outro_cache_path(cache_voice, text)
         if cache_path.exists() and cache_path.stat().st_size > 1024:
             shutil.copy2(cache_path, out_path)
             _loudnorm_inplace(out_path)  # 구캐시(-34 LUFS)도 재생 시 교정
@@ -585,20 +594,24 @@ async def _tts_chunk_async(
             logger.info("[layout] outro TTS 캐시 히트(+loudnorm): %s", cache_path.name)
             return _get_audio_duration(out_path)
     elif scene_type == "comments":
-        cache_path = _comment_cache_path(voice_key, text, emotion)
+        cache_path = _comment_cache_path(cache_voice, text)
         if cache_path.exists() and cache_path.stat().st_size > 1024:
             shutil.copy2(cache_path, out_path)
             logger.info("[layout] comment TTS 캐시 히트: %s", cache_path.name)
             return _get_audio_duration(out_path)
 
-    # Fish Speech 신규 생성 (Phase 5 실패 시 폴백 경로)
+    # Local-TTS 신규 생성 (Phase 5 실패 시 폴백 경로)
     for attempt in range(2):
         try:
-            await fish_synthesize(
+            await tts_synthesize(
                 text=text, scene_type=scene_type, voice_key=voice_key,
-                output_path=out_path, emotion=emotion,
+                output_path=out_path,
             )
             break
+        except TTSUnavailable:
+            # 서버 불가는 synth가 상한까지 대기한 뒤의 결과 — 무음 청크로 넘기지 않고 상위(재큐)로 전파.
+            logger.warning("[layout] TTS 서버 불가 — 청크 %d 중단", idx)
+            raise
         except Exception:
             if attempt == 0:
                 logger.warning("[layout] TTS 청크 %d 실패 — 5초 후 재시도", idx, exc_info=True)

@@ -1,0 +1,3474 @@
+{
+"_doc": "WaggleBot→Local-TTS 정규화 골든. input→prenorm(앱)→normalized(서버 wagglebot/shorts-ko@1 dry_run). legacy=구 normalizer.normalize_for_tts(2026-11-27, 삭제됨) 참고용. 서버 출력이 바뀌면 재생성한다.",
+"profile": "wagglebot/shorts-ko@1",
+"cases": [
+{
+"input": "3.5초 걸렸다",
+"prenorm": "3.5초 걸렸다",
+"normalized": "삼 쩜 오초 걸렸다.",
+"legacy": "삼 점 오초 걸렸다."
+},
+{
+"input": "50.5% 할인",
+"prenorm": "50.5% 할인",
+"normalized": "오십 쩜 오 퍼센트 할인.",
+"legacy": "오십 점 오 퍼센트 할인."
+},
+{
+"input": "1,200,000원",
+"prenorm": "1,200,000원",
+"normalized": "백이십만 원.",
+"legacy": "백이십만 원."
+},
+{
+"input": "가격은 3000원. 끝.",
+"prenorm": "가격은 3000원. 끝.",
+"normalized": "가격은 삼천 원. 끝.",
+"legacy": "가격은 삼천 원. 끝."
+},
+{
+"input": "3~4년 후",
+"prenorm": "3~4년 후",
+"normalized": "삼에서 사 년 후.",
+"legacy": "삼에서 사 년 후."
+},
+{
+"input": "3~4 정도",
+"prenorm": "3~4 정도",
+"normalized": "삼에서 사정도.",
+"legacy": "삼에서 사정도."
+},
+{
+"input": "3~4명 참석",
+"prenorm": "3~4명 참석",
+"normalized": "세에서 네 명 참석.",
+"legacy": "세에서 네 명 참석."
+},
+{
+"input": "6월과 10월",
+"prenorm": "6월과 10월",
+"normalized": "유월과 시월.",
+"legacy": "유월과 시월."
+},
+{
+"input": "3월에 만나요",
+"prenorm": "3월에 만나요",
+"normalized": "삼 월에 만나요.",
+"legacy": "삼 월에 만나요."
+},
+{
+"input": "3월에 만나요",
+"prenorm": "3월에 만나요",
+"normalized": "삼 월에 만나요.",
+"legacy": "삼 월에 만나요."
+},
+{
+"input": "010-1234-5678로 연락",
+"prenorm": "010-1234-5678로 연락",
+"normalized": "공 일 공 일 이 삼 사 오 육 칠 팔로 연락.",
+"legacy": "공 일 공 일 이 삼 사 오 육 칠 팔로 연락."
+},
+{
+"input": "175cm 70kg",
+"prenorm": "175cm 70kg",
+"normalized": "백칠십오 센티미터 칠십 킬로그램.",
+"legacy": "백칠십오 센티미터 칠십 킬로그램."
+},
+{
+"input": "3.5km 거리",
+"prenorm": "3.5km 거리",
+"normalized": "삼 쩜 오 킬로미터 거리.",
+"legacy": "삼 점 오 킬로미터 거리."
+},
+{
+"input": "5GB 용량",
+"prenorm": "5GB 용량",
+"normalized": "오 기가바이트 용량.",
+"legacy": "오 기가바이트 용량."
+},
+{
+"input": "CCTV와 SNS",
+"prenorm": "CCTV와 SNS",
+"normalized": "씨씨티비와 에스엔에스.",
+"legacy": "씨씨티비와 에스엔에스."
+},
+{
+"input": "AI 기술",
+"prenorm": "AI 기술",
+"normalized": "에이아이 기술.",
+"legacy": "에이아이 기술."
+},
+{
+"input": "ㄹㅇ 대박",
+"prenorm": "진짜 대박",
+"normalized": "진짜 대박.",
+"legacy": "진짜 대박."
+},
+{
+"input": "5GB 메모리",
+"prenorm": "5GB 메모리",
+"normalized": "오 기가바이트 메모리.",
+"legacy": "오 기가바이트 메모리."
+},
+{
+"input": "마을 사람들",
+"prenorm": "마을 사람들",
+"normalized": "마을 사람들.",
+"legacy": "마을 사람들."
+},
+{
+"input": "가을 하늘",
+"prenorm": "가을 하늘",
+"normalized": "가을 하늘.",
+"legacy": "가을 하늘."
+},
+{
+"input": "사과 두 개",
+"prenorm": "사과 두 개",
+"normalized": "사과 두 개.",
+"legacy": "사과 두 개."
+},
+{
+"input": "남친과 헤어졌어",
+"prenorm": "남친과 헤어졌어",
+"normalized": "남자친구와 헤어졌어.",
+"legacy": "남자친구와 헤어졌어."
+},
+{
+"input": "남친이 생겼어",
+"prenorm": "남친이 생겼어",
+"normalized": "남자친구가 생겼어.",
+"legacy": "남자친구가 생겼어."
+},
+{
+"input": "베댓을 봤다",
+"prenorm": "베댓을 봤다",
+"normalized": "베스트 댓글을 봤다.",
+"legacy": "베스트 댓글을 봤다."
+},
+{
+"input": "웃겨 ㅋㅋㅋ",
+"prenorm": "웃겨 ",
+"normalized": "웃겨.",
+"legacy": "웃겨."
+},
+{
+"input": "웃겨 ㅋㅋㅋ",
+"prenorm": "웃겨 ",
+"normalized": "웃겨.",
+"legacy": "웃겨."
+},
+{
+"input": "진짜 ㅎㅎㅎ 그래",
+"prenorm": "진짜  그래",
+"normalized": "진짜 그래.",
+"legacy": "진짜 그래."
+},
+{
+"input": "ㅇㅇ: 안녕",
+"prenorm": "응: 안녕",
+"normalized": "응: 안녕.",
+"legacy": "응: 안녕."
+},
+{
+"input": "안녕하세요",
+"prenorm": "안녕하세요",
+"normalized": "안녕하세요.",
+"legacy": "안녕하세요."
+},
+{
+"input": "ㅋㅋㅋ",
+"prenorm": "",
+"normalized": "",
+"legacy": ""
+},
+{
+"input": "1cm",
+"prenorm": "1cm",
+"normalized": "일 센티미터.",
+"legacy": "일 센티미터."
+},
+{
+"input": "2cm",
+"prenorm": "2cm",
+"normalized": "이 센티미터.",
+"legacy": "이 센티미터."
+},
+{
+"input": "3cm",
+"prenorm": "3cm",
+"normalized": "삼 센티미터.",
+"legacy": "삼 센티미터."
+},
+{
+"input": "4cm",
+"prenorm": "4cm",
+"normalized": "사 센티미터.",
+"legacy": "사 센티미터."
+},
+{
+"input": "10cm",
+"prenorm": "10cm",
+"normalized": "십 센티미터.",
+"legacy": "십 센티미터."
+},
+{
+"input": "12cm",
+"prenorm": "12cm",
+"normalized": "십이 센티미터.",
+"legacy": "십이 센티미터."
+},
+{
+"input": "20cm",
+"prenorm": "20cm",
+"normalized": "이십 센티미터.",
+"legacy": "이십 센티미터."
+},
+{
+"input": "21cm",
+"prenorm": "21cm",
+"normalized": "이십일 센티미터.",
+"legacy": "이십일 센티미터."
+},
+{
+"input": "33cm",
+"prenorm": "33cm",
+"normalized": "삼십삼 센티미터.",
+"legacy": "삼십삼 센티미터."
+},
+{
+"input": "50cm",
+"prenorm": "50cm",
+"normalized": "오십 센티미터.",
+"legacy": "오십 센티미터."
+},
+{
+"input": "99cm",
+"prenorm": "99cm",
+"normalized": "구십구 센티미터.",
+"legacy": "구십구 센티미터."
+},
+{
+"input": "100cm",
+"prenorm": "100cm",
+"normalized": "백 센티미터.",
+"legacy": "백 센티미터."
+},
+{
+"input": "1000cm",
+"prenorm": "1000cm",
+"normalized": "천 센티미터.",
+"legacy": "천 센티미터."
+},
+{
+"input": "약 3cm을 봤다",
+"prenorm": "약 3cm을 봤다",
+"normalized": "약 삼 cm을 봤다.",
+"legacy": "약 삼 cm을 봤다."
+},
+{
+"input": "1kg",
+"prenorm": "1kg",
+"normalized": "일 킬로그램.",
+"legacy": "일 킬로그램."
+},
+{
+"input": "2kg",
+"prenorm": "2kg",
+"normalized": "이 킬로그램.",
+"legacy": "이 킬로그램."
+},
+{
+"input": "3kg",
+"prenorm": "3kg",
+"normalized": "삼 킬로그램.",
+"legacy": "삼 킬로그램."
+},
+{
+"input": "4kg",
+"prenorm": "4kg",
+"normalized": "사 킬로그램.",
+"legacy": "사 킬로그램."
+},
+{
+"input": "10kg",
+"prenorm": "10kg",
+"normalized": "십 킬로그램.",
+"legacy": "십 킬로그램."
+},
+{
+"input": "12kg",
+"prenorm": "12kg",
+"normalized": "십이 킬로그램.",
+"legacy": "십이 킬로그램."
+},
+{
+"input": "20kg",
+"prenorm": "20kg",
+"normalized": "이십 킬로그램.",
+"legacy": "이십 킬로그램."
+},
+{
+"input": "21kg",
+"prenorm": "21kg",
+"normalized": "이십일 킬로그램.",
+"legacy": "이십일 킬로그램."
+},
+{
+"input": "33kg",
+"prenorm": "33kg",
+"normalized": "삼십삼 킬로그램.",
+"legacy": "삼십삼 킬로그램."
+},
+{
+"input": "50kg",
+"prenorm": "50kg",
+"normalized": "오십 킬로그램.",
+"legacy": "오십 킬로그램."
+},
+{
+"input": "99kg",
+"prenorm": "99kg",
+"normalized": "구십구 킬로그램.",
+"legacy": "구십구 킬로그램."
+},
+{
+"input": "100kg",
+"prenorm": "100kg",
+"normalized": "백 킬로그램.",
+"legacy": "백 킬로그램."
+},
+{
+"input": "1000kg",
+"prenorm": "1000kg",
+"normalized": "천 킬로그램.",
+"legacy": "천 킬로그램."
+},
+{
+"input": "약 3kg을 봤다",
+"prenorm": "약 3kg을 봤다",
+"normalized": "약 삼 kg을 봤다.",
+"legacy": "약 삼 kg을 봤다."
+},
+{
+"input": "1km",
+"prenorm": "1km",
+"normalized": "일 킬로미터.",
+"legacy": "일 킬로미터."
+},
+{
+"input": "2km",
+"prenorm": "2km",
+"normalized": "이 킬로미터.",
+"legacy": "이 킬로미터."
+},
+{
+"input": "3km",
+"prenorm": "3km",
+"normalized": "삼 킬로미터.",
+"legacy": "삼 킬로미터."
+},
+{
+"input": "4km",
+"prenorm": "4km",
+"normalized": "사 킬로미터.",
+"legacy": "사 킬로미터."
+},
+{
+"input": "10km",
+"prenorm": "10km",
+"normalized": "십 킬로미터.",
+"legacy": "십 킬로미터."
+},
+{
+"input": "12km",
+"prenorm": "12km",
+"normalized": "십이 킬로미터.",
+"legacy": "십이 킬로미터."
+},
+{
+"input": "20km",
+"prenorm": "20km",
+"normalized": "이십 킬로미터.",
+"legacy": "이십 킬로미터."
+},
+{
+"input": "21km",
+"prenorm": "21km",
+"normalized": "이십일 킬로미터.",
+"legacy": "이십일 킬로미터."
+},
+{
+"input": "33km",
+"prenorm": "33km",
+"normalized": "삼십삼 킬로미터.",
+"legacy": "삼십삼 킬로미터."
+},
+{
+"input": "50km",
+"prenorm": "50km",
+"normalized": "오십 킬로미터.",
+"legacy": "오십 킬로미터."
+},
+{
+"input": "99km",
+"prenorm": "99km",
+"normalized": "구십구 킬로미터.",
+"legacy": "구십구 킬로미터."
+},
+{
+"input": "100km",
+"prenorm": "100km",
+"normalized": "백 킬로미터.",
+"legacy": "백 킬로미터."
+},
+{
+"input": "1000km",
+"prenorm": "1000km",
+"normalized": "천 킬로미터.",
+"legacy": "천 킬로미터."
+},
+{
+"input": "약 3km을 봤다",
+"prenorm": "약 3km을 봤다",
+"normalized": "약 삼 km을 봤다.",
+"legacy": "약 삼 km을 봤다."
+},
+{
+"input": "1mm",
+"prenorm": "1mm",
+"normalized": "일 밀리미터.",
+"legacy": "일 밀리미터."
+},
+{
+"input": "2mm",
+"prenorm": "2mm",
+"normalized": "이 밀리미터.",
+"legacy": "이 밀리미터."
+},
+{
+"input": "3mm",
+"prenorm": "3mm",
+"normalized": "삼 밀리미터.",
+"legacy": "삼 밀리미터."
+},
+{
+"input": "4mm",
+"prenorm": "4mm",
+"normalized": "사 밀리미터.",
+"legacy": "사 밀리미터."
+},
+{
+"input": "10mm",
+"prenorm": "10mm",
+"normalized": "십 밀리미터.",
+"legacy": "십 밀리미터."
+},
+{
+"input": "12mm",
+"prenorm": "12mm",
+"normalized": "십이 밀리미터.",
+"legacy": "십이 밀리미터."
+},
+{
+"input": "20mm",
+"prenorm": "20mm",
+"normalized": "이십 밀리미터.",
+"legacy": "이십 밀리미터."
+},
+{
+"input": "21mm",
+"prenorm": "21mm",
+"normalized": "이십일 밀리미터.",
+"legacy": "이십일 밀리미터."
+},
+{
+"input": "33mm",
+"prenorm": "33mm",
+"normalized": "삼십삼 밀리미터.",
+"legacy": "삼십삼 밀리미터."
+},
+{
+"input": "50mm",
+"prenorm": "50mm",
+"normalized": "오십 밀리미터.",
+"legacy": "오십 밀리미터."
+},
+{
+"input": "99mm",
+"prenorm": "99mm",
+"normalized": "구십구 밀리미터.",
+"legacy": "구십구 밀리미터."
+},
+{
+"input": "100mm",
+"prenorm": "100mm",
+"normalized": "백 밀리미터.",
+"legacy": "백 밀리미터."
+},
+{
+"input": "1000mm",
+"prenorm": "1000mm",
+"normalized": "천 밀리미터.",
+"legacy": "천 밀리미터."
+},
+{
+"input": "약 3mm을 봤다",
+"prenorm": "약 3mm을 봤다",
+"normalized": "약 삼 mm을 봤다.",
+"legacy": "약 삼 mm을 봤다."
+},
+{
+"input": "1개",
+"prenorm": "1개",
+"normalized": "한 개.",
+"legacy": "한 개."
+},
+{
+"input": "2개",
+"prenorm": "2개",
+"normalized": "두 개.",
+"legacy": "두 개."
+},
+{
+"input": "3개",
+"prenorm": "3개",
+"normalized": "세 개.",
+"legacy": "세 개."
+},
+{
+"input": "4개",
+"prenorm": "4개",
+"normalized": "네 개.",
+"legacy": "네 개."
+},
+{
+"input": "10개",
+"prenorm": "10개",
+"normalized": "열 개.",
+"legacy": "열 개."
+},
+{
+"input": "12개",
+"prenorm": "12개",
+"normalized": "열두 개.",
+"legacy": "열두 개."
+},
+{
+"input": "20개",
+"prenorm": "20개",
+"normalized": "스무 개.",
+"legacy": "스물 개."
+},
+{
+"input": "21개",
+"prenorm": "21개",
+"normalized": "스물한 개.",
+"legacy": "스물한 개."
+},
+{
+"input": "33개",
+"prenorm": "33개",
+"normalized": "서른세 개.",
+"legacy": "서른세 개."
+},
+{
+"input": "50개",
+"prenorm": "50개",
+"normalized": "쉰 개.",
+"legacy": "쉰 개."
+},
+{
+"input": "99개",
+"prenorm": "99개",
+"normalized": "아흔아홉 개.",
+"legacy": "아흔아홉 개."
+},
+{
+"input": "100개",
+"prenorm": "100개",
+"normalized": "백 개.",
+"legacy": "백 개."
+},
+{
+"input": "1000개",
+"prenorm": "1000개",
+"normalized": "천 개.",
+"legacy": "천 개."
+},
+{
+"input": "약 3개을 봤다",
+"prenorm": "약 3개을 봤다",
+"normalized": "약 세 개을 봤다.",
+"legacy": "약 세 개을 봤다."
+},
+{
+"input": "1개월",
+"prenorm": "1개월",
+"normalized": "일 개월.",
+"legacy": "일 개월."
+},
+{
+"input": "2개월",
+"prenorm": "2개월",
+"normalized": "이 개월.",
+"legacy": "이 개월."
+},
+{
+"input": "3개월",
+"prenorm": "3개월",
+"normalized": "삼 개월.",
+"legacy": "삼 개월."
+},
+{
+"input": "4개월",
+"prenorm": "4개월",
+"normalized": "사 개월.",
+"legacy": "사 개월."
+},
+{
+"input": "10개월",
+"prenorm": "10개월",
+"normalized": "십 개월.",
+"legacy": "십 개월."
+},
+{
+"input": "12개월",
+"prenorm": "12개월",
+"normalized": "십이 개월.",
+"legacy": "십이 개월."
+},
+{
+"input": "20개월",
+"prenorm": "20개월",
+"normalized": "이십 개월.",
+"legacy": "이십 개월."
+},
+{
+"input": "21개월",
+"prenorm": "21개월",
+"normalized": "이십일 개월.",
+"legacy": "이십일 개월."
+},
+{
+"input": "33개월",
+"prenorm": "33개월",
+"normalized": "삼십삼 개월.",
+"legacy": "삼십삼 개월."
+},
+{
+"input": "50개월",
+"prenorm": "50개월",
+"normalized": "오십 개월.",
+"legacy": "오십 개월."
+},
+{
+"input": "99개월",
+"prenorm": "99개월",
+"normalized": "구십구 개월.",
+"legacy": "구십구 개월."
+},
+{
+"input": "100개월",
+"prenorm": "100개월",
+"normalized": "백 개월.",
+"legacy": "백 개월."
+},
+{
+"input": "1000개월",
+"prenorm": "1000개월",
+"normalized": "천 개월.",
+"legacy": "천 개월."
+},
+{
+"input": "약 3개월을 봤다",
+"prenorm": "약 3개월을 봤다",
+"normalized": "약 삼 개월을 봤다.",
+"legacy": "약 삼 개월을 봤다."
+},
+{
+"input": "1권",
+"prenorm": "1권",
+"normalized": "일 권.",
+"legacy": "일 권."
+},
+{
+"input": "2권",
+"prenorm": "2권",
+"normalized": "이 권.",
+"legacy": "이 권."
+},
+{
+"input": "3권",
+"prenorm": "3권",
+"normalized": "삼 권.",
+"legacy": "삼 권."
+},
+{
+"input": "4권",
+"prenorm": "4권",
+"normalized": "사 권.",
+"legacy": "사 권."
+},
+{
+"input": "10권",
+"prenorm": "10권",
+"normalized": "십 권.",
+"legacy": "십 권."
+},
+{
+"input": "12권",
+"prenorm": "12권",
+"normalized": "십이 권.",
+"legacy": "십이 권."
+},
+{
+"input": "20권",
+"prenorm": "20권",
+"normalized": "이십 권.",
+"legacy": "이십 권."
+},
+{
+"input": "21권",
+"prenorm": "21권",
+"normalized": "이십일 권.",
+"legacy": "이십일 권."
+},
+{
+"input": "33권",
+"prenorm": "33권",
+"normalized": "삼십삼 권.",
+"legacy": "삼십삼 권."
+},
+{
+"input": "50권",
+"prenorm": "50권",
+"normalized": "오십 권.",
+"legacy": "오십 권."
+},
+{
+"input": "99권",
+"prenorm": "99권",
+"normalized": "구십구 권.",
+"legacy": "구십구 권."
+},
+{
+"input": "100권",
+"prenorm": "100권",
+"normalized": "백 권.",
+"legacy": "백 권."
+},
+{
+"input": "1000권",
+"prenorm": "1000권",
+"normalized": "천 권.",
+"legacy": "천 권."
+},
+{
+"input": "약 3권을 봤다",
+"prenorm": "약 3권을 봤다",
+"normalized": "약 삼 권을 봤다.",
+"legacy": "약 삼 권을 봤다."
+},
+{
+"input": "1년",
+"prenorm": "1년",
+"normalized": "일 년.",
+"legacy": "일 년."
+},
+{
+"input": "2년",
+"prenorm": "2년",
+"normalized": "이 년.",
+"legacy": "이 년."
+},
+{
+"input": "3년",
+"prenorm": "3년",
+"normalized": "삼 년.",
+"legacy": "삼 년."
+},
+{
+"input": "4년",
+"prenorm": "4년",
+"normalized": "사 년.",
+"legacy": "사 년."
+},
+{
+"input": "10년",
+"prenorm": "10년",
+"normalized": "십 년.",
+"legacy": "십 년."
+},
+{
+"input": "12년",
+"prenorm": "12년",
+"normalized": "십이 년.",
+"legacy": "십이 년."
+},
+{
+"input": "20년",
+"prenorm": "20년",
+"normalized": "이십 년.",
+"legacy": "이십 년."
+},
+{
+"input": "21년",
+"prenorm": "21년",
+"normalized": "이십일 년.",
+"legacy": "이십일 년."
+},
+{
+"input": "33년",
+"prenorm": "33년",
+"normalized": "삼십삼 년.",
+"legacy": "삼십삼 년."
+},
+{
+"input": "50년",
+"prenorm": "50년",
+"normalized": "오십 년.",
+"legacy": "오십 년."
+},
+{
+"input": "99년",
+"prenorm": "99년",
+"normalized": "구십구 년.",
+"legacy": "구십구 년."
+},
+{
+"input": "100년",
+"prenorm": "100년",
+"normalized": "백 년.",
+"legacy": "백 년."
+},
+{
+"input": "1000년",
+"prenorm": "1000년",
+"normalized": "천 년.",
+"legacy": "천 년."
+},
+{
+"input": "약 3년을 봤다",
+"prenorm": "약 3년을 봤다",
+"normalized": "약 삼 년을 봤다.",
+"legacy": "약 삼 년을 봤다."
+},
+{
+"input": "1년째",
+"prenorm": "1년째",
+"normalized": "일 년째.",
+"legacy": "일 년째."
+},
+{
+"input": "2년째",
+"prenorm": "2년째",
+"normalized": "이 년째.",
+"legacy": "이 년째."
+},
+{
+"input": "3년째",
+"prenorm": "3년째",
+"normalized": "삼 년째.",
+"legacy": "삼 년째."
+},
+{
+"input": "4년째",
+"prenorm": "4년째",
+"normalized": "사 년째.",
+"legacy": "사 년째."
+},
+{
+"input": "10년째",
+"prenorm": "10년째",
+"normalized": "십 년째.",
+"legacy": "십 년째."
+},
+{
+"input": "12년째",
+"prenorm": "12년째",
+"normalized": "십이 년째.",
+"legacy": "십이 년째."
+},
+{
+"input": "20년째",
+"prenorm": "20년째",
+"normalized": "이십 년째.",
+"legacy": "이십 년째."
+},
+{
+"input": "21년째",
+"prenorm": "21년째",
+"normalized": "이십일 년째.",
+"legacy": "이십일 년째."
+},
+{
+"input": "33년째",
+"prenorm": "33년째",
+"normalized": "삼십삼 년째.",
+"legacy": "삼십삼 년째."
+},
+{
+"input": "50년째",
+"prenorm": "50년째",
+"normalized": "오십 년째.",
+"legacy": "오십 년째."
+},
+{
+"input": "99년째",
+"prenorm": "99년째",
+"normalized": "구십구 년째.",
+"legacy": "구십구 년째."
+},
+{
+"input": "100년째",
+"prenorm": "100년째",
+"normalized": "백 년째.",
+"legacy": "백 년째."
+},
+{
+"input": "1000년째",
+"prenorm": "1000년째",
+"normalized": "천 년째.",
+"legacy": "천 년째."
+},
+{
+"input": "약 3년째을 봤다",
+"prenorm": "약 3년째을 봤다",
+"normalized": "약 삼 년째을 봤다.",
+"legacy": "약 삼 년째을 봤다."
+},
+{
+"input": "1년차",
+"prenorm": "1년차",
+"normalized": "일 년차.",
+"legacy": "일 년차."
+},
+{
+"input": "2년차",
+"prenorm": "2년차",
+"normalized": "이 년차.",
+"legacy": "이 년차."
+},
+{
+"input": "3년차",
+"prenorm": "3년차",
+"normalized": "삼 년차.",
+"legacy": "삼 년차."
+},
+{
+"input": "4년차",
+"prenorm": "4년차",
+"normalized": "사 년차.",
+"legacy": "사 년차."
+},
+{
+"input": "10년차",
+"prenorm": "10년차",
+"normalized": "십 년차.",
+"legacy": "십 년차."
+},
+{
+"input": "12년차",
+"prenorm": "12년차",
+"normalized": "십이 년차.",
+"legacy": "십이 년차."
+},
+{
+"input": "20년차",
+"prenorm": "20년차",
+"normalized": "이십 년차.",
+"legacy": "이십 년차."
+},
+{
+"input": "21년차",
+"prenorm": "21년차",
+"normalized": "이십일 년차.",
+"legacy": "이십일 년차."
+},
+{
+"input": "33년차",
+"prenorm": "33년차",
+"normalized": "삼십삼 년차.",
+"legacy": "삼십삼 년차."
+},
+{
+"input": "50년차",
+"prenorm": "50년차",
+"normalized": "오십 년차.",
+"legacy": "오십 년차."
+},
+{
+"input": "99년차",
+"prenorm": "99년차",
+"normalized": "구십구 년차.",
+"legacy": "구십구 년차."
+},
+{
+"input": "100년차",
+"prenorm": "100년차",
+"normalized": "백 년차.",
+"legacy": "백 년차."
+},
+{
+"input": "1000년차",
+"prenorm": "1000년차",
+"normalized": "천 년차.",
+"legacy": "천 년차."
+},
+{
+"input": "약 3년차을 봤다",
+"prenorm": "약 3년차을 봤다",
+"normalized": "약 삼 년차을 봤다.",
+"legacy": "약 삼 년차을 봤다."
+},
+{
+"input": "1달",
+"prenorm": "1달",
+"normalized": "한 달.",
+"legacy": "한 달."
+},
+{
+"input": "2달",
+"prenorm": "2달",
+"normalized": "두 달.",
+"legacy": "두 달."
+},
+{
+"input": "3달",
+"prenorm": "3달",
+"normalized": "세 달.",
+"legacy": "세 달."
+},
+{
+"input": "4달",
+"prenorm": "4달",
+"normalized": "네 달.",
+"legacy": "네 달."
+},
+{
+"input": "10달",
+"prenorm": "10달",
+"normalized": "열 달.",
+"legacy": "열 달."
+},
+{
+"input": "12달",
+"prenorm": "12달",
+"normalized": "열두 달.",
+"legacy": "열두 달."
+},
+{
+"input": "20달",
+"prenorm": "20달",
+"normalized": "스무 달.",
+"legacy": "스물 달."
+},
+{
+"input": "21달",
+"prenorm": "21달",
+"normalized": "스물한 달.",
+"legacy": "스물한 달."
+},
+{
+"input": "33달",
+"prenorm": "33달",
+"normalized": "서른세 달.",
+"legacy": "서른세 달."
+},
+{
+"input": "50달",
+"prenorm": "50달",
+"normalized": "쉰 달.",
+"legacy": "쉰 달."
+},
+{
+"input": "99달",
+"prenorm": "99달",
+"normalized": "아흔아홉 달.",
+"legacy": "아흔아홉 달."
+},
+{
+"input": "100달",
+"prenorm": "100달",
+"normalized": "백 달.",
+"legacy": "백 달."
+},
+{
+"input": "1000달",
+"prenorm": "1000달",
+"normalized": "천 달.",
+"legacy": "천 달."
+},
+{
+"input": "약 3달을 봤다",
+"prenorm": "약 3달을 봤다",
+"normalized": "약 세 달을 봤다.",
+"legacy": "약 세 달을 봤다."
+},
+{
+"input": "1대",
+"prenorm": "일 대",
+"normalized": "일 대.",
+"legacy": "일 대."
+},
+{
+"input": "2대",
+"prenorm": "이 대",
+"normalized": "이 대.",
+"legacy": "이 대."
+},
+{
+"input": "3대",
+"prenorm": "삼 대",
+"normalized": "삼 대.",
+"legacy": "삼 대."
+},
+{
+"input": "4대",
+"prenorm": "사 대",
+"normalized": "사 대.",
+"legacy": "사 대."
+},
+{
+"input": "10대",
+"prenorm": "십 대",
+"normalized": "십 대.",
+"legacy": "십 대."
+},
+{
+"input": "12대",
+"prenorm": "십이 대",
+"normalized": "십이 대.",
+"legacy": "십이 대."
+},
+{
+"input": "20대",
+"prenorm": "이십 대",
+"normalized": "이십 대.",
+"legacy": "이십 대."
+},
+{
+"input": "21대",
+"prenorm": "이십일 대",
+"normalized": "이십일 대.",
+"legacy": "이십일 대."
+},
+{
+"input": "33대",
+"prenorm": "삼십삼 대",
+"normalized": "삼십삼 대.",
+"legacy": "삼십삼 대."
+},
+{
+"input": "50대",
+"prenorm": "오십 대",
+"normalized": "오십 대.",
+"legacy": "오십 대."
+},
+{
+"input": "99대",
+"prenorm": "구십구 대",
+"normalized": "구십구 대.",
+"legacy": "구십구 대."
+},
+{
+"input": "100대",
+"prenorm": "백 대",
+"normalized": "백 대.",
+"legacy": "백 대."
+},
+{
+"input": "1000대",
+"prenorm": "천 대",
+"normalized": "천 대.",
+"legacy": "천 대."
+},
+{
+"input": "약 3대을 봤다",
+"prenorm": "약 삼 대을 봤다",
+"normalized": "약 삼 대을 봤다.",
+"legacy": "약 삼 대을 봤다."
+},
+{
+"input": "1도",
+"prenorm": "1도",
+"normalized": "일 도.",
+"legacy": "일 도."
+},
+{
+"input": "2도",
+"prenorm": "2도",
+"normalized": "이 도.",
+"legacy": "이 도."
+},
+{
+"input": "3도",
+"prenorm": "3도",
+"normalized": "삼 도.",
+"legacy": "삼 도."
+},
+{
+"input": "4도",
+"prenorm": "4도",
+"normalized": "사 도.",
+"legacy": "사 도."
+},
+{
+"input": "10도",
+"prenorm": "10도",
+"normalized": "십 도.",
+"legacy": "십 도."
+},
+{
+"input": "12도",
+"prenorm": "12도",
+"normalized": "십이 도.",
+"legacy": "십이 도."
+},
+{
+"input": "20도",
+"prenorm": "20도",
+"normalized": "이십 도.",
+"legacy": "이십 도."
+},
+{
+"input": "21도",
+"prenorm": "21도",
+"normalized": "이십일 도.",
+"legacy": "이십일 도."
+},
+{
+"input": "33도",
+"prenorm": "33도",
+"normalized": "삼십삼 도.",
+"legacy": "삼십삼 도."
+},
+{
+"input": "50도",
+"prenorm": "50도",
+"normalized": "오십 도.",
+"legacy": "오십 도."
+},
+{
+"input": "99도",
+"prenorm": "99도",
+"normalized": "구십구 도.",
+"legacy": "구십구 도."
+},
+{
+"input": "100도",
+"prenorm": "100도",
+"normalized": "백 도.",
+"legacy": "백 도."
+},
+{
+"input": "1000도",
+"prenorm": "1000도",
+"normalized": "천 도.",
+"legacy": "천 도."
+},
+{
+"input": "약 3도을 봤다",
+"prenorm": "약 3도을 봤다",
+"normalized": "약 삼 도을 봤다.",
+"legacy": "약 삼 도을 봤다."
+},
+{
+"input": "1마리",
+"prenorm": "1마리",
+"normalized": "한 마리.",
+"legacy": "한 마리."
+},
+{
+"input": "2마리",
+"prenorm": "2마리",
+"normalized": "두 마리.",
+"legacy": "두 마리."
+},
+{
+"input": "3마리",
+"prenorm": "3마리",
+"normalized": "세 마리.",
+"legacy": "세 마리."
+},
+{
+"input": "4마리",
+"prenorm": "4마리",
+"normalized": "네 마리.",
+"legacy": "네 마리."
+},
+{
+"input": "10마리",
+"prenorm": "10마리",
+"normalized": "열 마리.",
+"legacy": "열 마리."
+},
+{
+"input": "12마리",
+"prenorm": "12마리",
+"normalized": "열두 마리.",
+"legacy": "열두 마리."
+},
+{
+"input": "20마리",
+"prenorm": "20마리",
+"normalized": "스무 마리.",
+"legacy": "스물 마리."
+},
+{
+"input": "21마리",
+"prenorm": "21마리",
+"normalized": "스물한 마리.",
+"legacy": "스물한 마리."
+},
+{
+"input": "33마리",
+"prenorm": "33마리",
+"normalized": "서른세 마리.",
+"legacy": "서른세 마리."
+},
+{
+"input": "50마리",
+"prenorm": "50마리",
+"normalized": "쉰 마리.",
+"legacy": "쉰 마리."
+},
+{
+"input": "99마리",
+"prenorm": "99마리",
+"normalized": "아흔아홉 마리.",
+"legacy": "아흔아홉 마리."
+},
+{
+"input": "100마리",
+"prenorm": "100마리",
+"normalized": "백 마리.",
+"legacy": "백 마리."
+},
+{
+"input": "1000마리",
+"prenorm": "1000마리",
+"normalized": "천 마리.",
+"legacy": "천 마리."
+},
+{
+"input": "약 3마리을 봤다",
+"prenorm": "약 3마리을 봤다",
+"normalized": "약 세 마리을 봤다.",
+"legacy": "약 세 마리을 봤다."
+},
+{
+"input": "1명",
+"prenorm": "1명",
+"normalized": "한 명.",
+"legacy": "한 명."
+},
+{
+"input": "2명",
+"prenorm": "2명",
+"normalized": "두 명.",
+"legacy": "두 명."
+},
+{
+"input": "3명",
+"prenorm": "3명",
+"normalized": "세 명.",
+"legacy": "세 명."
+},
+{
+"input": "4명",
+"prenorm": "4명",
+"normalized": "네 명.",
+"legacy": "네 명."
+},
+{
+"input": "10명",
+"prenorm": "10명",
+"normalized": "열 명.",
+"legacy": "열 명."
+},
+{
+"input": "12명",
+"prenorm": "12명",
+"normalized": "열두 명.",
+"legacy": "열두 명."
+},
+{
+"input": "20명",
+"prenorm": "20명",
+"normalized": "스무 명.",
+"legacy": "스물 명."
+},
+{
+"input": "21명",
+"prenorm": "21명",
+"normalized": "스물한 명.",
+"legacy": "스물한 명."
+},
+{
+"input": "33명",
+"prenorm": "33명",
+"normalized": "서른세 명.",
+"legacy": "서른세 명."
+},
+{
+"input": "50명",
+"prenorm": "50명",
+"normalized": "쉰 명.",
+"legacy": "쉰 명."
+},
+{
+"input": "99명",
+"prenorm": "99명",
+"normalized": "아흔아홉 명.",
+"legacy": "아흔아홉 명."
+},
+{
+"input": "100명",
+"prenorm": "100명",
+"normalized": "백 명.",
+"legacy": "백 명."
+},
+{
+"input": "1000명",
+"prenorm": "1000명",
+"normalized": "천 명.",
+"legacy": "천 명."
+},
+{
+"input": "약 3명을 봤다",
+"prenorm": "약 3명을 봤다",
+"normalized": "약 세 명을 봤다.",
+"legacy": "약 세 명을 봤다."
+},
+{
+"input": "1번",
+"prenorm": "1번",
+"normalized": "한 번.",
+"legacy": "한 번."
+},
+{
+"input": "2번",
+"prenorm": "2번",
+"normalized": "두 번.",
+"legacy": "두 번."
+},
+{
+"input": "3번",
+"prenorm": "3번",
+"normalized": "세 번.",
+"legacy": "세 번."
+},
+{
+"input": "4번",
+"prenorm": "4번",
+"normalized": "네 번.",
+"legacy": "네 번."
+},
+{
+"input": "10번",
+"prenorm": "10번",
+"normalized": "열 번.",
+"legacy": "열 번."
+},
+{
+"input": "12번",
+"prenorm": "12번",
+"normalized": "열두 번.",
+"legacy": "열두 번."
+},
+{
+"input": "20번",
+"prenorm": "20번",
+"normalized": "스무 번.",
+"legacy": "스물 번."
+},
+{
+"input": "21번",
+"prenorm": "21번",
+"normalized": "스물한 번.",
+"legacy": "스물한 번."
+},
+{
+"input": "33번",
+"prenorm": "33번",
+"normalized": "서른세 번.",
+"legacy": "서른세 번."
+},
+{
+"input": "50번",
+"prenorm": "50번",
+"normalized": "쉰 번.",
+"legacy": "쉰 번."
+},
+{
+"input": "99번",
+"prenorm": "99번",
+"normalized": "아흔아홉 번.",
+"legacy": "아흔아홉 번."
+},
+{
+"input": "100번",
+"prenorm": "100번",
+"normalized": "백 번.",
+"legacy": "백 번."
+},
+{
+"input": "1000번",
+"prenorm": "1000번",
+"normalized": "천 번.",
+"legacy": "천 번."
+},
+{
+"input": "약 3번을 봤다",
+"prenorm": "약 3번을 봤다",
+"normalized": "약 세 번을 봤다.",
+"legacy": "약 세 번을 봤다."
+},
+{
+"input": "1벌",
+"prenorm": "1벌",
+"normalized": "한 벌.",
+"legacy": "한 벌."
+},
+{
+"input": "2벌",
+"prenorm": "2벌",
+"normalized": "두 벌.",
+"legacy": "두 벌."
+},
+{
+"input": "3벌",
+"prenorm": "3벌",
+"normalized": "세 벌.",
+"legacy": "세 벌."
+},
+{
+"input": "4벌",
+"prenorm": "4벌",
+"normalized": "네 벌.",
+"legacy": "네 벌."
+},
+{
+"input": "10벌",
+"prenorm": "10벌",
+"normalized": "열 벌.",
+"legacy": "열 벌."
+},
+{
+"input": "12벌",
+"prenorm": "12벌",
+"normalized": "열두 벌.",
+"legacy": "열두 벌."
+},
+{
+"input": "20벌",
+"prenorm": "20벌",
+"normalized": "스무 벌.",
+"legacy": "스물 벌."
+},
+{
+"input": "21벌",
+"prenorm": "21벌",
+"normalized": "스물한 벌.",
+"legacy": "스물한 벌."
+},
+{
+"input": "33벌",
+"prenorm": "33벌",
+"normalized": "서른세 벌.",
+"legacy": "서른세 벌."
+},
+{
+"input": "50벌",
+"prenorm": "50벌",
+"normalized": "쉰 벌.",
+"legacy": "쉰 벌."
+},
+{
+"input": "99벌",
+"prenorm": "99벌",
+"normalized": "아흔아홉 벌.",
+"legacy": "아흔아홉 벌."
+},
+{
+"input": "100벌",
+"prenorm": "100벌",
+"normalized": "백 벌.",
+"legacy": "백 벌."
+},
+{
+"input": "1000벌",
+"prenorm": "1000벌",
+"normalized": "천 벌.",
+"legacy": "천 벌."
+},
+{
+"input": "약 3벌을 봤다",
+"prenorm": "약 3벌을 봤다",
+"normalized": "약 세 벌을 봤다.",
+"legacy": "약 세 벌을 봤다."
+},
+{
+"input": "1분",
+"prenorm": "1분",
+"normalized": "일 분.",
+"legacy": "일 분."
+},
+{
+"input": "2분",
+"prenorm": "2분",
+"normalized": "이 분.",
+"legacy": "이 분."
+},
+{
+"input": "3분",
+"prenorm": "3분",
+"normalized": "삼 분.",
+"legacy": "삼 분."
+},
+{
+"input": "4분",
+"prenorm": "4분",
+"normalized": "사 분.",
+"legacy": "사 분."
+},
+{
+"input": "10분",
+"prenorm": "10분",
+"normalized": "십 분.",
+"legacy": "십 분."
+},
+{
+"input": "12분",
+"prenorm": "12분",
+"normalized": "십이 분.",
+"legacy": "십이 분."
+},
+{
+"input": "20분",
+"prenorm": "20분",
+"normalized": "이십 분.",
+"legacy": "이십 분."
+},
+{
+"input": "21분",
+"prenorm": "21분",
+"normalized": "이십일 분.",
+"legacy": "이십일 분."
+},
+{
+"input": "33분",
+"prenorm": "33분",
+"normalized": "삼십삼 분.",
+"legacy": "삼십삼 분."
+},
+{
+"input": "50분",
+"prenorm": "50분",
+"normalized": "오십 분.",
+"legacy": "오십 분."
+},
+{
+"input": "99분",
+"prenorm": "99분",
+"normalized": "구십구 분.",
+"legacy": "구십구 분."
+},
+{
+"input": "100분",
+"prenorm": "100분",
+"normalized": "백 분.",
+"legacy": "백 분."
+},
+{
+"input": "1000분",
+"prenorm": "1000분",
+"normalized": "천 분.",
+"legacy": "천 분."
+},
+{
+"input": "약 3분을 봤다",
+"prenorm": "약 3분을 봤다",
+"normalized": "약 삼 분을 봤다.",
+"legacy": "약 삼 분을 봤다."
+},
+{
+"input": "1살",
+"prenorm": "1살",
+"normalized": "한 살.",
+"legacy": "한 살."
+},
+{
+"input": "2살",
+"prenorm": "2살",
+"normalized": "두 살.",
+"legacy": "두 살."
+},
+{
+"input": "3살",
+"prenorm": "3살",
+"normalized": "세 살.",
+"legacy": "세 살."
+},
+{
+"input": "4살",
+"prenorm": "4살",
+"normalized": "네 살.",
+"legacy": "네 살."
+},
+{
+"input": "10살",
+"prenorm": "10살",
+"normalized": "열 살.",
+"legacy": "열 살."
+},
+{
+"input": "12살",
+"prenorm": "12살",
+"normalized": "열두 살.",
+"legacy": "열두 살."
+},
+{
+"input": "20살",
+"prenorm": "20살",
+"normalized": "스무 살.",
+"legacy": "스물 살."
+},
+{
+"input": "21살",
+"prenorm": "21살",
+"normalized": "스물한 살.",
+"legacy": "스물한 살."
+},
+{
+"input": "33살",
+"prenorm": "33살",
+"normalized": "서른세 살.",
+"legacy": "서른세 살."
+},
+{
+"input": "50살",
+"prenorm": "50살",
+"normalized": "쉰 살.",
+"legacy": "쉰 살."
+},
+{
+"input": "99살",
+"prenorm": "99살",
+"normalized": "아흔아홉 살.",
+"legacy": "아흔아홉 살."
+},
+{
+"input": "100살",
+"prenorm": "100살",
+"normalized": "백 살.",
+"legacy": "백 살."
+},
+{
+"input": "1000살",
+"prenorm": "1000살",
+"normalized": "천 살.",
+"legacy": "천 살."
+},
+{
+"input": "약 3살을 봤다",
+"prenorm": "약 3살을 봤다",
+"normalized": "약 세 살을 봤다.",
+"legacy": "약 세 살을 봤다."
+},
+{
+"input": "1세",
+"prenorm": "1세",
+"normalized": "일 세.",
+"legacy": "한 세."
+},
+{
+"input": "2세",
+"prenorm": "2세",
+"normalized": "이 세.",
+"legacy": "두 세."
+},
+{
+"input": "3세",
+"prenorm": "3세",
+"normalized": "삼 세.",
+"legacy": "세 세."
+},
+{
+"input": "4세",
+"prenorm": "4세",
+"normalized": "사 세.",
+"legacy": "네 세."
+},
+{
+"input": "10세",
+"prenorm": "10세",
+"normalized": "십 세.",
+"legacy": "열 세."
+},
+{
+"input": "12세",
+"prenorm": "12세",
+"normalized": "십이 세.",
+"legacy": "열두 세."
+},
+{
+"input": "20세",
+"prenorm": "20세",
+"normalized": "이십 세.",
+"legacy": "스물 세."
+},
+{
+"input": "21세",
+"prenorm": "21세",
+"normalized": "이십일 세.",
+"legacy": "스물한 세."
+},
+{
+"input": "33세",
+"prenorm": "33세",
+"normalized": "삼십삼 세.",
+"legacy": "서른세 세."
+},
+{
+"input": "50세",
+"prenorm": "50세",
+"normalized": "오십 세.",
+"legacy": "쉰 세."
+},
+{
+"input": "99세",
+"prenorm": "99세",
+"normalized": "구십구 세.",
+"legacy": "아흔아홉 세."
+},
+{
+"input": "100세",
+"prenorm": "100세",
+"normalized": "백 세.",
+"legacy": "백 세."
+},
+{
+"input": "1000세",
+"prenorm": "1000세",
+"normalized": "천 세.",
+"legacy": "천 세."
+},
+{
+"input": "약 3세을 봤다",
+"prenorm": "약 3세을 봤다",
+"normalized": "약 삼 세을 봤다.",
+"legacy": "약 세 세을 봤다."
+},
+{
+"input": "1시",
+"prenorm": "1시",
+"normalized": "한 시.",
+"legacy": "한 시."
+},
+{
+"input": "2시",
+"prenorm": "2시",
+"normalized": "두 시.",
+"legacy": "두 시."
+},
+{
+"input": "3시",
+"prenorm": "3시",
+"normalized": "세 시.",
+"legacy": "세 시."
+},
+{
+"input": "4시",
+"prenorm": "4시",
+"normalized": "네 시.",
+"legacy": "네 시."
+},
+{
+"input": "10시",
+"prenorm": "10시",
+"normalized": "열 시.",
+"legacy": "열 시."
+},
+{
+"input": "12시",
+"prenorm": "12시",
+"normalized": "열두 시.",
+"legacy": "열두 시."
+},
+{
+"input": "20시",
+"prenorm": "20시",
+"normalized": "스무 시.",
+"legacy": "스물 시."
+},
+{
+"input": "21시",
+"prenorm": "21시",
+"normalized": "스물한 시.",
+"legacy": "스물한 시."
+},
+{
+"input": "33시",
+"prenorm": "33시",
+"normalized": "서른세 시.",
+"legacy": "서른세 시."
+},
+{
+"input": "50시",
+"prenorm": "50시",
+"normalized": "쉰 시.",
+"legacy": "쉰 시."
+},
+{
+"input": "99시",
+"prenorm": "99시",
+"normalized": "아흔아홉 시.",
+"legacy": "아흔아홉 시."
+},
+{
+"input": "100시",
+"prenorm": "100시",
+"normalized": "백 시.",
+"legacy": "백 시."
+},
+{
+"input": "1000시",
+"prenorm": "1000시",
+"normalized": "천 시.",
+"legacy": "천 시."
+},
+{
+"input": "약 3시을 봤다",
+"prenorm": "약 3시을 봤다",
+"normalized": "약 세 시을 봤다.",
+"legacy": "약 세 시을 봤다."
+},
+{
+"input": "1연차",
+"prenorm": "1연차",
+"normalized": "일 연차.",
+"legacy": "일 연차."
+},
+{
+"input": "2연차",
+"prenorm": "2연차",
+"normalized": "이 연차.",
+"legacy": "이 연차."
+},
+{
+"input": "3연차",
+"prenorm": "3연차",
+"normalized": "삼 연차.",
+"legacy": "삼 연차."
+},
+{
+"input": "4연차",
+"prenorm": "4연차",
+"normalized": "사 연차.",
+"legacy": "사 연차."
+},
+{
+"input": "10연차",
+"prenorm": "10연차",
+"normalized": "십 연차.",
+"legacy": "십 연차."
+},
+{
+"input": "12연차",
+"prenorm": "12연차",
+"normalized": "십이 연차.",
+"legacy": "십이 연차."
+},
+{
+"input": "20연차",
+"prenorm": "20연차",
+"normalized": "이십 연차.",
+"legacy": "이십 연차."
+},
+{
+"input": "21연차",
+"prenorm": "21연차",
+"normalized": "이십일 연차.",
+"legacy": "이십일 연차."
+},
+{
+"input": "33연차",
+"prenorm": "33연차",
+"normalized": "삼십삼 연차.",
+"legacy": "삼십삼 연차."
+},
+{
+"input": "50연차",
+"prenorm": "50연차",
+"normalized": "오십 연차.",
+"legacy": "오십 연차."
+},
+{
+"input": "99연차",
+"prenorm": "99연차",
+"normalized": "구십구 연차.",
+"legacy": "구십구 연차."
+},
+{
+"input": "100연차",
+"prenorm": "100연차",
+"normalized": "백 연차.",
+"legacy": "백 연차."
+},
+{
+"input": "1000연차",
+"prenorm": "1000연차",
+"normalized": "천 연차.",
+"legacy": "천 연차."
+},
+{
+"input": "약 3연차을 봤다",
+"prenorm": "약 3연차을 봤다",
+"normalized": "약 삼 연차을 봤다.",
+"legacy": "약 삼 연차을 봤다."
+},
+{
+"input": "1원",
+"prenorm": "1원",
+"normalized": "일 원.",
+"legacy": "일 원."
+},
+{
+"input": "2원",
+"prenorm": "2원",
+"normalized": "이 원.",
+"legacy": "이 원."
+},
+{
+"input": "3원",
+"prenorm": "3원",
+"normalized": "삼 원.",
+"legacy": "삼 원."
+},
+{
+"input": "4원",
+"prenorm": "4원",
+"normalized": "사 원.",
+"legacy": "사 원."
+},
+{
+"input": "10원",
+"prenorm": "10원",
+"normalized": "십 원.",
+"legacy": "십 원."
+},
+{
+"input": "12원",
+"prenorm": "12원",
+"normalized": "십이 원.",
+"legacy": "십이 원."
+},
+{
+"input": "20원",
+"prenorm": "20원",
+"normalized": "이십 원.",
+"legacy": "이십 원."
+},
+{
+"input": "21원",
+"prenorm": "21원",
+"normalized": "이십일 원.",
+"legacy": "이십일 원."
+},
+{
+"input": "33원",
+"prenorm": "33원",
+"normalized": "삼십삼 원.",
+"legacy": "삼십삼 원."
+},
+{
+"input": "50원",
+"prenorm": "50원",
+"normalized": "오십 원.",
+"legacy": "오십 원."
+},
+{
+"input": "99원",
+"prenorm": "99원",
+"normalized": "구십구 원.",
+"legacy": "구십구 원."
+},
+{
+"input": "100원",
+"prenorm": "100원",
+"normalized": "백 원.",
+"legacy": "백 원."
+},
+{
+"input": "1000원",
+"prenorm": "1000원",
+"normalized": "천 원.",
+"legacy": "천 원."
+},
+{
+"input": "약 3원을 봤다",
+"prenorm": "약 3원을 봤다",
+"normalized": "약 삼 원을 봤다.",
+"legacy": "약 삼 원을 봤다."
+},
+{
+"input": "1월",
+"prenorm": "1월",
+"normalized": "일 월.",
+"legacy": "일 월."
+},
+{
+"input": "2월",
+"prenorm": "2월",
+"normalized": "이 월.",
+"legacy": "이 월."
+},
+{
+"input": "3월",
+"prenorm": "3월",
+"normalized": "삼 월.",
+"legacy": "삼 월."
+},
+{
+"input": "4월",
+"prenorm": "4월",
+"normalized": "사 월.",
+"legacy": "사 월."
+},
+{
+"input": "10월",
+"prenorm": "10월",
+"normalized": "시월.",
+"legacy": "시월."
+},
+{
+"input": "12월",
+"prenorm": "12월",
+"normalized": "십이 월.",
+"legacy": "십이 월."
+},
+{
+"input": "20월",
+"prenorm": "20월",
+"normalized": "이십 월.",
+"legacy": "이십 월."
+},
+{
+"input": "21월",
+"prenorm": "21월",
+"normalized": "이십일 월.",
+"legacy": "이십일 월."
+},
+{
+"input": "33월",
+"prenorm": "33월",
+"normalized": "삼십삼 월.",
+"legacy": "삼십삼 월."
+},
+{
+"input": "50월",
+"prenorm": "50월",
+"normalized": "오십 월.",
+"legacy": "오십 월."
+},
+{
+"input": "99월",
+"prenorm": "99월",
+"normalized": "구십구 월.",
+"legacy": "구십구 월."
+},
+{
+"input": "100월",
+"prenorm": "100월",
+"normalized": "백 월.",
+"legacy": "백 월."
+},
+{
+"input": "1000월",
+"prenorm": "1000월",
+"normalized": "천 월.",
+"legacy": "천 월."
+},
+{
+"input": "약 3월을 봤다",
+"prenorm": "약 3월을 봤다",
+"normalized": "약 삼 월을 봤다.",
+"legacy": "약 삼 월을 봤다."
+},
+{
+"input": "1위",
+"prenorm": "1위",
+"normalized": "일 위.",
+"legacy": "일 위."
+},
+{
+"input": "2위",
+"prenorm": "2위",
+"normalized": "이 위.",
+"legacy": "이 위."
+},
+{
+"input": "3위",
+"prenorm": "3위",
+"normalized": "삼 위.",
+"legacy": "삼 위."
+},
+{
+"input": "4위",
+"prenorm": "4위",
+"normalized": "사 위.",
+"legacy": "사 위."
+},
+{
+"input": "10위",
+"prenorm": "10위",
+"normalized": "십 위.",
+"legacy": "십 위."
+},
+{
+"input": "12위",
+"prenorm": "12위",
+"normalized": "십이 위.",
+"legacy": "십이 위."
+},
+{
+"input": "20위",
+"prenorm": "20위",
+"normalized": "이십 위.",
+"legacy": "이십 위."
+},
+{
+"input": "21위",
+"prenorm": "21위",
+"normalized": "이십일 위.",
+"legacy": "이십일 위."
+},
+{
+"input": "33위",
+"prenorm": "33위",
+"normalized": "삼십삼 위.",
+"legacy": "삼십삼 위."
+},
+{
+"input": "50위",
+"prenorm": "50위",
+"normalized": "오십 위.",
+"legacy": "오십 위."
+},
+{
+"input": "99위",
+"prenorm": "99위",
+"normalized": "구십구 위.",
+"legacy": "구십구 위."
+},
+{
+"input": "100위",
+"prenorm": "100위",
+"normalized": "백 위.",
+"legacy": "백 위."
+},
+{
+"input": "1000위",
+"prenorm": "1000위",
+"normalized": "천 위.",
+"legacy": "천 위."
+},
+{
+"input": "약 3위을 봤다",
+"prenorm": "약 3위을 봤다",
+"normalized": "약 삼 위을 봤다.",
+"legacy": "약 삼 위을 봤다."
+},
+{
+"input": "1일",
+"prenorm": "1일",
+"normalized": "일 일.",
+"legacy": "일 일."
+},
+{
+"input": "2일",
+"prenorm": "2일",
+"normalized": "이 일.",
+"legacy": "이 일."
+},
+{
+"input": "3일",
+"prenorm": "3일",
+"normalized": "삼 일.",
+"legacy": "삼 일."
+},
+{
+"input": "4일",
+"prenorm": "4일",
+"normalized": "사 일.",
+"legacy": "사 일."
+},
+{
+"input": "10일",
+"prenorm": "10일",
+"normalized": "십 일.",
+"legacy": "십 일."
+},
+{
+"input": "12일",
+"prenorm": "12일",
+"normalized": "십이 일.",
+"legacy": "십이 일."
+},
+{
+"input": "20일",
+"prenorm": "20일",
+"normalized": "이십 일.",
+"legacy": "이십 일."
+},
+{
+"input": "21일",
+"prenorm": "21일",
+"normalized": "이십일 일.",
+"legacy": "이십일 일."
+},
+{
+"input": "33일",
+"prenorm": "33일",
+"normalized": "삼십삼 일.",
+"legacy": "삼십삼 일."
+},
+{
+"input": "50일",
+"prenorm": "50일",
+"normalized": "오십 일.",
+"legacy": "오십 일."
+},
+{
+"input": "99일",
+"prenorm": "99일",
+"normalized": "구십구 일.",
+"legacy": "구십구 일."
+},
+{
+"input": "100일",
+"prenorm": "100일",
+"normalized": "백 일.",
+"legacy": "백 일."
+},
+{
+"input": "1000일",
+"prenorm": "1000일",
+"normalized": "천 일.",
+"legacy": "천 일."
+},
+{
+"input": "약 3일을 봤다",
+"prenorm": "약 3일을 봤다",
+"normalized": "약 삼 일을 봤다.",
+"legacy": "약 삼 일을 봤다."
+},
+{
+"input": "1잔",
+"prenorm": "1잔",
+"normalized": "한 잔.",
+"legacy": "한 잔."
+},
+{
+"input": "2잔",
+"prenorm": "2잔",
+"normalized": "두 잔.",
+"legacy": "두 잔."
+},
+{
+"input": "3잔",
+"prenorm": "3잔",
+"normalized": "세 잔.",
+"legacy": "세 잔."
+},
+{
+"input": "4잔",
+"prenorm": "4잔",
+"normalized": "네 잔.",
+"legacy": "네 잔."
+},
+{
+"input": "10잔",
+"prenorm": "10잔",
+"normalized": "열 잔.",
+"legacy": "열 잔."
+},
+{
+"input": "12잔",
+"prenorm": "12잔",
+"normalized": "열두 잔.",
+"legacy": "열두 잔."
+},
+{
+"input": "20잔",
+"prenorm": "20잔",
+"normalized": "스무 잔.",
+"legacy": "스물 잔."
+},
+{
+"input": "21잔",
+"prenorm": "21잔",
+"normalized": "스물한 잔.",
+"legacy": "스물한 잔."
+},
+{
+"input": "33잔",
+"prenorm": "33잔",
+"normalized": "서른세 잔.",
+"legacy": "서른세 잔."
+},
+{
+"input": "50잔",
+"prenorm": "50잔",
+"normalized": "쉰 잔.",
+"legacy": "쉰 잔."
+},
+{
+"input": "99잔",
+"prenorm": "99잔",
+"normalized": "아흔아홉 잔.",
+"legacy": "아흔아홉 잔."
+},
+{
+"input": "100잔",
+"prenorm": "100잔",
+"normalized": "백 잔.",
+"legacy": "백 잔."
+},
+{
+"input": "1000잔",
+"prenorm": "1000잔",
+"normalized": "천 잔.",
+"legacy": "천 잔."
+},
+{
+"input": "약 3잔을 봤다",
+"prenorm": "약 3잔을 봤다",
+"normalized": "약 세 잔을 봤다.",
+"legacy": "약 세 잔을 봤다."
+},
+{
+"input": "1장",
+"prenorm": "1장",
+"normalized": "일 장.",
+"legacy": "일 장."
+},
+{
+"input": "2장",
+"prenorm": "2장",
+"normalized": "이 장.",
+"legacy": "이 장."
+},
+{
+"input": "3장",
+"prenorm": "3장",
+"normalized": "삼 장.",
+"legacy": "삼 장."
+},
+{
+"input": "4장",
+"prenorm": "4장",
+"normalized": "사 장.",
+"legacy": "사 장."
+},
+{
+"input": "10장",
+"prenorm": "10장",
+"normalized": "십 장.",
+"legacy": "십 장."
+},
+{
+"input": "12장",
+"prenorm": "12장",
+"normalized": "십이 장.",
+"legacy": "십이 장."
+},
+{
+"input": "20장",
+"prenorm": "20장",
+"normalized": "이십 장.",
+"legacy": "이십 장."
+},
+{
+"input": "21장",
+"prenorm": "21장",
+"normalized": "이십일 장.",
+"legacy": "이십일 장."
+},
+{
+"input": "33장",
+"prenorm": "33장",
+"normalized": "삼십삼 장.",
+"legacy": "삼십삼 장."
+},
+{
+"input": "50장",
+"prenorm": "50장",
+"normalized": "오십 장.",
+"legacy": "오십 장."
+},
+{
+"input": "99장",
+"prenorm": "99장",
+"normalized": "구십구 장.",
+"legacy": "구십구 장."
+},
+{
+"input": "100장",
+"prenorm": "100장",
+"normalized": "백 장.",
+"legacy": "백 장."
+},
+{
+"input": "1000장",
+"prenorm": "1000장",
+"normalized": "천 장.",
+"legacy": "천 장."
+},
+{
+"input": "약 3장을 봤다",
+"prenorm": "약 3장을 봤다",
+"normalized": "약 삼 장을 봤다.",
+"legacy": "약 삼 장을 봤다."
+},
+{
+"input": "1점",
+"prenorm": "1점",
+"normalized": "일 점.",
+"legacy": "일 점."
+},
+{
+"input": "2점",
+"prenorm": "2점",
+"normalized": "이 점.",
+"legacy": "이 점."
+},
+{
+"input": "3점",
+"prenorm": "3점",
+"normalized": "삼 점.",
+"legacy": "삼 점."
+},
+{
+"input": "4점",
+"prenorm": "4점",
+"normalized": "사 점.",
+"legacy": "사 점."
+},
+{
+"input": "10점",
+"prenorm": "10점",
+"normalized": "십 점.",
+"legacy": "십 점."
+},
+{
+"input": "12점",
+"prenorm": "12점",
+"normalized": "십이 점.",
+"legacy": "십이 점."
+},
+{
+"input": "20점",
+"prenorm": "20점",
+"normalized": "이십 점.",
+"legacy": "이십 점."
+},
+{
+"input": "21점",
+"prenorm": "21점",
+"normalized": "이십일 점.",
+"legacy": "이십일 점."
+},
+{
+"input": "33점",
+"prenorm": "33점",
+"normalized": "삼십삼 점.",
+"legacy": "삼십삼 점."
+},
+{
+"input": "50점",
+"prenorm": "50점",
+"normalized": "오십 점.",
+"legacy": "오십 점."
+},
+{
+"input": "99점",
+"prenorm": "99점",
+"normalized": "구십구 점.",
+"legacy": "구십구 점."
+},
+{
+"input": "100점",
+"prenorm": "100점",
+"normalized": "백 점.",
+"legacy": "백 점."
+},
+{
+"input": "1000점",
+"prenorm": "1000점",
+"normalized": "천 점.",
+"legacy": "천 점."
+},
+{
+"input": "약 3점을 봤다",
+"prenorm": "약 3점을 봤다",
+"normalized": "약 삼 점을 봤다.",
+"legacy": "약 삼 점을 봤다."
+},
+{
+"input": "1주년",
+"prenorm": "1주년",
+"normalized": "일 주년.",
+"legacy": "일 주년."
+},
+{
+"input": "2주년",
+"prenorm": "2주년",
+"normalized": "이 주년.",
+"legacy": "이 주년."
+},
+{
+"input": "3주년",
+"prenorm": "3주년",
+"normalized": "삼 주년.",
+"legacy": "삼 주년."
+},
+{
+"input": "4주년",
+"prenorm": "4주년",
+"normalized": "사 주년.",
+"legacy": "사 주년."
+},
+{
+"input": "10주년",
+"prenorm": "10주년",
+"normalized": "십 주년.",
+"legacy": "십 주년."
+},
+{
+"input": "12주년",
+"prenorm": "12주년",
+"normalized": "십이 주년.",
+"legacy": "십이 주년."
+},
+{
+"input": "20주년",
+"prenorm": "20주년",
+"normalized": "이십 주년.",
+"legacy": "이십 주년."
+},
+{
+"input": "21주년",
+"prenorm": "21주년",
+"normalized": "이십일 주년.",
+"legacy": "이십일 주년."
+},
+{
+"input": "33주년",
+"prenorm": "33주년",
+"normalized": "삼십삼 주년.",
+"legacy": "삼십삼 주년."
+},
+{
+"input": "50주년",
+"prenorm": "50주년",
+"normalized": "오십 주년.",
+"legacy": "오십 주년."
+},
+{
+"input": "99주년",
+"prenorm": "99주년",
+"normalized": "구십구 주년.",
+"legacy": "구십구 주년."
+},
+{
+"input": "100주년",
+"prenorm": "100주년",
+"normalized": "백 주년.",
+"legacy": "백 주년."
+},
+{
+"input": "1000주년",
+"prenorm": "1000주년",
+"normalized": "천 주년.",
+"legacy": "천 주년."
+},
+{
+"input": "약 3주년을 봤다",
+"prenorm": "약 3주년을 봤다",
+"normalized": "약 삼 주년을 봤다.",
+"legacy": "약 삼 주년을 봤다."
+},
+{
+"input": "1쪽",
+"prenorm": "1쪽",
+"normalized": "일 쪽.",
+"legacy": "일 쪽."
+},
+{
+"input": "2쪽",
+"prenorm": "2쪽",
+"normalized": "이 쪽.",
+"legacy": "이 쪽."
+},
+{
+"input": "3쪽",
+"prenorm": "3쪽",
+"normalized": "삼 쪽.",
+"legacy": "삼 쪽."
+},
+{
+"input": "4쪽",
+"prenorm": "4쪽",
+"normalized": "사 쪽.",
+"legacy": "사 쪽."
+},
+{
+"input": "10쪽",
+"prenorm": "10쪽",
+"normalized": "십 쪽.",
+"legacy": "십 쪽."
+},
+{
+"input": "12쪽",
+"prenorm": "12쪽",
+"normalized": "십이 쪽.",
+"legacy": "십이 쪽."
+},
+{
+"input": "20쪽",
+"prenorm": "20쪽",
+"normalized": "이십 쪽.",
+"legacy": "이십 쪽."
+},
+{
+"input": "21쪽",
+"prenorm": "21쪽",
+"normalized": "이십일 쪽.",
+"legacy": "이십일 쪽."
+},
+{
+"input": "33쪽",
+"prenorm": "33쪽",
+"normalized": "삼십삼 쪽.",
+"legacy": "삼십삼 쪽."
+},
+{
+"input": "50쪽",
+"prenorm": "50쪽",
+"normalized": "오십 쪽.",
+"legacy": "오십 쪽."
+},
+{
+"input": "99쪽",
+"prenorm": "99쪽",
+"normalized": "구십구 쪽.",
+"legacy": "구십구 쪽."
+},
+{
+"input": "100쪽",
+"prenorm": "100쪽",
+"normalized": "백 쪽.",
+"legacy": "백 쪽."
+},
+{
+"input": "1000쪽",
+"prenorm": "1000쪽",
+"normalized": "천 쪽.",
+"legacy": "천 쪽."
+},
+{
+"input": "약 3쪽을 봤다",
+"prenorm": "약 3쪽을 봤다",
+"normalized": "약 삼 쪽을 봤다.",
+"legacy": "약 삼 쪽을 봤다."
+},
+{
+"input": "1초",
+"prenorm": "1초",
+"normalized": "일 초.",
+"legacy": "일 초."
+},
+{
+"input": "2초",
+"prenorm": "2초",
+"normalized": "이 초.",
+"legacy": "이 초."
+},
+{
+"input": "3초",
+"prenorm": "3초",
+"normalized": "삼 초.",
+"legacy": "삼 초."
+},
+{
+"input": "4초",
+"prenorm": "4초",
+"normalized": "사 초.",
+"legacy": "사 초."
+},
+{
+"input": "10초",
+"prenorm": "10초",
+"normalized": "십 초.",
+"legacy": "십 초."
+},
+{
+"input": "12초",
+"prenorm": "12초",
+"normalized": "십이 초.",
+"legacy": "십이 초."
+},
+{
+"input": "20초",
+"prenorm": "20초",
+"normalized": "이십 초.",
+"legacy": "이십 초."
+},
+{
+"input": "21초",
+"prenorm": "21초",
+"normalized": "이십일 초.",
+"legacy": "이십일 초."
+},
+{
+"input": "33초",
+"prenorm": "33초",
+"normalized": "삼십삼 초.",
+"legacy": "삼십삼 초."
+},
+{
+"input": "50초",
+"prenorm": "50초",
+"normalized": "오십 초.",
+"legacy": "오십 초."
+},
+{
+"input": "99초",
+"prenorm": "99초",
+"normalized": "구십구 초.",
+"legacy": "구십구 초."
+},
+{
+"input": "100초",
+"prenorm": "100초",
+"normalized": "백 초.",
+"legacy": "백 초."
+},
+{
+"input": "1000초",
+"prenorm": "1000초",
+"normalized": "천 초.",
+"legacy": "천 초."
+},
+{
+"input": "약 3초을 봤다",
+"prenorm": "약 3초을 봤다",
+"normalized": "약 삼 초을 봤다.",
+"legacy": "약 삼 초을 봤다."
+},
+{
+"input": "1층",
+"prenorm": "1층",
+"normalized": "일 층.",
+"legacy": "일 층."
+},
+{
+"input": "2층",
+"prenorm": "2층",
+"normalized": "이 층.",
+"legacy": "이 층."
+},
+{
+"input": "3층",
+"prenorm": "3층",
+"normalized": "삼 층.",
+"legacy": "삼 층."
+},
+{
+"input": "4층",
+"prenorm": "4층",
+"normalized": "사 층.",
+"legacy": "사 층."
+},
+{
+"input": "10층",
+"prenorm": "10층",
+"normalized": "십 층.",
+"legacy": "십 층."
+},
+{
+"input": "12층",
+"prenorm": "12층",
+"normalized": "십이 층.",
+"legacy": "십이 층."
+},
+{
+"input": "20층",
+"prenorm": "20층",
+"normalized": "이십 층.",
+"legacy": "이십 층."
+},
+{
+"input": "21층",
+"prenorm": "21층",
+"normalized": "이십일 층.",
+"legacy": "이십일 층."
+},
+{
+"input": "33층",
+"prenorm": "33층",
+"normalized": "삼십삼 층.",
+"legacy": "삼십삼 층."
+},
+{
+"input": "50층",
+"prenorm": "50층",
+"normalized": "오십 층.",
+"legacy": "오십 층."
+},
+{
+"input": "99층",
+"prenorm": "99층",
+"normalized": "구십구 층.",
+"legacy": "구십구 층."
+},
+{
+"input": "100층",
+"prenorm": "100층",
+"normalized": "백 층.",
+"legacy": "백 층."
+},
+{
+"input": "1000층",
+"prenorm": "1000층",
+"normalized": "천 층.",
+"legacy": "천 층."
+},
+{
+"input": "약 3층을 봤다",
+"prenorm": "약 3층을 봤다",
+"normalized": "약 삼 층을 봤다.",
+"legacy": "약 삼 층을 봤다."
+},
+{
+"input": "1켤레",
+"prenorm": "1켤레",
+"normalized": "한 켤레.",
+"legacy": "한 켤레."
+},
+{
+"input": "2켤레",
+"prenorm": "2켤레",
+"normalized": "두 켤레.",
+"legacy": "두 켤레."
+},
+{
+"input": "3켤레",
+"prenorm": "3켤레",
+"normalized": "세 켤레.",
+"legacy": "세 켤레."
+},
+{
+"input": "4켤레",
+"prenorm": "4켤레",
+"normalized": "네 켤레.",
+"legacy": "네 켤레."
+},
+{
+"input": "10켤레",
+"prenorm": "10켤레",
+"normalized": "열 켤레.",
+"legacy": "열 켤레."
+},
+{
+"input": "12켤레",
+"prenorm": "12켤레",
+"normalized": "열두 켤레.",
+"legacy": "열두 켤레."
+},
+{
+"input": "20켤레",
+"prenorm": "20켤레",
+"normalized": "스무 켤레.",
+"legacy": "스물 켤레."
+},
+{
+"input": "21켤레",
+"prenorm": "21켤레",
+"normalized": "스물한 켤레.",
+"legacy": "스물한 켤레."
+},
+{
+"input": "33켤레",
+"prenorm": "33켤레",
+"normalized": "서른세 켤레.",
+"legacy": "서른세 켤레."
+},
+{
+"input": "50켤레",
+"prenorm": "50켤레",
+"normalized": "쉰 켤레.",
+"legacy": "쉰 켤레."
+},
+{
+"input": "99켤레",
+"prenorm": "99켤레",
+"normalized": "아흔아홉 켤레.",
+"legacy": "아흔아홉 켤레."
+},
+{
+"input": "100켤레",
+"prenorm": "100켤레",
+"normalized": "백 켤레.",
+"legacy": "백 켤레."
+},
+{
+"input": "1000켤레",
+"prenorm": "1000켤레",
+"normalized": "천 켤레.",
+"legacy": "천 켤레."
+},
+{
+"input": "약 3켤레을 봤다",
+"prenorm": "약 3켤레을 봤다",
+"normalized": "약 세 켤레을 봤다.",
+"legacy": "약 세 켤레을 봤다."
+},
+{
+"input": "1편",
+"prenorm": "1편",
+"normalized": "일 편.",
+"legacy": "일 편."
+},
+{
+"input": "2편",
+"prenorm": "2편",
+"normalized": "이 편.",
+"legacy": "이 편."
+},
+{
+"input": "3편",
+"prenorm": "3편",
+"normalized": "삼 편.",
+"legacy": "삼 편."
+},
+{
+"input": "4편",
+"prenorm": "4편",
+"normalized": "사 편.",
+"legacy": "사 편."
+},
+{
+"input": "10편",
+"prenorm": "10편",
+"normalized": "십 편.",
+"legacy": "십 편."
+},
+{
+"input": "12편",
+"prenorm": "12편",
+"normalized": "십이 편.",
+"legacy": "십이 편."
+},
+{
+"input": "20편",
+"prenorm": "20편",
+"normalized": "이십 편.",
+"legacy": "이십 편."
+},
+{
+"input": "21편",
+"prenorm": "21편",
+"normalized": "이십일 편.",
+"legacy": "이십일 편."
+},
+{
+"input": "33편",
+"prenorm": "33편",
+"normalized": "삼십삼 편.",
+"legacy": "삼십삼 편."
+},
+{
+"input": "50편",
+"prenorm": "50편",
+"normalized": "오십 편.",
+"legacy": "오십 편."
+},
+{
+"input": "99편",
+"prenorm": "99편",
+"normalized": "구십구 편.",
+"legacy": "구십구 편."
+},
+{
+"input": "100편",
+"prenorm": "100편",
+"normalized": "백 편.",
+"legacy": "백 편."
+},
+{
+"input": "1000편",
+"prenorm": "1000편",
+"normalized": "천 편.",
+"legacy": "천 편."
+},
+{
+"input": "약 3편을 봤다",
+"prenorm": "약 3편을 봤다",
+"normalized": "약 삼 편을 봤다.",
+"legacy": "약 삼 편을 봤다."
+},
+{
+"input": "1호",
+"prenorm": "1호",
+"normalized": "일 호.",
+"legacy": "일 호."
+},
+{
+"input": "2호",
+"prenorm": "2호",
+"normalized": "이 호.",
+"legacy": "이 호."
+},
+{
+"input": "3호",
+"prenorm": "3호",
+"normalized": "삼 호.",
+"legacy": "삼 호."
+},
+{
+"input": "4호",
+"prenorm": "4호",
+"normalized": "사 호.",
+"legacy": "사 호."
+},
+{
+"input": "10호",
+"prenorm": "10호",
+"normalized": "십 호.",
+"legacy": "십 호."
+},
+{
+"input": "12호",
+"prenorm": "12호",
+"normalized": "십이 호.",
+"legacy": "십이 호."
+},
+{
+"input": "20호",
+"prenorm": "20호",
+"normalized": "이십 호.",
+"legacy": "이십 호."
+},
+{
+"input": "21호",
+"prenorm": "21호",
+"normalized": "이십일 호.",
+"legacy": "이십일 호."
+},
+{
+"input": "33호",
+"prenorm": "33호",
+"normalized": "삼십삼 호.",
+"legacy": "삼십삼 호."
+},
+{
+"input": "50호",
+"prenorm": "50호",
+"normalized": "오십 호.",
+"legacy": "오십 호."
+},
+{
+"input": "99호",
+"prenorm": "99호",
+"normalized": "구십구 호.",
+"legacy": "구십구 호."
+},
+{
+"input": "100호",
+"prenorm": "100호",
+"normalized": "백 호.",
+"legacy": "백 호."
+},
+{
+"input": "1000호",
+"prenorm": "1000호",
+"normalized": "천 호.",
+"legacy": "천 호."
+},
+{
+"input": "약 3호을 봤다",
+"prenorm": "약 3호을 봤다",
+"normalized": "약 삼 호을 봤다.",
+"legacy": "약 삼 호을 봤다."
+},
+{
+"input": "1회",
+"prenorm": "1회",
+"normalized": "일 회.",
+"legacy": "일 회."
+},
+{
+"input": "2회",
+"prenorm": "2회",
+"normalized": "이 회.",
+"legacy": "이 회."
+},
+{
+"input": "3회",
+"prenorm": "3회",
+"normalized": "삼 회.",
+"legacy": "삼 회."
+},
+{
+"input": "4회",
+"prenorm": "4회",
+"normalized": "사 회.",
+"legacy": "사 회."
+},
+{
+"input": "10회",
+"prenorm": "10회",
+"normalized": "십 회.",
+"legacy": "십 회."
+},
+{
+"input": "12회",
+"prenorm": "12회",
+"normalized": "십이 회.",
+"legacy": "십이 회."
+},
+{
+"input": "20회",
+"prenorm": "20회",
+"normalized": "이십 회.",
+"legacy": "이십 회."
+},
+{
+"input": "21회",
+"prenorm": "21회",
+"normalized": "이십일 회.",
+"legacy": "이십일 회."
+},
+{
+"input": "33회",
+"prenorm": "33회",
+"normalized": "삼십삼 회.",
+"legacy": "삼십삼 회."
+},
+{
+"input": "50회",
+"prenorm": "50회",
+"normalized": "오십 회.",
+"legacy": "오십 회."
+},
+{
+"input": "99회",
+"prenorm": "99회",
+"normalized": "구십구 회.",
+"legacy": "구십구 회."
+},
+{
+"input": "100회",
+"prenorm": "100회",
+"normalized": "백 회.",
+"legacy": "백 회."
+},
+{
+"input": "1000회",
+"prenorm": "1000회",
+"normalized": "천 회.",
+"legacy": "천 회."
+},
+{
+"input": "약 3회을 봤다",
+"prenorm": "약 3회을 봤다",
+"normalized": "약 삼 회을 봤다.",
+"legacy": "약 삼 회을 봤다."
+},
+{
+"input": "50~60대",
+"prenorm": "오십에서 육십 대",
+"normalized": "오십에서 육십 대.",
+"legacy": "오십에서 육십 대."
+},
+{
+"input": "3~4명",
+"prenorm": "3~4명",
+"normalized": "세에서 네 명.",
+"legacy": "세에서 네 명."
+},
+{
+"input": "2~3km",
+"prenorm": "2~3km",
+"normalized": "이에서 삼 km.",
+"legacy": "이에서 삼 km."
+},
+{
+"input": "1.5배",
+"prenorm": "1.5배",
+"normalized": "일 쩜 오배.",
+"legacy": "일 점 오배."
+},
+{
+"input": "2배",
+"prenorm": "2배",
+"normalized": "이배.",
+"legacy": "이배."
+},
+{
+"input": "0.5%",
+"prenorm": "0.5%",
+"normalized": "영 쩜 오 퍼센트.",
+"legacy": "영 점 오 퍼센트."
+},
+{
+"input": "1/2",
+"prenorm": "1/2",
+"normalized": "이분의 일.",
+"legacy": "일/이."
+},
+{
+"input": "3:2",
+"prenorm": "2",
+"normalized": "이.",
+"legacy": "이."
+},
+{
+"input": "100m 달리기",
+"prenorm": "100m 달리기",
+"normalized": "백 미터 달리기.",
+"legacy": "백 미터 달리기."
+},
+{
+"input": "10 % 할인",
+"prenorm": "10 % 할인",
+"normalized": "십 퍼센트 할인.",
+"legacy": "십 퍼센트 할인."
+},
+{
+"input": "3 개",
+"prenorm": "3 개",
+"normalized": "세 개.",
+"legacy": "세 개."
+},
+{
+"input": "2024년 12월 25일",
+"prenorm": "2024년 12월 25일",
+"normalized": "이천이십사 년 십이 월 이십오 일.",
+"legacy": "이천이십사 년 십이 월 이십오 일."
+},
+{
+"input": "오후 3시 30분",
+"prenorm": "오후 3시 30분",
+"normalized": "오후 세 시 삼십 분.",
+"legacy": "오후 세 시 삼십 분."
+},
+{
+"input": "2시간",
+"prenorm": "2시간",
+"normalized": "두 시간.",
+"legacy": "두 시간."
+},
+{
+"input": "3.14",
+"prenorm": "3.14",
+"normalized": "삼 쩜 일 사.",
+"legacy": "삼 점 일 사."
+},
+{
+"input": "10,000원",
+"prenorm": "10,000원",
+"normalized": "만 원.",
+"legacy": "일만 원."
+},
+{
+"input": "1억 5천만 원",
+"prenorm": "1억 5천만 원",
+"normalized": "일억 오천만 원.",
+"legacy": "일억 오천만 원."
+},
+{
+"input": "12345678",
+"prenorm": "12345678",
+"normalized": "천이백삼십사만오천육백칠십팔.",
+"legacy": "천이백삼십사만오천육백칠십팔."
+},
+{
+"input": "007",
+"prenorm": "007",
+"normalized": "칠.",
+"legacy": "칠."
+},
+{
+"input": "3번째",
+"prenorm": "3번째",
+"normalized": "세 번째.",
+"legacy": "세 번째."
+},
+{
+"input": "제3장",
+"prenorm": "제3장",
+"normalized": "제삼 장.",
+"legacy": "제삼 장."
+},
+{
+"input": "3월 10일",
+"prenorm": "3월 10일",
+"normalized": "삼 월 십 일.",
+"legacy": "삼 월 십 일."
+},
+{
+"input": "6월 10월 16월",
+"prenorm": "6월 10월 16월",
+"normalized": "유월 시월 십육 월.",
+"legacy": "유월 시월 십육 월."
+},
+{
+"input": "010-1234-5678",
+"prenorm": "010-1234-5678",
+"normalized": "공 일 공 일 이 삼 사 오 육 칠 팔.",
+"legacy": "공 일 공 일 이 삼 사 오 육 칠 팔."
+},
+{
+"input": "02-123-4567",
+"prenorm": "02-123-4567",
+"normalized": "공 이 일 이 삼 사 오 육 칠.",
+"legacy": "공 이 일 이 삼 사 오 육 칠."
+},
+{
+"input": "01012345678",
+"prenorm": "01012345678",
+"normalized": "공 일 공 일 이 삼 사 오 육 칠 팔.",
+"legacy": "공 일 공 일 이 삼 사 오 육 칠 팔."
+},
+{
+"input": "5G 5GB 5g",
+"prenorm": "5G 5GB 5g",
+"normalized": "오지 오 기가바이트 오g.",
+"legacy": "오지 오 기가바이트 오g."
+},
+{
+"input": "1:1 문의",
+"prenorm": "1 문의",
+"normalized": "일 문의.",
+"legacy": "일 문의."
+},
+{
+"input": "24시간 365일",
+"prenorm": "24시간 365일",
+"normalized": "스물네 시간 삼백육십오 일.",
+"legacy": "스물네 시간 삼백육십오 일."
+},
+{
+"input": "MZ세대 20대",
+"prenorm": "MZ세대 이십 대",
+"normalized": "엠 제트세대 이십 대.",
+"legacy": "MZ세대 이십 대."
+}
+]
+}

@@ -81,17 +81,11 @@ DEFAULT_LLM_MODEL: str = os.getenv("LLM_MODEL", "haiku")
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", str(_PROJECT_ROOT / "assets" / "media")))
 ASSETS_DIR = Path(os.getenv("ASSETS_DIR", str(_PROJECT_ROOT / "assets")))
 
-# TTS 엔진별 목소리 프리셋
+# TTS 엔진별 목소리 프리셋 (local-tts = Supertonic 프리셋; 실제 선택은 voice_resolver)
 TTS_VOICES: dict[str, list[dict[str, str]]] = {
-    "fish-speech": [
-        {"id": "default", "name": "기본 남성 내레이터"},
-        {"id": "anna",    "name": "Anna (여, 친근한 내레이션)"},
-        {"id": "han",     "name": "Han (남, 자연스러운 대화체)"},
-        {"id": "krys",    "name": "Krys (여, 뉴스/정보 전달형)"},
-        {"id": "sunny",   "name": "Sunny (여, 따뜻한 내레이션)"},
-        {"id": "yohan",   "name": "Yohan (남, 깊이 있는 내레이션)"},
-        {"id": "yura",    "name": "Yura (여, 활기찬 대화체)"},
-        {"id": "manbo",   "name": "Manbo (여, 유쾌한 대화체)"},
+    "local-tts": [
+        {"id": k, "name": f"{k} ({'남' if k[0] == 'M' else '여'})"}
+        for k in ("M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5")
     ],
     "edge-tts": [
         {"id": "ko-KR-SunHiNeural",   "name": "선히 (여, 밝음)"},
@@ -111,8 +105,8 @@ AB_TEST_CONFIG_PATH  = _PROJECT_ROOT / "config" / "ab_tests.json"
 
 _PIPELINE_DEFAULTS: dict[str, str] = {
     # 모델 관련 기본값 — .env의 값을 읽음. 변경 시 .env만 수정하면 됨.
-    "tts_engine": os.getenv("TTS_ENGINE", "fish-speech"),
-    "tts_voice":  os.getenv("TTS_VOICE",  "yura"),
+    "tts_engine": os.getenv("TTS_ENGINE", "local-tts"),
+    "tts_voice":  os.getenv("TTS_VOICE",  "default"),
     "llm_model":  DEFAULT_LLM_MODEL,  # .env의 LLM_MODEL
     "llm_model_overrides": "{}",
     # LLM 백엔드: "cli"(llm-worker claude CLI 브릿지) | "api"(Anthropic API 직접)
@@ -289,36 +283,22 @@ def get_llm_constraints_prompt() -> str:
 
 
 # ────────────────────────────────────────────
-# TTS — OpenAudio S1-mini (fish-speech API 서버, ADR-0005)
+# TTS — Local-TTS 서버 (제공자 모델, ADR-0006). 합성 코드·게이트·컨테이너 제어는 WB가 갖지 않는다.
 # ────────────────────────────────────────────
-FISH_SPEECH_URL = os.getenv("FISH_SPEECH_URL", "http://fish-speech:8080")
-FISH_SPEECH_TIMEOUT = 300  # seconds — 대본 600자+(9문장) 전체 합성이 타임아웃을 넘지 않도록 여유 확보
+TTS_SERVER_URL: str = os.getenv("TTS_SERVER_URL", "http://local-tts:8500")
+TTS_SERVER_TOKEN: str = os.getenv("TTS_SERVER_TOKEN", "")                       # 서버가 토큰을 요구할 때만
+TTS_SERVER_TIMEOUT_SEC: float = float(os.getenv("TTS_SERVER_TIMEOUT_SEC", "120"))  # 요청 1건 read 타임아웃
+TTS_SERVER_RETRIES: int = int(os.getenv("TTS_SERVER_RETRIES", "3"))               # 첫 시도 이후 추가 재시도(연결·429·503)
+TTS_SERVER_MAX_WAIT_SEC: float = float(os.getenv("TTS_SERVER_MAX_WAIT_SEC", "3600"))  # job 완료·서버 준비 대기 상한
+TTS_PROFILE: str = os.getenv("TTS_PROFILE", "wagglebot/shorts-ko")                # 서버 정규화 프로필(비우면 미사용)
+TTS_CLIENT_ID: str = os.getenv("TTS_CLIENT_ID", "wagglebot")                      # X-Client-Id = 프로필 네임스페이스
 
-# Fish 게이트 (Flight-Brain GPU 데몬 연동; ai_worker/tts/fish_gate.py)
-# Fish가 내려가 있거나 X-Plane 등으로 막히면 post를 FAILED로 만들지 않고 대기하며 재확인한다.
-# 기본 URL은 compose 네트워크(env_default) 게이트웨이 172.20.0.1 — 호스트 서비스(0.0.0.0:8100)에 도달 확인됨.
-# 빈 문자열이면 게이트 호출 없이 Fish health만으로 대기한다.
-FISH_GATE_URL = os.getenv("ATOMIC_TTS_FISH_GATE_URL", "http://172.20.0.1:8100/api/gpu/fish/ensure")
-FISH_GATE_ENABLED = os.getenv("FISH_GATE_ENABLED", "1") not in ("0", "false", "False", "")
-FISH_GATE_RECHECK_SEC = float(os.getenv("FISH_GATE_RECHECK_SEC", "1800"))      # blocked/미응답 시 재질의 주기(30분)
-FISH_GATE_MAX_WAIT_SEC = float(os.getenv("FISH_GATE_MAX_WAIT_SEC", "3600"))    # 총 대기 상한(1시간) 초과 시 FAILED 경로
-FISH_GATE_HEARTBEAT_SEC = float(os.getenv("FISH_GATE_HEARTBEAT_SEC", "30"))    # 대기 중 진행 heartbeat·health 확인 주기
-FISH_GATE_START_POLL_SEC = float(os.getenv("FISH_GATE_START_POLL_SEC", "10"))  # starting 시 health 폴링 간격
-FISH_GATE_START_MAX_SEC = float(os.getenv("FISH_GATE_START_MAX_SEC", "360"))   # starting 폴링 상한(약 6분)
-FISH_GATE_MIN_RECHECK_SEC = float(os.getenv("FISH_GATE_MIN_RECHECK_SEC", "30"))  # blocked retry_after_sec 하한
-FISH_LEASE_URL = os.getenv(
-    "FISH_LEASE_URL", FISH_GATE_URL[: -len("/ensure")] + "/lease" if FISH_GATE_URL.endswith("/ensure") else "",
-)  # atomic_tts GPU 데몬 Fish 임대 base(/lease, /lease/heartbeat, /lease/release)
-FISH_LEASE_ENABLED = os.getenv("FISH_LEASE_ENABLED", "1") not in ("0", "false", "False", "")
-FISH_LEASE_HEARTBEAT_SEC = float(os.getenv("FISH_LEASE_HEARTBEAT_SEC", "30"))  # 임대 heartbeat 간격(ttl 90초)
-# Fish가 blocked인데도 Phase 5 게이트 대기가 이 시간(초)을 넘으면 retry_count 불변으로 APPROVED 재큐(락·PROCESSING 해제)
-FISH_GATE_REQUEUE_AFTER_SEC = float(os.getenv("FISH_GATE_REQUEUE_AFTER_SEC", "600"))
 # 같은 phase에서 진행 표시(stamp)가 이 시간(초) 넘게 없으면 inflight 하트비트 갱신 중단(경고 로그)
 PHASE_STALL_SEC = float(os.getenv("PHASE_STALL_SEC", "7200"))
 
-# 참조 오디오 프리셋 (voices.json v2)
+# 보이스 프리셋 (voices.json; 합성 보이스 매핑은 ai_worker/tts/voice_resolver.py)
 # {key: {label, ref_dir, file, params}}
-#   ref_dir: assets/voices/ 하위 폴더명 → fish-speech reference_id (폴더 내 NN.wav+NN.lab)
+#   ref_dir: (레거시) 참조 음성 폴더명 — Local-TTS 전환 후 합성에는 쓰지 않음
 #   file:    레거시 평면 파일명 또는 "<key>/01.wav" (대시보드 sampleUrl·base64 폴백용)
 #   params:  per-voice 오버라이드 {temperature, top_p, speed} (없으면 전역 기본값)
 def _load_voice_presets() -> dict:
@@ -358,22 +338,7 @@ def _load_voice_presets() -> dict:
 VOICE_PRESETS: dict = _load_voice_presets()
 VOICE_DEFAULT = "default"
 
-# 참조 오디오 스크립트 (fish-speech가 언어를 인식하는 데 사용)
-# 실제 녹음 내용과 정확히 일치할수록 음성 클로닝 품질이 좋아짐
-# 정확한 스크립트를 모를 경우 한국어 샘플 텍스트라도 반드시 입력 (빈 문자열 → 중국어 출력)
-VOICE_REFERENCE_TEXTS: dict[str, str] = {
-    "default": "안녕하세요. 반갑습니다. 오늘도 좋은 하루 되세요.",
-    "anna":  "안녕하세요, 오늘 여러분과 나눌 이야기는 그 누구에게도 들어볼 수 없었던 신기한 이야기입니다. 이야기를 들어보시기 전에 먼저 구독과 좋아요 부탁드립니다.",
-    "han":   "떡볶이가 먹고 싶은 영감은 그냥 찾아와요. 내가 할 수 있는 건 자유의지라고 굳이 부르자면 떡볶이를 먹고 싶은 나를 받아들일까 말까 그게 내가 할 수 있는 유일한 것이고 내가 나를 보살피기 위한 유일한 게 그거 딱 하나라는 거를 요즘에 좀 실천하고 있습니다.",
-    "krys":  "안녕하세요. 유익하고 좋은 내용을 알기 쉽고 빠르게 전해드리겠습니다. 오늘 전해드릴 소식은요, 여러분들이 가장 필요한 정보들로 준비해 보았는데요. 먼저 구독과 좋아요 부탁드립니다.",
-    "sunny": "인생은 늘 예측할 수 없는 방향으로 흐르지만 그 속에서 희망과 기회를 찾을 수 있습니다. 행복은 거창한 순간에만 있는 것이 아니라 매일의 작은 순간 속에서 피어납니다. 오늘도 감사하는 마음으로 하루를 보냅니다.",
-    "yohan": "여러분, 우리가 하루를 살면서 수많은 생각과 경험을 합니다. 그런데 그 중 몇 가지를 진짜로 기억하고 있나요? 기록은 단순히 정보를 적는 행위가 아닙니다. 삶의 흔적을 남기는 일입니다. 지나간 시간의 소중한 순간, 깨달음, 감정을 미래의 나에게 전달하는 다리입니다.",
-    "yura":  "제가 요즘 매일 쓰고 있는 게 바로 이거예요. 처음엔 그냥 궁금해서 써봤는데 왜 이렇게 인기인지 알겠더라고요. 아침에 바쁘잖아요, 그냥 툭 사용하면 끝. 아래 링크에서 확인해 보세요. 할인도 들어가 있어서 놓치면 후회할 수도 있어요. 다음 영상에서 또 꿀템 들고 올게요.",
-    "manbo":  "여돌 중에 제일 이쁘지 않음? 키키 하음 발언이 여돌 중에 제일 이물감 없고 유니크하다고 함 특히 금발 생머리가 잘 어울림 성격도 웃기고 몸선 춤선도 예쁘다고 함",
-}
-
-# 씬 타입별 감정 태그 (scene/director.py에서 SceneDecision.emotion_tag로 할당)
-# ⚠️ 아래 TTS_EMOTION_MARKERS와는 다른 축(씬 타입 vs tts_emotion) — 혼동 금지.
+# 씬 타입별 감정 태그 (scene/director.py에서 SceneDecision.emotion_tag로 할당; 합성에는 쓰이지 않음)
 EMOTION_TAGS: dict[str, str] = {
     "intro":     "",
     "image_text":  "",
@@ -381,47 +346,17 @@ EMOTION_TAGS: dict[str, str] = {
     "outro":     "",
 }
 
-# tts_emotion(mood 프리셋, scene_policy.json) → OpenAudio S1 인라인 감정 마커.
-# fish_client가 정규화된 텍스트 앞에 마커를 주입 (TTS_EMOTION_ENABLED일 때).
-# S1 마커 목록에 없는 키(cheerful/friendly)는 가장 가까운 마커로 매핑.
-TTS_EMOTION_MARKERS: dict[str, str] = {
-    "gentle":     "(soft tone)",
-    "cheerful":   "(joyful)",
-    "serious":    "(serious)",
-    "sad":        "(sad)",
-    "whispering": "(whispering)",
-    "neutral":    "",
-    "friendly":   "(relaxed)",
-    "surprised":  "(surprised)",
-}
-
-# OpenAudio S1-mini 생성 파라미터 (ADR-0005)
-# 구 1.5 값(temp 0.5 / rep 1.3)은 참조 오디오 부재 시 중국어 회귀를 막던 방어책이었음.
-# S1 + 실제 참조 음성(reference_id) 환경에서는 모델 기본값(0.8/0.8/1.1)이 가장 자연스러움.
-FISH_SPEECH_TEMPERATURE: float = 0.8
-FISH_SPEECH_TOP_P: float = 0.8
-FISH_SPEECH_REPETITION_PENALTY: float = 1.1
-FISH_SPEECH_CHUNK_LENGTH: int = 200          # 서버 측 청크 길이 (100~1000)
-FISH_SPEECH_USE_MEMORY_CACHE: str = "on"     # reference_id 인코딩 캐시 ("on"|"off")
-FISH_SPEECH_NORMALIZE: bool = False          # 서버 텍스트 정규화 비활성 (자체 한국어 정규화 사용)
-FISH_SPEECH_SEED: int | None = None          # 재현용 시드 (None=랜덤)
-
 # 오디오 출력 설정
 TTS_OUTPUT_FORMAT = "wav"
 TTS_SAMPLE_RATE   = 44100
 
-# TTS 후처리·검증·분할
-TTS_SPEED: float = 1.1                        # 자연스러움 우선 atempo. per-voice params로 오버라이드 가능
-TTS_LOUDNORM_ENABLED: bool = True             # EBU R128 음량 정규화
+# TTS 후처리
+# 서버 speed 옵션으로 전달(이중 적용 금지 — 로컬 atempo 없음). 서버 loudnorm(-16)이 1차, 렌더러는 믹스 단계에서만 사용.
+TTS_SPEED: float = float(os.getenv("TTS_SPEED", "1.1"))
+TTS_LOUDNORM_ENABLED: bool = True             # EBU R128 음량 정규화 (renderer/_tts.py 최종 믹스용)
 TTS_LOUDNORM_PARAMS: str = "I=-16:TP=-1.5:LRA=11"
-TTS_MAX_CHARS_PER_REQUEST: int = 150          # 초과 시 문장 경계로 분할 후 합성·병합
-TTS_MAX_SECS_PER_CHAR: float = 0.35           # 초과 시 비한국어 혼입 의심 → 재생성 (한국어 ~3~6자/초)
-TTS_MIN_SECS_PER_CHAR: float = 0.05           # 미만 시 잘림 의심 → 재생성 (10자 이상에만 적용)
-TTS_SHORT_TEXT_PADDING: bool = False          # 짧은 텍스트 한국어 패딩 (S1+참조에선 불필요, 기본 off)
-TTS_EMOTION_ENABLED: bool = True              # tts_emotion → 감정 마커 주입
-TTS_LAUGH_MARKER_ENABLED: bool = False        # ㅋㅋ/ㅎㅎ → (laughing) 변환 (실험적, 기본 off)
 
-# faster-whisper — 음성 자산 자동 전사 (worker/tools/prepare_voice.py)
+# faster-whisper — 발화 정렬(alignment.py)
 WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "large-v3")
 WHISPER_DEVICE: str = os.getenv("WHISPER_DEVICE", "cpu")        # cpu: VRAM 무경합(TTS/VIDEO와 분리)
 WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "int8")

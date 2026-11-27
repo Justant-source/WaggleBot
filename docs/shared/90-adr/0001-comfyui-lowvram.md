@@ -4,6 +4,8 @@
 > **date:** 2026-06-10
 > **related:** docs/20-containers/topology.md (comfyui 섹션), CLAUDE.md (하드 제약)
 
+> **2026-11-27 주석:** 본문의 "Fish Speech ~5GB 동시 점유" 전제는 [ADR-0006](0006-local-tts-provider.md)으로 사라졌다(TTS는 외부 Local-TTS 제공자). `--lowvram --reserve-vram 2` 규칙 자체는 유지된다.
+
 ## 컨텍스트
 
 ComfyUI 기본 모드는 `--normalvram`이다. LTX-2 19B가 사용하는 Gemma-3-12B 텍스트 인코더는

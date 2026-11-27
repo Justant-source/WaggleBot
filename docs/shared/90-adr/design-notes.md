@@ -1,7 +1,9 @@
 # WaggleBot 구조 개선 — 설계 컨텍스트
 
-> **last-verified:** 2026-08-31 (commit `656dffd`)
+> **last-verified:** 2026-11-27
 > **scope:** WP-1~8 설계 결정 이유 및 변경 내용. 핵심 아키텍처 결정은 [docs/90-adr/](./) 참조.
+
+> **2026-11-27 주석 — TTS 이력:** 아래 WP-1(TTS 프리뷰)·WP-6a(Fish 워밍업 센티널)·변경 파일 목록의 `fish_client.py` 서술은 2026-06 시점의 이력이다. Fish Speech·`fish_client.py`·워밍업 센티널은 Local-TTS 전환으로 모두 삭제됐다. 현행 TTS 경로는 `ai_worker/tts/synth.py`(`synthesize`, 같은 모듈-레벨 함수 형태)이며 결정 배경은 [ADR-0006](0006-local-tts-provider.md) 참조.
 
 > 이 문서는 2026-06-10 전수 조사 후 단행한 7개 워크 패키지(WP-1~7)와 P2 보완 작업의
 > 설계 결정 이유와 변경 내용을 기록한다.
@@ -21,7 +23,7 @@
 
 ---
 
-## WP-1: TTS 프리뷰 버그 수정
+## WP-1: TTS 프리뷰 버그 수정 (이력 — 현행 경로는 `tts/synth.py`)
 
 **파일**: `worker/dashboard_worker/handlers.py`
 
@@ -135,7 +137,7 @@ Phase 6은 원격 haiku만 사용하므로 GPU 충돌이 없다. 씬 20개 기�
 
 ---
 
-## WP-6a: Fish Speech 워밍업 센티널 스킵
+## WP-6a: Fish Speech 워밍업 센티널 스킵 (폐기됨 — 2026-11-27 Local-TTS 전환으로 삭제)
 
 **파일**: `worker/ai_worker/tts/fish_client.py`
 
@@ -238,7 +240,7 @@ pytest worker/test/test_e2e_structure_improve.py -m unit
 
 | 레이어 | 파일 |
 |--------|------|
-| Python (worker) | `ai_worker/core/main.py`, `core/processor.py`, `llm/transport.py`, `pipeline/content_processor.py`, `renderer/_encode.py`, `renderer/_frames.py`, `renderer/layout.py`, `script/client.py`, `script/chunker.py`, `tts/fish_client.py`, `video/comfy_client.py`, `video/video_utils.py`, `dashboard_worker/handlers.py`, `db/models.py` |
+| Python (worker) | `ai_worker/core/main.py`, `core/processor.py`, `llm/transport.py`, `pipeline/content_processor.py`, `renderer/_encode.py`, `renderer/_frames.py`, `renderer/layout.py`, `script/client.py`, `script/chunker.py`, `tts/fish_client.py`(삭제됨 → `tts/synth.py`), `video/comfy_client.py`, `video/video_utils.py`, `dashboard_worker/handlers.py`, `db/models.py` |
 | SQL (마이그레이션) | `worker/db/migrations/006_add_post_last_error.sql` |
 | Java (backend) | `domain/Post.java`, `domain/PostRepository.java`, `controller/ProgressController.java`, `controller/InboxController.java` |
 | TypeScript (frontend) | `app/(admin)/admin/gallery/page.tsx`, `app/(admin)/admin/inbox/page.tsx`, `app/(admin)/admin/progress/page.tsx`, `lib/api/inbox.ts`, `lib/api/progress.ts`, `lib/types/index.ts` |

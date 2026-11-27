@@ -242,7 +242,7 @@ class TestComfyUIClient:
                 )
 
     def test_all_workflows_have_no_audio_nodes(self):
-        """모든 워크플로우에서 오디오 노드가 제거되었다 (Fish Speech TTS 사용)."""
+        """모든 워크플로우에서 오디오 노드가 제거되었다 (TTS는 외부 Local-TTS 사용)."""
         audio_nodes = {"LTXVAudioVAELoader", "LTXVEmptyLatentAudio",
                        "LTXVConcatAVLatent", "LTXVAudioVAEDecode",
                        "LTXVSeparateAVLatent"}

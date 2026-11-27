@@ -1,7 +1,10 @@
 # ADR-0005: TTS 모델 OpenAudio S1-mini 업그레이드 + 참조 음성 reference_id 구조
 
-> **status:** accepted
+> **⚠ 폐기됨.** Fish Speech 계열(S1-mini·S2-pro)·`reference_id` 참조 음성·감정 마커·`fish-speech` 컨테이너·`fish_client.py`·`prepare_voice.py`는 2026-11-27 Local-TTS 전환으로 모두 삭제됐다. 아래 본문은 결정 당시 기록이며 현행 사실이 아니다. 롤백 절차도 더는 유효하지 않다.
+
+> **status:** superseded — 폐기됨 (2026-11-27, [ADR-0006](0006-local-tts-provider.md)으로 대체)
 > **date:** 2026-06-12
+> **superseded-by:** ADR-0006 (제공자 모델), ADR-0007 (프리셋 보이스), ADR-0008 (정규화 표준)
 > **related:** env/docker-compose.yml, worker/ai_worker/tts/fish_client.py, config/settings.py, config/voices.json, worker/tools/prepare_voice.py, docs/20-containers/topology.md, docs/30-components/pipeline.md
 
 ## 컨텍스트

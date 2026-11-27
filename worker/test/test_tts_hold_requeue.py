@@ -1,4 +1,4 @@
-"""Fish 차단 보류/재큐(main.py)와 phase 정체 판정(progress.py) 테스트."""
+"""TTS 서버 일시 장애 보류/재큐(main.py)와 phase 정체 판정(progress.py) 테스트."""
 import asyncio
 from datetime import datetime, timedelta, timezone
 
@@ -8,6 +8,8 @@ from sqlalchemy.orm import sessionmaker
 
 from ai_worker.core import main as m
 from ai_worker.core import progress
+from ai_worker.core import processor as proc_mod
+from ai_worker.tts.synth import TTSUnavailable
 from db.models import Base, Post, PostStatus
 
 NOW = datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
@@ -27,106 +29,73 @@ def factory(monkeypatch):
     return f
 
 
-class FakeGate:
-    def __init__(self, reason=None, label=None, raises=False):
-        self.reason, self.label, self.raises = reason, label, raises
-        self.unbound = []
-
-    async def blocked_reason(self):
-        if self.raises:
-            raise RuntimeError("boom")
-        return self.reason
-
-    def wait_label(self, pid):
-        return self.label
-
-    def unbind_post(self, pid=None):
-        self.unbound.append(pid)
-
-
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
-    monkeypatch.setattr(m, "_fish_hold_reason", None)
+    monkeypatch.setattr(m, "_tts_hold_active", False)
 
 
-def test_hold_check_blocked_none_and_exception(monkeypatch):
-    monkeypatch.setattr(m, "fish_gate", FakeGate(reason="xplane"))
-    assert asyncio.run(m._fish_hold_check()) == "xplane"
-    monkeypatch.setattr(m, "fish_gate", FakeGate(reason=None))
-    assert asyncio.run(m._fish_hold_check()) is None
-    monkeypatch.setattr(m, "fish_gate", FakeGate(raises=True))
-    assert asyncio.run(m._fish_hold_check()) is None  # fail-open
+def _probe(monkeypatch, result):
+    calls = []
+
+    async def fake(timeout_sec=None):
+        calls.append(timeout_sec)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(m, "wait_for_tts_server", fake)
+    return calls
+
+
+def test_hold_check_down_up_and_exception(monkeypatch):
+    calls = _probe(monkeypatch, False)
+    assert asyncio.run(m._tts_hold_check()) is True
+    assert calls == [m._TTS_PROBE_TIMEOUT_SEC]  # 비차단(짧은 한도) 확인
+    _probe(monkeypatch, True)
+    assert asyncio.run(m._tts_hold_check()) is False
+    _probe(monkeypatch, RuntimeError("boom"))
+    assert asyncio.run(m._tts_hold_check()) is False  # fail-open
 
 
 def test_hold_check_logs_only_on_state_change(monkeypatch, caplog):
-    monkeypatch.setattr(m, "fish_gate", FakeGate(reason="xplane"))
+    _probe(monkeypatch, False)
     with caplog.at_level("INFO", logger=m.logger.name):
         for _ in range(3):
-            asyncio.run(m._fish_hold_check())
+            asyncio.run(m._tts_hold_check())
     assert sum("보류" in r.message for r in caplog.records) == 1
 
 
 class FakeProcessor:
-    def __init__(self, delay=None):
-        self.delay, self.cancelled = delay, False
+    def __init__(self, exc=None):
+        self.exc = exc
 
     async def llm_tts_stage(self, pid):
-        if self.delay is None:
-            return ("script", "audio.wav")
-        try:
-            await asyncio.sleep(self.delay)
-        except asyncio.CancelledError:
-            self.cancelled = True
-            raise
+        if self.exc:
+            raise self.exc
         return ("script", "audio.wav")
 
 
-def test_supervised_normal_completion_keeps_status(factory, monkeypatch):
-    monkeypatch.setattr(m, "fish_gate", FakeGate(reason="xplane", label=None))
-    res = asyncio.run(m._run_llm_tts_supervised(FakeProcessor(), 1, check_interval=0.01))
+def test_supervised_normal_completion_keeps_status(factory):
+    res = asyncio.run(m._run_llm_tts_supervised(FakeProcessor(), 1))
     assert res == ("script", "audio.wav")
     with factory() as s:
         assert s.get(Post, 1).status == PostStatus.PROCESSING
 
 
-def _run_blocked(factory, monkeypatch, gate, requeue_after, ticks):
-    t = {"v": 0.0}
-
-    def clock():
-        t["v"] += ticks
-        return t["v"]
-
-    monkeypatch.setattr(m, "fish_gate", gate)
-    proc = FakeProcessor(delay=5)
-    return proc, lambda: asyncio.run(
-        m._run_llm_tts_supervised(proc, 1, requeue_after=requeue_after, check_interval=0.01, clock=clock)
-    )
-
-
-def test_requeue_when_blocked_long_keeps_retry_count(factory, monkeypatch):
-    proc, run = _run_blocked(factory, monkeypatch, FakeGate(reason="xplane", label="TTS 대기"), 600, 400)
-    with pytest.raises(m._FishRequeued):
-        run()
-    assert proc.cancelled
+def test_tts_unavailable_requeues_keeping_retry_count(factory):
+    with pytest.raises(m._TTSRequeued):
+        asyncio.run(m._run_llm_tts_supervised(FakeProcessor(TTSUnavailable("서버 불가")), 1))
     with factory() as s:
         p = s.get(Post, 1)
         assert p.status == PostStatus.APPROVED and p.retry_count == 2
         assert "재큐" in p.last_error
 
 
-def test_no_requeue_before_threshold_or_when_not_blocked(factory, monkeypatch):
-    # 임계 미만: 계속 대기하다 정상 완료(짧은 delay)
-    monkeypatch.setattr(m, "fish_gate", FakeGate(reason="xplane", label="TTS 대기"))
-    proc = FakeProcessor(delay=0.05)
-    res = asyncio.run(m._run_llm_tts_supervised(proc, 1, requeue_after=10_000, check_interval=0.01))
-    assert res and not proc.cancelled
-    # 임계 초과여도 blocked가 아니면 취소하지 않는다
-    monkeypatch.setattr(m, "fish_gate", FakeGate(reason=None, label="TTS 대기"))
-    proc = FakeProcessor(delay=0.05)
-    res = asyncio.run(m._run_llm_tts_supervised(proc, 1, requeue_after=0, check_interval=0.01))
-    assert res and not proc.cancelled
+def test_other_errors_propagate_without_requeue(factory):
+    with pytest.raises(ValueError):
+        asyncio.run(m._run_llm_tts_supervised(FakeProcessor(ValueError("x")), 1))
     with factory() as s:
-        assert s.get(Post, 1).status == PostStatus.PROCESSING
+        assert s.get(Post, 1).status == PostStatus.PROCESSING  # FAILED 처리는 호출부 몫
 
 
 def test_requeue_helper_is_conditional_on_processing(factory):
@@ -136,6 +105,31 @@ def test_requeue_helper_is_conditional_on_processing(factory):
     assert m._requeue_without_retry(1, 0, "x") is False
     with factory() as s:
         assert s.get(Post, 1).status == PostStatus.FAILED
+
+
+def test_phase_heartbeat_swallows_progress_errors(monkeypatch):
+    """heartbeat stamp 실패가 본 작업 결과를 가리지 않는다."""
+    def boom(*a, **k):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(proc_mod, "stamp_progress", boom)
+
+    async def run():
+        real_sleep = asyncio.sleep
+
+        async def fast(_):
+            await real_sleep(0)
+
+        monkeypatch.setattr(asyncio, "sleep", fast)
+
+        async def work():
+            for _ in range(5):
+                await real_sleep(0)
+            return 7
+
+        return await proc_mod._with_phase_heartbeat(work(), 1, 5, "TTS 합성")
+
+    assert asyncio.run(run()) == 7
 
 
 # ── D: phase 정체 판정 ──────────────────────────────────────

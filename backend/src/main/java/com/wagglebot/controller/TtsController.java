@@ -28,8 +28,7 @@ public class TtsController {
     }
 
     /**
-     * Stream a preview sample for a voice key (ref wav or voice_preview_*.mp3).
-     * Prefer this over /api/media/voices/... when filenames contain spaces/commas.
+     * Stream a preview sample for a voice key (voice_preview_{KEY}.mp3, 사전 생성).
      */
     @GetMapping("/voices/{key}/sample")
     public ResponseEntity<Resource> getVoiceSample(@PathVariable String key) throws IOException {

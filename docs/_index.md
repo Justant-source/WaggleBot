@@ -1,6 +1,6 @@
 ---
 title: docs — 문서 지도 & Doc-Sync 트리거 맵
-last_updated: 2026-09-01
+last_updated: 2026-11-27
 ---
 
 # docs/_index.md — 문서 지도 & Doc-Sync 트리거 맵
@@ -20,7 +20,7 @@ last_updated: 2026-09-01
 | **50** api | `50-api.md` | — | — | `50-api.md` | — |
 | **60** runtime | — | — | — | `60-runtime.md` | `60-runtime.md` 🏛 |
 | **70** policy | — | — | — | — | `70-policy.md` 🏛 |
-| **90** adr | — | — | — | — | `90-adr/` (6) 🏛 |
+| **90** adr | — | — | — | — | `90-adr/` (9) 🏛 |
 
 경로 접두 `docs/<대분류>/`. frontend·telegram 문서는 없다 (빈 껍데기 금지). compose는 `docs/` 를 마운트하지 않는다.
 
@@ -75,6 +75,7 @@ last_updated: 2026-09-01
 | 19 | 하드 제약 추가·변경 | `docs/shared/90-adr/` · `docs/shared/70-policy.md` | M |
 | 20 | `worker/ai_worker/core/main.py` · `worker/ai_worker/core/progress.py` | `docs/worker/60-runtime.md` · `docs/backend/50-api.md` | M |
 | 21 | `telegram/**` | `docs/shared/20-containers.md` · `docs/worker/20-containers.md` | C |
+| 22 | `config/voices.json` · `config/tts_profile/**` · `worker/tools/sync_tts_profile.py` | `docs/worker/20-containers.md` · `docs/worker/30-components/pipeline.md` | M |
 
 ## §6. Code → Docs 역인덱스
 

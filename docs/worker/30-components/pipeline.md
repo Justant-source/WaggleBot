@@ -1,6 +1,6 @@
 # WaggleBot — AI 파이프라인 (8-Phase) 컴포넌트
 
-> last-verified: 2026-11-22 · code-ref: `worker/ai_worker/pipeline/content_processor.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/scene/director.py`, `worker/ai_worker/renderer/`
+> last-verified: 2026-11-27 · code-ref: `worker/ai_worker/pipeline/content_processor.py`, `worker/ai_worker/tts/synth.py`, `worker/ai_worker/core/processor.py`, `worker/ai_worker/scene/director.py`, `worker/ai_worker/renderer/`
 > scope: 8-Phase AI 파이프라인 Phase별 책임, LLM 라우팅 — SSOT
 
 ## 개요
@@ -9,7 +9,7 @@
 
 ## 전체 파이프라인 흐름
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: worker/ai_worker/pipeline/content_processor.py, worker/ai_worker/core/processor.py, worker/ai_worker/scene/director.py, worker/ai_worker/renderer/ -->
 
 ```mermaid
@@ -39,7 +39,7 @@ flowchart TD
     end
 
     subgraph Phase5["Phase 5: TTS 생성"]
-        P5[Fish Speech / Edge TTS<br/>→ scene.text_lines<br/>text + audio 경로]
+        P5[Local-TTS 서버 요청<br/>→ scene.text_lines<br/>text + audio 경로]
     end
 
     subgraph Phase56["Phase 5 ∥ Phase 6 (VIDEO_GEN_ENABLED일 때 병렬)"]
@@ -133,21 +133,18 @@ flowchart TD
 `VIDEO_GEN_ENABLED=true`일 때 두 Phase가 `asyncio.gather`로 동시 실행된다.
 Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므로 안전하게 병렬화 가능.
 
-**Phase 5 — TTS 생성** (OpenAudio S1-mini, ADR-0005)
-- `worker/ai_worker/tts/fish_client.py`의 `synthesize(text, scene_type, voice_key, emotion)` 경유 (`http://fish-speech:8080`)
-- **참조 음성:** `assets/voices/<key>/NN.wav+NN.lab` 존재 시 `reference_id` 클로닝(+memory cache), 없으면 base64 폴백, 그것도 없으면 기본 음색 + 경고
-- **감정 마커:** `scene.tts_emotion`(scene_policy.json mood) → `TTS_EMOTION_MARKERS` → 정규화 텍스트 앞에 주입 (`(sad)` 등). content_processor·renderer 양 경로 모두 전달
-- **정규화:** `normalize_for_tts()` — 슬랭/약어/숫자(소수·범위·전화·단위·유월/시월)·조사 교정(슬랭 경계 한정)
-- **장문 분할:** 정규화 후 >150자면 문장 경계 분할 → 세그먼트별 합성 → concat → 후처리 1회
-- **후처리:** 무음단축 없이 loudnorm → atempo(기본 1.1배) → **44100Hz mono 강제**(렌더러 concat 호환). 호흡·짧은 휴지를 잘라내지 않아 TTS 아티팩트를 줄인다.
-- **디스크 캐시:** `processor._safe_generate_tts()`의 키는 `voice:text:speed:pp_v4`. 1.2배 시절의 `pp_v3` 캐시는 절대 재사용하지 않으며, 이후 speed 변경도 독립 캐시가 된다.
-- **정렬 모델 cache:** alignment가 faster-whisper를 import하기 전에 `HF_HOME`·Hub·Xet·XDG cache를 모두 `WHISPER_DOWNLOAD_ROOT` 하위 writable 경로로 고정하고 Xet을 비활성화한다. 컨테이너 uid 1000의 `/.cache` 권한 오류를 피한다.
-- **길이 검증:** WAV 헤더 파싱으로 초/자 계산, 0.05~0.35 범위 밖이면 재생성(비한국어/잘림 감지)
+**Phase 5 — TTS 생성** (Local-TTS 제공자, [ADR-0006](../../shared/90-adr/0006-local-tts-provider.md))
+- `worker/ai_worker/tts/synth.py`의 `synthesize(text, scene_type, voice_key, output_path, emotion, post_id)` 경유. `emotion`은 호환용으로 받고 무시한다. 합성 자체는 외부 서버 `http://local-tts:8500` `POST /v1/jobs`에 맡기고 WaggleBot에는 합성 모델·게이트·GPU 임대·컨테이너 제어가 없다.
+- **흐름:** `prenormalize()`(앱 전처리) → `resolve_voice()`(프리셋 M1~M5·F1~F5) → job 생성(`X-Client-Id: wagglebot`, `request_id=wb-<post_id>-<scene_type>-<uuid8>`, `Idempotency-Key` 동일) → 완료 대기 → 오디오 수신·job 삭제 → `.part` 저장 후 원자적 rename.
+- **요청 옵션:** `voice`, `lang=ko`, `speed=TTS_SPEED(1.1)`, `normalize{enabled, profile=wagglebot/shorts-ko}`, `chunk{mode=max_chars, max_chars=120}`, `postprocess.loudnorm{i=-16, tp=-1.5}`, `output.format=wav`. 청크 분할·loudnorm·속도는 서버가 한다(로컬 분할·atempo 없음, 속도 이중 적용 금지).
+- **보이스:** `voice_resolver.resolve_voice(voice_key, post_id)` — 프리셋 키는 그대로, 구 키(`seohyeon_ref` 등)는 성별 보존 매핑, 없음·미지 키는 post_id 시드 결정적 랜덤. `default`는 남성 서수로 매핑된다([ADR-0007](../../shared/90-adr/0007-voice-presets.md)).
+- **정규화 3분담:** 서버 내장(숫자·단위·월·범위·소수점 `쩜`·말줄임·종결부호 — FB 표준) + 프로필 `wagglebot/shorts-ko` v1(슬랭·영문 약어 39엔트리, 원본 `config/tts_profile/shorts-ko.yaml`, 동기화 `worker/tools/sync_tts_profile.py`) + 앱 `prenorm.py`(화자 접두어·URL·해시태그·자모 슬랭·`N대`/`N기` 한자어 수사). 구 `normalize_for_tts`/`number_reader`는 삭제 → [ADR-0008](../../shared/90-adr/0008-tts-normalization-standard.md)
+- **서버 장애:** 연결 실패·타임아웃·429/503·큐 포화·대기 초과는 `TTSUnavailable`(일시 장애) — 클라이언트가 `TTS_SERVER_RETRIES`회 재시도한 뒤에도 실패하면 호출처가 FAILED 대신 APPROVED로 재큐한다(상세 [60-runtime](../60-runtime.md)). 요청 거부·job 영구 실패는 `TTSError`, 정규화 후 빈 텍스트는 `ValueError`.
+- **디스크 캐시:** `processor._safe_generate_tts()`의 키는 `프리셋:text:speed:pp_v7`(해석된 프리셋 기준). 구 `pp_v6`(Fish) 캐시는 재사용하지 않는다. 렌더러 댓글 chunk WAV도 프리셋/text 키 전역 캐시를 쓴다.
+- **정렬(렌더 타이밍):** `tts/alignment.py`(faster-whisper ASR)는 유지한다. alignment가 import 전에 `HF_HOME`·Hub·Xet·XDG cache를 `WHISPER_DOWNLOAD_ROOT` 하위로 고정하고 Xet을 비활성화한다(uid 1000 `/.cache` 권한 오류 방지). 응답 `chunks[]` 기반 타이밍 전환은 후속 과제.
 - 결과: `scene.text_lines = [{"text": "...", "audio": "/path/to/audio.wav"}]`
-- 댓글 보이스는 작성자 값의 SHA-256으로 풀에서 결정적으로 선택한다. 댓글 chunk WAV는 `voice:text:emotion` 전역 캐시를 사용하므로 같은 댓글을 Reels·Shorts에서 다시 합성하지 않는다.
-- **Fish 게이트 (`tts/fish_gate.py`)**: Fish(평소 stop; Flight-Brain `atomic_tts` GPU 데몬이 수명주기 관리 — 유휴 10분 또는 Windows X-Plane 실행 시 정지, 2026-11-22 기준)가 health 실패면 `POST ATOMIC_TTS_FISH_GATE_URL`로 `{state: ready|starting|blocked|unavailable}`를 받는다. `starting`은 10초 폴링(최대 ~6분), `blocked`(X-Plane 등)/`unavailable`/호출 실패는 **post를 FAILED로 만들지 않고** 30분(`FISH_GATE_RECHECK_SEC`)마다 재질의하며 대기(blocked 응답에 `retry_after_sec`가 있으면 30초~30분으로 클램프한 그 간격), 대기 중 30초마다 progress heartbeat를 갱신하고 phase 문구를 `TTS 대기: … — N분(또는 N초)마다 재확인`으로 바꾼다(UI 15분 "응답 없음" 배지 방지). 요청 중 `ConnectError`/최종 `ReadTimeout`으로 Fish가 끊기면 같은 대기 후 요청 재시도. 총 대기 1시간(`FISH_GATE_MAX_WAIT_SEC`) 초과 시에만 기존 FAILED 경로(요청 단위로 합산 데드라인 공유 — 한 요청 안의 여러 recover 대기를 합쳐 1시간). 대기는 Fish 요청 락 밖에서 한다. **GPU 데몬 임대**: `fish_client._request_one`(및 웜업)이 실제 `/v1/tts` 호출 구간(5xx/ReadTimeout 재시도 포함)만 `fish_gate.lease("tts")`로 감싼다. 청크(HTTP 요청) 단위로 잡고 recover 대기·ASR 검증·후처리·캐시 히트에서는 잡지 않는다(대기 중 임대 해제, 재시도 때 재획득; 게이트 비활성/`lease` 미지원이면 no-op). Phase 5(`synthesize` 진입 시)와 Phase 8 댓글/outro 캐시 미스 모두 동일. 대기 중 `_llm_tts_worker`는 GPU 락을 쥔 채 대기하므로 다음 post·렌더는 함께 대기한다. `gate.lease(why)`(async 컨텍스트)는 Fish를 실제로 쓰는 동안만 데몬 임대를 잡고 30초 heartbeat·종료 시 release(실패는 모두 삼킴, TTS 비차단)하며, `gate.blocked_reason()`은 health 실패+게이트 blocked일 때만 reason을 돌려준다(부작용 없음). 바인딩 해제는 `finally`에서 `unbind_post(post_id)`(일치 시에만)로 보장한다.
-- 워밍업 센티널 (`MEDIA_DIR/tmp/fish_warmup_state.json`): 6시간 이내 재시작 시 풀 워밍업 스킵
-- 음성 등록: `python -m tools.prepare_voice`(faster-whisper 자동 전사). 동일 key 재등록 시 fish-speech 재시작 필요(메모리 캐시 스테일)
+- 댓글 보이스는 작성자 값의 SHA-256으로 풀(`comment_voices`, 기본 `M2`·`F2`·`M3`)에서 결정적으로 선택한다. 댓글 chunk WAV는 프리셋/text 전역 캐시를 사용하므로 같은 댓글을 Reels·Shorts에서 다시 합성하지 않는다.
+- **폐기:** Fish 클라이언트·게이트·임대·웜업 센티널·참조 음성 등록(`prepare_voice.py`)·감정 마커(`tts_emotion`→마커 주입)·`ㅋㅋ` 웃음 마커·초/자 품질 재시도(`quality.py`)·로컬 150자 분할.
 
 **Phase 6 — video_prompt 생성 (prompt_engine V3)**
 `VIDEO_GEN_ENABLED=true`일 때만 실행.
@@ -164,7 +161,7 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 
 ### Phase 7 — video_clip 생성
 `VIDEO_GEN_ENABLED=true`일 때만 실행.
-- Phase 7 종료 후 `start_fish_speech`는 Fish 게이트가 `blocked`(X-Plane 등)이면 건너뛴다(다음 TTS가 게이트 대기로 처리).
+- TTS는 외부 서버라 Phase 7 전후에 컨테이너 stop/start·VRAM 핸드오프가 없다(ai_worker는 자체 캐시만 `empty_cache`+`gc`).
 - ComfyUI API (`http://comfyui:8188`) 통해 LTX-2 19B 워크플로우 실행
 - **LTX-2 프레임 규칙:** `1+8k` (9, 17, ..., 145) — `video_utils.validate_frame_count()` 필수.
   프레임 수는 `scene.estimated_tts_sec` 기반 동적 계산(`calc_frames_from_duration`),
@@ -194,7 +191,7 @@ Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므�
 
 ## LLM 모델 라우팅
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: worker/ai_worker/pipeline/content_processor.py, worker/ai_worker/core/processor.py, worker/ai_worker/scene/director.py, worker/ai_worker/renderer/ -->
 
 ```mermaid
@@ -220,6 +217,6 @@ flowchart LR
 - `worker/ai_worker/renderer/README.md` — 폐기
 - `worker/ai_worker/scene/README.md` — 폐기
 - `worker/ai_worker/script/README.md` — 폐기
-- `worker/ai_worker/tts/README.md` — 폐기
+- `worker/ai_worker/tts/README.md` — Local-TTS 전환 후 재작성되어 현행(합성 모듈 요약)
 - `worker/ai_worker/video/README.md` — 폐기
-- `worker/ai_worker/tts/README.md`가 가리키던 `assets/pronunciation_map.json`, `assets/slang_map.json` — 자산 없음. 발음/슬랭 매핑은 코드·설정을 따른다.
+- 구 `tts/README.md`가 가리키던 `assets/pronunciation_map.json`, `assets/slang_map.json` — 자산 없음. 발음/슬랭 매핑은 `config/tts_profile/shorts-ko.yaml`(프로필)과 `tts/prenorm.py`를 따른다.

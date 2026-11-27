@@ -1,18 +1,20 @@
 # WaggleBot — 데이터 스키마 (L4)
 
-> last-verified: 2026-08-31 · code-ref: `worker/db/models.py`, `worker/db/migrations/`, `backend/src/main/resources/db/migration/`
+> last-verified: 2026-11-27 · code-ref: `worker/db/models.py`, `worker/db/migrations/`, `backend/src/main/resources/db/migration/`
 > scope: DB 스키마, SQLAlchemy 패턴, ScriptData JSON 구조 — SSOT
 > **authority:** 코드(runtime) > 이 문서. 충돌 시 마이그레이션 코드 우선.
 
 DB: MariaDB 11, 데이터베이스명: `wagglebot`
 
-**마이그레이션 권위**: 스키마 진실 원천 = `worker/db/migrations/001~007.sql`(runner.py) + `backend/.../db/migration/V1~V3`(Flyway). 이 ER은 현행 코드 반영이며 충돌 시 코드 우선.
+**마이그레이션 권위**: 스키마 진실 원천 = `worker/db/migrations/001~010.sql`(runner.py) + `backend/.../db/migration/V1~V5`(Flyway). 이 ER은 현행 코드 반영이며 충돌 시 코드 우선.
+
+**TTS 보이스 마이그레이션(010 / V5):** `010_tts_voice_presets.sql`(worker runner)과 `V5__tts_voice_presets.sql`(Flyway)은 동일 SQL이며 멱등이다. `contents.tts_voice`와 `contents.variant_config.$.tts_voice`의 구 키를 `(post_id + 구 키 서수) % 5` 규칙으로 같은 성별 프리셋에 매핑하고, 매핑 불가 값은 NULL로 둔다(`comment_voices`는 런타임 resolver에 위임). **2026-11-27 기준 코드·SQL만 존재하며 운영 DB에는 적용하지 않았다**. `010`은 `python -m db.migrations.runner` 수동 실행이고, `V5`는 backend가 다음에 기동할 때 Flyway가 자동 적용하므로 backend 재배포 시점이 곧 적용 시점이다(적용 전 `contents_tts_voice_bak` 백업 권장). 미적용 상태에서도 런타임 `resolve_voice()`가 구 키를 처리하므로 동작에는 영향이 없다.
 
 > **ScriptData 주의:** `ScriptData`는 DB 테이블이 아니라 Python `@dataclass`이다. `Content.summary_text` 컬럼에 JSON 직렬화되어 저장된다 (`from db.models import ScriptData`). 문자열이면 레거시.
 
 ## ER 다이어그램
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: worker/db/models.py, worker/db/migrations/, backend/src/main/resources/db/migration/ -->
 
 ```mermaid
@@ -164,7 +166,7 @@ erDiagram
 | `variant_group` | VARCHAR(64) | A/B 테스트 그룹 |
 | `variant_label` | VARCHAR(32) | A/B 테스트 레이블 |
 | `variant_config` | JSON | A/B 테스트 설정값 |
-| `tts_voice` | VARCHAR(32) | 게시글별 TTS 음성 키 (없으면 pipeline.json 기본값 사용) |
+| `tts_voice` | VARCHAR(32) | 게시글별 TTS 보이스 키 — 프리셋 `M1~M5`·`F1~F5`(없으면 `voice_resolver`가 post_id 시드로 결정적 랜덤, `default`·구 키는 성별 보존 매핑). 구 키(Fish 참조 음성)는 마이그레이션 `010`/`V5`가 성별 보존 프리셋으로 이관 ([ADR-0007](90-adr/0007-voice-presets.md)) |
 | `gen_instructions` | VARCHAR(1000) | 에디터에서 대본 재생성 시 사용한 추가 지시문 |
 
 **ScriptData 구조 (summary_text JSON):**

@@ -112,7 +112,11 @@ export interface PageResponse<T> {
 export interface VoiceInfo {
   key: string
   label: string
-  sampleUrl: string
+  gender?: 'male' | 'female'
+  engine?: string
+  /** 사전 생성 샘플이 없으면 undefined */
+  sampleUrl?: string
+  hasSample?: boolean
 }
 
 export interface PromptPreset {

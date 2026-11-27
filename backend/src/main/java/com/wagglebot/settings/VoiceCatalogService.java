@@ -15,10 +15,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Service
 @Slf4j
 public class VoiceCatalogService {
+
+    private static final String DEFAULT_PRESET = "F1";
+    private static final Pattern PRESET_KEY = Pattern.compile("^[MFmf][1-5]$");
 
     private final Path configDir;
     private final SettingsService settingsService;
@@ -34,46 +38,39 @@ public class VoiceCatalogService {
     }
 
     /**
-     * config/voices.json 읽기. 없으면 빈 리스트 반환.
-     * 각 항목에 sampleUrl 합성: /api/media/voices/{file}
+     * config/voices.json(v4: Supertonic 프리셋 M1~M5/F1~F5) 읽기. 없으면 빈 리스트 반환.
+     * 미리 생성한 샘플(voice_preview_{KEY}.mp3)이 있으면 sampleUrl=/api/tts/voices/{key}/sample 합성.
      */
     public List<Map<String, Object>> loadVoices() {
-        Path path = configDir.resolve("voices.json");
-        if (!Files.exists(path)) return new ArrayList<>();
-        try {
-            String json = Files.readString(path, StandardCharsets.UTF_8);
-            Map<String, Object> root = MAPPER.readValue(json, new TypeReference<Map<String, Object>>() {});
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> voices = (List<Map<String, Object>>) root.getOrDefault("voices", new ArrayList<>());
-            List<Map<String, Object>> result = new ArrayList<>();
-            // assets/voices is mounted at /app/media/voices in backend
-            Path voicesDir = mediaVoicesDir();
-            for (Map<String, Object> voice : voices) {
-                Map<String, Object> entry = new LinkedHashMap<>(voice);
-                String key = voice.get("key") != null ? voice.get("key").toString() : "";
-                String sample = resolveSampleUrl(voicesDir, key, voice.get("file"));
-                if (sample != null) {
-                    entry.put("sampleUrl", sample);
-                    entry.put("hasSample", true);
-                } else {
-                    entry.put("hasSample", false);
-                }
-                result.add(entry);
+        List<Map<String, Object>> result = new ArrayList<>();
+        Path voicesDir = mediaVoicesDir();
+        for (Map<String, Object> voice : loadVoicesRaw()) {
+            Map<String, Object> entry = new LinkedHashMap<>(voice);
+            String key = voice.get("key") != null ? voice.get("key").toString() : "";
+            if (findPreviewFile(voicesDir, key) != null) {
+                entry.put("sampleUrl", "/api/tts/voices/" + key + "/sample");
+                entry.put("hasSample", true);
+            } else {
+                entry.put("hasSample", false);
             }
-            return result;
-        } catch (IOException e) {
-            log.warn("voices.json 로드 실패: {}", e.getMessage());
-            return new ArrayList<>();
+            result.add(entry);
         }
+        return result;
     }
 
     /**
-     * pipeline.json의 tts_voice 값 (기본값: "yura")
+     * pipeline.json의 tts_voice 값. 프리셋이 아닌 구 키(예: yura)는 UI 표시용으로 "F1"을 반환한다
+     * (실제 합성 시에는 워커 voice_resolver가 성별 보존 매핑).
      */
     public String getDefaultVoice() {
         Map<String, Object> cfg = settingsService.loadPipelineConfig();
-        Object val = cfg.getOrDefault("tts_voice", "yura");
-        return val != null ? val.toString() : "yura";
+        Object val = cfg.get("tts_voice");
+        String key = val != null ? val.toString().trim() : "";
+        return isPresetKey(key) ? key.toUpperCase() : DEFAULT_PRESET;
+    }
+
+    private boolean isPresetKey(String key) {
+        return key != null && PRESET_KEY.matcher(key).matches();
     }
 
     /**
@@ -95,12 +92,11 @@ public class VoiceCatalogService {
     }
 
     /**
-     * voice 키 유효성 검사. null은 전역 기본값 사용을 의미하므로 허용.
+     * voice 키 유효성 검사. null은 전역 기본값 사용을 의미하므로 허용. 프리셋 키(대소문자 무관)만 허용.
      */
     public boolean isValidVoiceKey(String key) {
         if (key == null) return true;
-        List<Map<String, Object>> voices = loadVoices();
-        return voices.stream().anyMatch(v -> key.equals(v.get("key")));
+        return loadVoicesRaw().stream().anyMatch(v -> key.equalsIgnoreCase(String.valueOf(v.get("key"))));
     }
 
     private Path mediaVoicesDir() {
@@ -112,57 +108,20 @@ public class VoiceCatalogService {
         return media;
     }
 
-    /**
-     * Prefer ref wav if present; else fuzzy-match voice_preview_*.mp3 by key.
-     * Returns a key-based TTS sample URL (avoids spaces/commas in preview filenames).
-     */
-    private String resolveSampleUrl(Path voicesDir, String key, Object fileObj) {
-        if (key == null || key.isBlank()) return null;
-        if (resolveSampleFile(voicesDir, key, fileObj) == null) return null;
-        return "/api/tts/voices/" + key + "/sample";
+    /** voice_preview_{KEY}.mp3 (대소문자 무관 정확 일치). 없으면 null. 경로 조작 방지를 위해 프리셋 키 형식만 허용. */
+    private Path findPreviewFile(Path voicesDir, String key) {
+        if (!isPresetKey(key) || voicesDir == null || !Files.isDirectory(voicesDir)) return null;
+        for (String name : new String[] {"voice_preview_" + key + ".mp3", "voice_preview_" + key.toUpperCase() + ".mp3"}) {
+            Path p = voicesDir.resolve(name);
+            if (Files.isRegularFile(p)) return p;
+        }
+        return null;
     }
 
     /** Resolve on-disk sample file for a voice key, or null if none. */
-    public Path resolveSampleFile(Path voicesDir, String key, Object fileObj) {
-        if (voicesDir == null) voicesDir = mediaVoicesDir();
-        if (fileObj != null) {
-            Path wav = voicesDir.resolve(fileObj.toString());
-            if (Files.isRegularFile(wav)) return wav;
-        }
-        if (key == null || key.isBlank() || !Files.isDirectory(voicesDir)) return null;
-        String needle = key.toLowerCase().replace("_", " ").replace("-", " ");
-        try (var stream = Files.list(voicesDir)) {
-            return stream
-                .filter(p -> {
-                    String n = p.getFileName().toString().toLowerCase();
-                    return n.startsWith("voice_preview_") && n.endsWith(".mp3");
-                })
-                .filter(p -> {
-                    String n = p.getFileName().toString().toLowerCase()
-                        .replace("voice_preview_", "")
-                        .replace(".mp3", "");
-                    String norm = n.replace("-", " ");
-                    return norm.equals(needle) || norm.startsWith(needle + " ") || norm.contains(needle);
-                })
-                .findFirst()
-                .orElse(null);
-        } catch (IOException e) {
-            log.debug("voice preview scan failed: {}", e.getMessage());
-            return null;
-        }
-    }
-
     public Path resolveSampleFile(String key) {
         if (key == null || key.isBlank()) return null;
-        Path voicesDir = mediaVoicesDir();
-        Object fileObj = null;
-        for (Map<String, Object> v : loadVoicesRaw()) {
-            if (key.equals(String.valueOf(v.get("key")))) {
-                fileObj = v.get("file");
-                break;
-            }
-        }
-        return resolveSampleFile(voicesDir, key, fileObj);
+        return findPreviewFile(mediaVoicesDir(), key);
     }
 
     /** Load voices.json entries without sampleUrl enrichment (avoids recursion). */

@@ -1,5 +1,5 @@
 {
-  "tts_voice": "seohyeon_ref",
+  "tts_voice": "default",
   "auto_upload": "false",
   "upload_privacy": "unlisted",
   "use_content_processor": "true",
@@ -8,8 +8,8 @@
   "auto_approve_threshold": "80",
   "llm_api_base_url": "https://api.clcocloud.com/claude/v1",
   "auto_approve_enabled": "false",
-  "tts_engine": "fish-speech",
-  "comment_voices": "[\"typecast_ref_v2\", \"kangil_ref\", \"kyunghwa_ref\"]",
+  "tts_engine": "local-tts",
+  "comment_voices": "[\"M2\", \"F2\", \"M3\"]",
   "llm_backend": "cli",
   "upload_platforms": "[\"youtube\"]",
   "llm_prompt_cache": "true"

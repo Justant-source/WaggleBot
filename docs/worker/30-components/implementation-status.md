@@ -1,6 +1,6 @@
 # WaggleBot — 구현 현황
 
-> **last-verified:** 2026-08-31
+> **last-verified:** 2026-11-27
 > **scope:** 구현 완료·미완료 현황, 버그 픽스 이력
 
 현재 코드베이스의 구현 완료/미완료 상태 정리.
@@ -122,9 +122,11 @@ worker/
 │   │   └── analyzer.py                  ✅ analyze_resources → ResourceProfile
 │   ├── pipeline/content_processor.py   ✅ Phase 1~8 통합 (Phase 5∥6 asyncio.gather)
 │   ├── tts/
-│   │   ├── fish_client.py               ✅ synthesize + 워밍업 센티널 스킵
-│   │   ├── normalizer.py                ✅ 한국어 전처리
-│   │   └── number_reader.py             ✅ 숫자 읽기
+│   │   ├── synth.py                     ✅ Local-TTS 요청 (synthesize / wait_for_tts_server / TTSUnavailable)
+│   │   ├── local_tts_client.py          ✅ 클라이언트 복사본
+│   │   ├── voice_resolver.py            ✅ 프리셋 M1~M5/F1~F5 해석
+│   │   ├── prenorm.py                   ✅ 앱 고유 전처리
+│   │   └── alignment.py                 ✅ 렌더 타이밍 ASR 정렬 (유지)
 │   ├── video/
 │   │   ├── manager.py                   ✅ 비디오 클립 오케스트레이션 + 4단계 폴백
 │   │   ├── comfy_client.py              ✅ ComfyUI API + 적응형 폴링 + 워크플로우 캐시
@@ -199,7 +201,9 @@ telegram/
 | 9차 | `5290f78` | processor.py use_content_processor fresh config 읽기 (frozen cfg 버그) |
 | 10차 | `ec4a28d` | normalizer.py 컨테이너 경로(parents[3]→[2])·max_chars 계산 버그, ab_test.py 경로 버그 |
 
-## TTS OpenAudio S1-mini 업그레이드 (2026-06-12, ADR-0005)
+## TTS OpenAudio S1-mini 업그레이드 (2026-06-12, ADR-0005 — 폐기됨, 2026-11-27 Local-TTS로 대체)
+
+> 이력 보존용. `fish_client.py`·`normalizer.py`·`prepare_voice.py`·`fish-speech` 컨테이너는 모두 삭제됐다. 현행은 아래 [Local-TTS 전환](#tts-local-tts-전환-2026-11-27-adr-0006-0008) 참조.
 
 | 영역 | 변경 |
 |------|------|
@@ -243,7 +247,7 @@ telegram/
 
 - **다크모드**: `next-themes` ThemeProvider 연결 (`app/providers.tsx` 신규, `app/layout.tsx` 적용). 어드민 셸 3개(`AdminTopBar`, `AdminSidebar`, `AdminShell`) 하드코딩 색상(`bg-white`, `text-gray-*`, `border-gray-200` 등)을 CSS 변수 기반 Tailwind 시맨틱 클래스(`bg-background`, `text-foreground`, `border-border`, `text-muted-foreground`, `hover:bg-accent`)로 전환. `tailwind.config.js`의 `darkMode: ['class']`는 이미 설정되어 있었음. 활성 내비 항목에 `dark:bg-blue-900/30 dark:text-blue-300` 추가.
 - **VRAM 누수 모니터링**: `config/monitoring.py`에 `GPU_VRAM_WARNING=85`, `GPU_VRAM_CRITICAL=95` 추가. `worker/monitoring/alerting.py`의 GPU 체크 블록에 VRAM % 임계치 알림 추가 — WARNING은 로그 경고("누수 의심"), CRITICAL은 이메일+슬랙 발송. `worker/monitoring/daemon.py` 헬스 로그에 VRAM% 포함.
-- **pytest 컬렉션 픽스**: `worker/test/conftest.py`에 `test_fish_speech.py` 추가 — `async def test_*()` 함수를 `asyncio.run(main())`으로 직접 호출하는 라이브 통합 테스트 구조로 pytest-asyncio 없이 수집하면 실패. (`test_pipeline_phases.py`와 동일 패턴)
+- **pytest 컬렉션 픽스**: `worker/test/conftest.py`에 `test_fish_speech.py` 추가(현재 삭제됨) — `async def test_*()` 함수를 `asyncio.run(main())`으로 직접 호출하는 라이브 통합 테스트 구조로 pytest-asyncio 없이 수집하면 실패. (`test_pipeline_phases.py`와 동일 패턴)
 
 ### 크롤러 사이트 추가 + Telegram 트레이 알림 (2026-06-12)
 
@@ -298,6 +302,23 @@ Claude Design 핸드오프 기반으로 렌더러 전면 교체. 컨테이너 PN
 - **배선**: 모션 종류는 `assets/sprouts/catalog.json`의 per-image `motion` 필드로 결정. `_frames.py` 수정 불필요(자체 캔버스 내 변형 처리).
 - **검증**: `worker/test/test_sibom_motion.py` 유닛 18개 통과 + `smoke_sibom_motion.py` 실렌더 픽셀 검증
 - **캐릭터 아트 리파인** (동시 진행): 눈 확대·하이라이트, 진영색 전용 밝은 값(`#E89A72`/`#6FB08A`), 외곽선 7→9px, 팔다리 22→28px, 떡잎 bristle 신규. 자산: `assets/sprouts/`
+
+## TTS Local-TTS 전환 (2026-11-27, ADR-0006~0008)
+
+> **상태: 코드·문서 완료, 운영 미적용.** 컨테이너 재생성·DB 마이그레이션 적용·APPROVED 재큐·프로필 활성화(`--activate`)·청취 비교는 아직 실행하지 않았다.
+
+| 영역 | 변경 |
+|------|------|
+| 제공자 | Fish Speech 완전 폐기(`fish-speech` 컨테이너·`docker.sock`·`group_add`·게이트·임대·`container_control.py`·웜업·참조 음성 삭제). 외부 Local-TTS(`http://local-tts:8500`, 네트워크 `local_tts_net` 사전 생성 필요)에 `POST /v1/jobs` 요청만 한다 |
+| 클라이언트 | `tts/synth.py`·`local_tts_client.py`(복사본)·`voice_resolver.py`·`prenorm.py` 신규. `fish_client.py`·`fish_gate.py`·`quality.py`·`normalizer.py`·`number_reader.py` 삭제 |
+| 장애 처리 | `TTSUnavailable` → FAILED가 아니라 APPROVED 재큐(retry_count 유지). 집기 전 서버 확인 실패 시 폴링 보류 |
+| 보이스 | `voices.json` v4(M1~M5·F1~F5, Supertonic). 구 키는 성별 보존 매핑, 게시글 보이스 없으면 post_id 시드 결정적 랜덤. `pipeline.json` `tts_engine=local-tts`, `comment_voices=[M2,F2,M3]`. 마이그레이션 `010`/`V5` 작성(**미적용**) |
+| 정규화 | 서버(FB 표준·`쩜`) + 프로필 `wagglebot/shorts-ko` v1(`config/tts_profile/`, 업로드 도구 `worker/tools/sync_tts_profile.py`) + 앱 `prenorm.py`. L1 diff 1726건, 비의도 회귀 0 |
+| 폐기 기능 | 감정 마커·`ㅋㅋ` 웃음 마커·웜업·참조 음성·초/자 품질 재시도, 로컬 150자 분할·atempo |
+| 설정·캐시 | `TTS_SERVER_*`·`TTS_PROFILE`·`TTS_CLIENT_ID`·`TTS_SPEED=1.1`(서버 speed), 디스크 캐시 `pp_v7` |
+| 유지 | 렌더 타이밍 ASR 정렬(`alignment.py`, faster-whisper) |
+
+**후속·미결:** (1) Supertonic vs Fish 청취 비교·보이스 5+5 최종 검수 (2) 컨테이너 재생성(`ai_worker`·`dashboard_worker`, `local_tts_net` 합류)·`010`/`V5` 적용·재큐 (3) 프로필 `--activate` 운영 반영 확인 (4) 렌더 타이밍을 ASR에서 응답 `chunks[]` 기반으로 전환(전환 전까지 ASR 유지) (5) `assets/voices/` 구 참조 음성 폴더 정리 (6) `script/voice_assigner.py`는 `age_range`가 있는 후보만 고르는데 v4 `voices.json`에는 `age_range`가 없어 항상 `VOICE_DEFAULT`를 반환한다(성별·연령 자동 배정 사실상 비활성) — 코드 소유자 확인 필요.
 
 ## 다음 개선 우선순위
 

@@ -1,13 +1,13 @@
 # WaggleBot — 시스템 컨텍스트 (L1)
 
-> last-verified: 2026-08-31 (commit `656dffd`) · code-ref: env/docker-compose.yml, backend/, worker/, frontend/, telegram/
+> last-verified: 2026-11-27 · code-ref: env/docker-compose.yml, backend/, worker/, frontend/, telegram/
 > scope: 시스템 외부 경계, 행위자, 전체 흐름 — SSOT
 
 커뮤니티 게시글을 자동 크롤링해 LLM 대본 → TTS → LTX-2 비디오 → FFmpeg 렌더링 → YouTube 자동 업로드까지 처리하는 AI 콘텐츠 자동화 파이프라인.
 
 ## 전체 시스템 흐름
 
-<!-- last-verified: 2026-08-31 -->
+<!-- last-verified: 2026-11-27 -->
 <!-- code-ref: env/docker-compose.yml, backend/, worker/, frontend/, telegram/ -->
 
 ```mermaid
@@ -48,8 +48,11 @@ flowchart TD
     end
 
     subgraph GPU_Services["GPU 서비스 (RTX 3090)"]
-        FISH[OpenAudio S1-mini<br/>TTS :8082]
         COMFY[ComfyUI<br/>LTX-2 Video :8188]
+    end
+
+    subgraph TTS_Provider["외부 TTS 제공자 (별도 저장소)"]
+        LTTS[Local-TTS<br/>Supertonic :8500<br/>local_tts_net]
     end
 
     subgraph Upload["업로더"]
@@ -69,7 +72,8 @@ flowchart TD
     DW --> AI
     AI --> LLM_W
     LLM_W --> CLAUDE_CLI
-    AI --> FISH
+    AI --> LTTS
+    DW --> LTTS
     AI --> COMFY
     AI --> DB
     SPRING --> DASH
@@ -85,6 +89,7 @@ flowchart TD
 | 운영자 (관리자) | 대시보드에서 게시글 승인/거절, 설정 변경 |
 | 커뮤니티 사이트 | 원시 게시글·댓글 공급 (네이트판·디씨·에펨코리아·보배드림 등) |
 | Claude API (Anthropic) | LLM 추론 — 대본 생성·씬 지시·번역·피드백 분석 |
+| Local-TTS (별도 저장소 서비스) | 한국어 TTS 합성·서버 정규화·loudnorm. `http://local-tts:8500`, 외부 네트워크 `local_tts_net`, client id `wagglebot` ([ADR-0006](90-adr/0006-local-tts-provider.md)) |
 | YouTube Data API | 최종 영상 업로드, 조회수/성과 데이터 수집 |
 | Telegram Bot API | 운영자 원격 제어 인터페이스 (선택) |
 

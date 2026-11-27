@@ -55,7 +55,7 @@ export default function SettingsPage() {
       llm_model_overrides: '{}',
       llm_prompt_cache: true,
       use_content_processor: false,
-      tts_voice: 'yura',
+      tts_voice: 'F1',
       auto_approve_enabled: false,
       auto_approve_threshold: 80,
       auto_upload: false,
@@ -279,9 +279,12 @@ export default function SettingsPage() {
                 {voices.map((v) => (
                   <SelectItem key={v.key} value={v.key}>{v.label}</SelectItem>
                 ))}
+                {voices.length > 0 && ttsVoice && !voices.some((v) => v.key === ttsVoice) && (
+                  <SelectItem value={ttsVoice}>{`기존: ${ttsVoice} (자동 매핑)`}</SelectItem>
+                )}
               </SelectContent>
             </Select>
-            <p className="mt-1 text-xs text-gray-400">포스트별 음성 미지정 시 사용하는 기본 내레이터. (voices.json 기반)</p>
+            <p className="mt-1 text-xs text-gray-400">포스트별 음성 미지정 시 사용하는 기본 내레이터. (Supertonic 프리셋 10종, voices.json 기반. 구 키는 성별 보존 자동 매핑)</p>
           </div>
 
           <div>

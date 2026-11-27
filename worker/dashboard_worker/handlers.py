@@ -67,7 +67,7 @@ def _handle_generate_script(job: Job) -> dict:
 
 def _handle_tts_preview(job: Job) -> dict:
     import asyncio
-    from ai_worker.tts.fish_client import synthesize
+    from ai_worker.tts.synth import synthesize
 
     payload = job.payload or {}
     post_id = job.post_id
@@ -112,8 +112,7 @@ def _handle_tts_preview(job: Job) -> dict:
 
     audio_path = asyncio.run(
         synthesize(
-            text, voice_key=voice_key, output_path=output_path,
-            emotion=payload.get("emotion", ""),
+            text, voice_key=voice_key, output_path=output_path, post_id=post_id,
         )
     )
     return {"preview_path": str(audio_path)}
