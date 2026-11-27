@@ -133,13 +133,13 @@ flowchart TD
 `VIDEO_GEN_ENABLED=true`일 때 두 Phase가 `asyncio.gather`로 동시 실행된다.
 Phase 5는 `scene.text_lines`, Phase 6은 `scene.video_prompt`만 변경하므로 안전하게 병렬화 가능.
 
-**Phase 5 — TTS 생성** (Local-TTS 제공자, [ADR-0006](../../shared/90-adr/0006-local-tts-provider.md))
+**Phase 5 — TTS 생성** (Local-TTS 제공자, [ADR-0006](../../shared/90-adr/0006-local-tts-provider.md)) — 요청·응답·오류·재큐의 상세 정본은 [local-tts-client.md](local-tts-client.md)
 - `worker/ai_worker/tts/synth.py`의 `synthesize(text, scene_type, voice_key, output_path, emotion, post_id)` 경유. `emotion`은 호환용으로 받고 무시한다. 합성 자체는 외부 서버 `http://local-tts:8500` `POST /v1/jobs`에 맡기고 WaggleBot에는 합성 모델·게이트·GPU 임대·컨테이너 제어가 없다.
 - **흐름:** `prenormalize()`(앱 전처리) → `resolve_voice()`(프리셋 M1~M5·F1~F5) → job 생성(`X-Client-Id: wagglebot`, `request_id=wb-<post_id>-<scene_type>-<uuid8>`, `Idempotency-Key` 동일) → 완료 대기 → 오디오 수신·job 삭제 → `.part` 저장 후 원자적 rename.
 - **요청 옵션:** `voice`, `lang=ko`, `speed=TTS_SPEED(1.1)`, `normalize{enabled, profile=wagglebot/shorts-ko}`, `chunk{mode=max_chars, max_chars=120}`, `postprocess.loudnorm{i=-16, tp=-1.5}`, `output.format=wav`. 청크 분할·loudnorm·속도는 서버가 한다(로컬 분할·atempo 없음, 속도 이중 적용 금지).
-- **보이스:** `voice_resolver.resolve_voice(voice_key, post_id)` — 프리셋 키는 그대로, 구 키(`seohyeon_ref` 등)는 성별 보존 매핑, 없음·미지 키는 post_id 시드 결정적 랜덤. `default`는 남성 서수로 매핑된다([ADR-0007](../../shared/90-adr/0007-voice-presets.md)).
+- **보이스:** `voice_resolver.resolve_voice(voice_key, post_id)` — 프리셋 키는 그대로, 구 키(`seohyeon_ref` 등)는 성별 보존 매핑, 없음·미지 키는 post_id 시드 결정적 랜덤. `default`는 미지 키라 성별 무관 10종 중 post_id 시드 선택이다([ADR-0007](../../shared/90-adr/0007-voice-presets.md)). 낭독 보이스는 `llm_tts_stage`에서 글당 1회 프리셋으로 확정해 `contents.tts_voice`에 저장하고 outro·댓글·SceneDirector·렌더러가 모두 같은 `(키, post_id)` 해석을 쓴다.
 - **정규화 3분담:** 서버 내장(숫자·단위·월·범위·소수점 `쩜`·말줄임·종결부호 — FB 표준) + 프로필 `wagglebot/shorts-ko` v1(슬랭·영문 약어 39엔트리, 원본 `config/tts_profile/shorts-ko.yaml`, 동기화 `worker/tools/sync_tts_profile.py`) + 앱 `prenorm.py`(화자 접두어·URL·해시태그·자모 슬랭·`N대`/`N기` 한자어 수사). 구 `normalize_for_tts`/`number_reader`는 삭제 → [ADR-0008](../../shared/90-adr/0008-tts-normalization-standard.md)
-- **서버 장애:** 연결 실패·타임아웃·429/503·큐 포화·대기 초과는 `TTSUnavailable`(일시 장애) — 클라이언트가 `TTS_SERVER_RETRIES`회 재시도한 뒤에도 실패하면 호출처가 FAILED 대신 APPROVED로 재큐한다(상세 [60-runtime](../60-runtime.md)). 요청 거부·job 영구 실패는 `TTSError`, 정규화 후 빈 텍스트는 `ValueError`.
+- **서버 장애:** 연결 실패·타임아웃·429/503·502/504·대기 초과·재시도 가능 job 실패는 `TTSUnavailable`(일시 장애) — 클라이언트가 `TTS_SERVER_RETRIES`회 재시도한 뒤에도 실패하면 호출처가 FAILED 대신 APPROVED로 재큐한다(연속 `TTS_REQUEUE_MAX`회·백오프, 상세 [60-runtime](../60-runtime.md)). 500류 서버 오류는 총 2회 시도 후 `TTSError`(FAILED), 요청 거부·job 영구 실패도 `TTSError`, 정규화 후 빈 텍스트는 `ValueError`.
 - **디스크 캐시:** `processor._safe_generate_tts()`의 키는 `프리셋:text:speed:pp_v7`(해석된 프리셋 기준). 구 `pp_v6`(Fish) 캐시는 재사용하지 않는다. 렌더러 댓글 chunk WAV도 프리셋/text 키 전역 캐시를 쓴다.
 - **정렬(렌더 타이밍):** `tts/alignment.py`(faster-whisper ASR)는 유지한다. alignment가 import 전에 `HF_HOME`·Hub·Xet·XDG cache를 `WHISPER_DOWNLOAD_ROOT` 하위로 고정하고 Xet을 비활성화한다(uid 1000 `/.cache` 권한 오류 방지). 응답 `chunks[]` 기반 타이밍 전환은 후속 과제.
 - 결과: `scene.text_lines = [{"text": "...", "audio": "/path/to/audio.wav"}]`

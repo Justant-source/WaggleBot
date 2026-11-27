@@ -51,16 +51,16 @@ TTS는 외부 **Local-TTS 제공자**(`http://local-tts:8500`, Supertonic)에 �
 | `TTS_SERVER_URL` | `http://local-tts:8500` | Local-TTS 주소(외부 네트워크 `local_tts_net` 별칭) |
 | `TTS_SERVER_TOKEN` | `""` | 서버가 `LOCAL_TTS_TOKEN`을 요구할 때만 설정(`.env`에서만 읽음) |
 | `TTS_SERVER_TIMEOUT_SEC` | `120` | 요청 1건 read 타임아웃(초) |
-| `TTS_SERVER_RETRIES` | `3` | 첫 시도 이후 추가 재시도(연결 실패·429·503) |
+| `TTS_SERVER_RETRIES` | `3` | 첫 시도 이후 HTTP 추가 재시도(연결 실패·타임아웃·429·503·502/504) |
 | `TTS_REQUEUE_MAX` | `5` | 같은 글의 연속 TTSUnavailable 재큐 상한. 도달 시 FAILED (`TTS_REQUEUE_BACKOFF_BASE_SEC`=30·`_MAX_SEC`=600은 settings 기본값, compose 미노출) |
-| `TTS_SERVER_MAX_WAIT_SEC` | `3600` | job 완료·서버 준비 대기 상한(초). 소진 시 `TTSUnavailable` → APPROVED 재큐 |
+| `TTS_SERVER_MAX_WAIT_SEC` | `3600` | **job 완료 대기**(`wait`) 상한(초). 소진 시 `cancel` 후 `TTSUnavailable` → APPROVED 재큐. 연결 실패·429·503은 `TTS_SERVER_RETRIES` 재시도(수 초)만 쓰고 이 값을 소모하지 않는다. 준비 확인 호출처는 3초 고정 → [local-tts-client](30-components/local-tts-client.md) |
 | `TTS_PROFILE` | `wagglebot/shorts-ko` | 서버 발음 프로필(비우면 미사용). 원본 `config/tts_profile/shorts-ko.yaml` |
 | `TTS_CLIENT_ID` | `wagglebot` | `X-Client-Id` = 프로필 네임스페이스(프로필 키 접두와 같아야 함) |
 | `TTS_SPEED` | `1.1` | 서버 `speed` 옵션으로만 전달. 로컬 atempo 없음(이중 적용 금지). voices.json `params.speed` 오버라이드는 더 이상 합성에 쓰지 않는다 |
 | `TTS_OUTPUT_FORMAT` / `TTS_SAMPLE_RATE` | `wav` / `44100` | 출력 포맷·샘플레이트 |
 | `TTS_LOUDNORM_ENABLED` / `_PARAMS` | `True` / `I=-16:TP=-1.5:LRA=11` | 렌더러 최종 믹스 단계용(`renderer/_tts.py`). 합성 결과 1차 loudnorm(-16, TP -1.5)은 서버가 수행 |
 
-고정값(코드 상수, `ai_worker/tts/synth.py`): 요청 옵션 `lang=ko`, `chunk={mode:max_chars, max_chars:120}`, `postprocess.loudnorm={i:-16, tp:-1.5}`, `output.format=wav`. 보이스는 `voice_resolver.resolve_voice()`가 항상 `M1~M5`·`F1~F5` 중 하나로 정한다.
+고정값(코드 상수, `ai_worker/tts/synth.py`): 요청 옵션 `lang=ko`, `chunk={mode:max_chars, max_chars:120}`, `postprocess.loudnorm={i:-16, tp:-1.5}`, `output.format=wav`. 보이스는 `voice_resolver.resolve_voice()`가 항상 `M1~M5`·`F1~F5` 중 하나로 정한다. 요청·응답·오류 분류·재큐 전체는 [local-tts-client.md](30-components/local-tts-client.md)가 정본이다.
 
 **삭제된 설정(Fish 시절):** `FISH_SPEECH_*`, `ATOMIC_TTS_FISH_GATE_URL`, `FISH_GATE_*`, `FISH_LEASE_*`, `TTS_EMOTION_ENABLED`, `TTS_LAUGH_MARKER_ENABLED`, `TTS_SHORT_TEXT_PADDING`, `TTS_MAX_CHARS_PER_REQUEST`, `TTS_MAX/MIN_SECS_PER_CHAR`, `TTS_EMOTION_MARKERS`, `VOICE_REFERENCE_TEXTS`. 감정 마커·ㅋㅋ 웃음 마커·웜업·참조 음성·품질 재시도(`quality.py`)는 폐기됐다.
 
@@ -79,10 +79,10 @@ TTS는 외부 **Local-TTS 제공자**(`http://local-tts:8500`, Supertonic)에 �
 
 **VOICE_PRESETS (voices.json v4): `{key: {label, gender, engine}}`**
 - 키 10종: 남 `M1~M5`, 여 `F1~F5` (Supertonic 프리셋, `engine: supertonic`). 정본 = `config/voices.json`
-- 합성 보이스 결정은 `ai_worker/tts/voice_resolver.py`: 프리셋 키는 그대로, 구 키(`seohyeon_ref`·`kangil_ref`·`yura` 등 Fish 참조 음성 키)는 **성별 보존**으로 `random.Random(post_id)` 순열에서 구 키 서수로 매핑, `None`·빈 값·미지 키는 post_id 시드 결정적 랜덤(post_id도 없으면 `F1`). 단 `default`는 구 키 목록의 **남성 4번째 서수**라 성별 보존 규칙에 따라 남성 프리셋(M1~M5 순열 중 하나)으로 해석된다 → [ADR-0007](../shared/90-adr/0007-voice-presets.md)
+- 합성 보이스 결정은 `ai_worker/tts/voice_resolver.py`: 프리셋 키는 그대로, 구 키(`seohyeon_ref`·`kangil_ref`·`yura` 등 Fish 참조 음성 키)는 **성별 보존**으로 `random.Random(post_id)` 순열에서 구 키 서수로 매핑, `None`·빈 값·미지 키는 post_id 시드 결정적 랜덤(post_id도 없으면 `F1`). 단 `default`는 구 키 목록에 없는 미지 키라 **성별 무관하게 post_id 시드로 10종 전체 중 하나**로 해석된다(남성 아님) → [ADR-0007](../shared/90-adr/0007-voice-presets.md), 상세 [local-tts-client](30-components/local-tts-client.md)
 - 샘플: `assets/voices/voice_preview_<KEY>.mp3`(사전 생성, backend `/api/tts/voices/{key}/sample`)
 - `ref_dir`·`file`·`params(temperature/top_p/speed)`·`age_range`는 `settings.VOICE_PRESETS` 로더가 읽지만 v4 항목에는 없으며 합성에 쓰지 않는다(레거시 필드)
-- 기본값: `pipeline.json` `tts_engine=local-tts`, `tts_voice=default`(→ 남성 프리셋, post_id별 결정적), `comment_voices=["M2","F2","M3"]`, `scene/settings.yaml` `comment_voice_mapping`: author `M2` · partner `F2` · neutral `default`
+- 기본값: `pipeline.json` `tts_engine=local-tts`, `tts_voice=default`(→ 10종 중 post_id별 결정적, 글당 1회 확정), `comment_voices=["M2","F2","M3"]`, `scene/settings.yaml` `comment_voice_mapping`: author `M2` · partner `F2` · neutral `default`
 - 등록·갱신 도구(`prepare_voice.py`)는 삭제됨. 발음 프로필 동기화는 `worker/tools/sync_tts_profile.py`(`--dry-run`·업로드·`--activate`)
 
 ### 비디오 설정 (LTX-2)

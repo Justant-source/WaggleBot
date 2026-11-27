@@ -197,7 +197,7 @@ checkpoints/
 
 ### 6. 보이스 프리셋
 
-참조 음성 준비는 필요 없습니다. 보이스는 Supertonic 프리셋 `M1~M5`(남)·`F1~F5`(여)이며, 글별 보이스가 없으면 `post_id` 시드로 결정적으로 정해집니다(같은 글은 항상 같은 보이스). 구 키(`yura`, `kangil_ref` 등)는 성별을 보존해 프리셋으로 매핑됩니다. 보이스 메타데이터 정본은 `config/voices.json`(v4), 샘플은 `assets/voices/voice_preview_<KEY>.mp3`입니다.
+참조 음성 준비는 필요 없습니다. 보이스는 Supertonic 프리셋 `M1~M5`(남)·`F1~F5`(여)이며, 글별 보이스가 없거나 `default`이면 `post_id` 시드로 10종 중 하나가 결정적으로 정해지고(성별 무관, 같은 글은 항상 같은 보이스) 처리 시작 시 한 번 확정해 영상 전체에 씁니다. 구 키(`yura`, `kangil_ref` 등)는 성별을 보존해 프리셋으로 매핑됩니다. 보이스 메타데이터 정본은 `config/voices.json`(v4), 샘플은 `assets/voices/voice_preview_<KEY>.mp3`입니다.
 
 ### 7. 환경 변수 설정 및 실행
 

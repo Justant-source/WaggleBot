@@ -12,7 +12,6 @@ ai_worker/tts/
 ├── local_tts_client.py  # Local-TTS 클라이언트 사본(원본: Local-TTS/client, 직접 수정 금지)
 ├── voice_resolver.py    # 보이스 키·post_id → 프리셋 M1~M5/F1~F5
 ├── prenorm.py           # 앱 고유 전처리(화자 접두어·URL·해시태그 등)
-├── normalizer.py, number_reader.py  # 레거시 로컬 정규화(서버 정규화·프로필로 이관 중)
 ├── alignment.py         # 렌더 타이밍용 ASR 정렬(유지)
 └── settings.yaml
 ```
@@ -29,11 +28,11 @@ ok = await wait_for_tts_server(timeout_sec=None)          # /readyz 폴링
 | 항목 | 동작 |
 |------|------|
 | 입력 | `prenormalize(text)` 후 읽을 글자가 없으면 `ValueError` |
-| 보이스 | `resolve_voice(voice_key, post_id)` — 항상 `M1..F5`, post_id 시드 결정적 |
+| 보이스 | `resolve_voice(voice_key, post_id)` — 항상 `M1..F5`, post_id 시드 결정적(`default`·미지 키는 10종 전체 중 선택) |
 | 요청 | `options`: `voice`, `lang=ko`, `speed=TTS_SPEED`, `normalize.profile=TTS_PROFILE`, `chunk{max_chars,120}`, `postprocess.loudnorm(-16)`, `output.format=wav` |
 | request_id | `wb-<post_id>-<scene_type>-<uuid8>` → `options.request_id` |
-| 재시도 | 클라이언트가 연결 오류·타임아웃·429/503(+Retry-After)을 `TTS_SERVER_RETRIES`회 재시도 |
-| 예외 | 서버 불가·타임아웃·큐 포화·job 대기 초과 → `TTSUnavailable`(일시 장애, 재큐 대상). 요청 거부·job 영구 실패 → `TTSError`(RuntimeError) |
+| 재시도 | 클라이언트가 연결 오류·타임아웃·429/503/502/504(+Retry-After)를 `TTS_SERVER_RETRIES`회 재시도. 500류는 synth가 총 2회 시도 |
+| 예외 | 서버 불가·타임아웃·큐 포화·job 대기 초과 → `TTSUnavailable`(일시 장애, 재큐 대상). 요청 거부·job 영구 실패·반복 500 → `TTSError`(RuntimeError) |
 | 동기/비동기 | 동기 httpx 클라이언트를 `asyncio.to_thread`로 감싼다 |
 
 ## 설정 (config/settings.py, 환경변수는 settings.py에서만 읽음)
@@ -45,3 +44,5 @@ ok = await wait_for_tts_server(timeout_sec=None)          # /readyz 폴링
 ## 폐기된 것
 
 Fish Speech 클라이언트·게이트·웜업·참조 음성·감정 마커·`ㅋㅋ` 웃음 마커·품질(초당 글자) 재시도·로컬 150자 분할.
+
+요청·응답·오류 분류·재큐의 상세는 `docs/worker/30-components/local-tts-client.md`.

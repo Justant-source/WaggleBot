@@ -1,6 +1,6 @@
 # ADR-0006: TTS를 외부 Local-TTS 제공자로 전환 (Fish Speech 폐기)
 
-> **status:** accepted (코드·문서 완료, 운영 미적용 — 2026-11-27)
+> **status:** accepted (코드·문서 완료, 운영 적용 — 2026-11-27)
 > **date:** 2026-11-27
 > **supersedes:** [ADR-0005](0005-openaudio-s1-mini.md)
 > **related:** env/docker-compose.yml, config/settings.py, worker/ai_worker/tts/synth.py, worker/ai_worker/tts/local_tts_client.py, worker/ai_worker/core/main.py, worker/ai_worker/core/processor.py, docs/shared/20-containers.md, docs/worker/60-runtime.md
@@ -23,7 +23,7 @@ Flight-Brain과 WaggleBot이 함께 쓰는 별도 저장소 서비스 **Local-TT
    - client id `wagglebot`(= `X-Client-Id` = 프로필 네임스페이스), 프로필 `wagglebot/shorts-ko` v1.
    - 요청 옵션: `lang=ko`, `speed=TTS_SPEED(1.1)`, `chunk max_chars 120`, `loudnorm i=-16 tp=-1.5`, `output wav`. 속도는 서버 한 곳에서만 적용(로컬 atempo 없음, 이중 적용 금지).
 3. **앱 간 import 금지 유지.** 클라이언트는 Local-TTS 저장소의 `client/local_tts_client.py` **복사본**을 `worker/ai_worker/tts/local_tts_client.py`에 둔다(원본 직접 수정 금지).
-4. **서버 장애는 FAILED가 아니다.** 연결 실패·타임아웃·429/503·큐 포화·대기 초과는 `TTSUnavailable`(일시 장애). 집기 전 `/readyz` 확인이 실패하면 APPROVED 폴링을 보류하고, 처리 중이면 `PROCESSING → APPROVED`로 되돌리며 `retry_count`를 유지한다. 서버 대기 상한의 SSOT는 `TTS_SERVER_MAX_WAIT_SEC`(3600s) 하나다. (설계 초안의 "지수 백오프 후 FAILED"가 아니라 재큐를 채택 — Local-TTS가 내려가도 승인된 글을 잃지 않는다.)
+4. **서버 장애는 FAILED가 아니다.** 연결 실패·타임아웃·429/503·큐 포화·대기 초과는 `TTSUnavailable`(일시 장애). 집기 전 `/readyz` 확인이 실패하면 APPROVED 폴링을 보류하고, 처리 중이면 `PROCESSING → APPROVED`로 되돌리며 `retry_count`를 유지한다. job 완료 대기 상한의 SSOT는 `TTS_SERVER_MAX_WAIT_SEC`(3600s) 하나다(연결 실패·429·503은 이 시간이 아니라 `TTS_SERVER_RETRIES`회 재시도 후 즉시 `TTSUnavailable`). 500류 서버 오류는 일시 장애가 아니라 2회 시도 후 `TTSError`(FAILED)이며, 같은 글의 연속 재큐는 `TTS_REQUEUE_MAX`회(기본 5)·백오프로 제한한다(70dbc00, [local-tts-client](../../worker/30-components/local-tts-client.md)). (설계 초안의 "지수 백오프 후 FAILED"가 아니라 재큐를 채택 — Local-TTS가 내려가도 승인된 글을 잃지 않는다.)
 5. **폐기 기능:** 감정 마커, `ㅋㅋ` 웃음 마커, 웜업, 참조 음성, 초/자 품질 재시도, 로컬 장문 분할. 디스크 TTS 캐시 버전은 `pp_v7`로 올려 구 Fish WAV 재사용을 막는다.
 6. **렌더 타이밍 ASR 정렬(`alignment.py`, faster-whisper)은 이번 단계에서 유지.** 응답 `chunks[]` 타이밍 기반 전환은 후속 과제다.
 
@@ -39,7 +39,7 @@ Flight-Brain과 WaggleBot이 함께 쓰는 별도 저장소 서비스 **Local-TT
 - **포트·네트워크:** `8082:8080` 제거, `local_tts_net` 신규. 네트워크가 없으면 두 워커 컨테이너 기동이 실패한다.
 - **환경변수:** `TTS_SERVER_URL/TOKEN/TIMEOUT_SEC/RETRIES/MAX_WAIT_SEC`, `TTS_PROFILE`, `TTS_CLIENT_ID`, `TTS_SPEED` 신규. `FISH_*`·`TTS_EMOTION_*` 등 삭제.
 - **상태 전이:** `PROCESSING → APPROVED` 재큐 사유에 TTS 서버 불가가 추가된다.
-- **운영 미적용 항목:** 컨테이너 재생성, 마이그레이션 적용, APPROVED 재큐, 프로필 활성화, Supertonic 청취 비교는 아직 하지 않았다.
+- **운영 적용(2026-11-27 확인):** `ai_worker`·`dashboard_worker` 재생성·`local_tts_net` 합류, Flyway `V5` 적용, 프로필 `wagglebot/shorts-ko` v1 활성화 완료. 남은 항목: Supertonic 청취 비교, 렌더 타이밍의 `chunks[]` 전환.
 
 ## 금지사항
 

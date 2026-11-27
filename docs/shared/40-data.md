@@ -166,7 +166,7 @@ erDiagram
 | `variant_group` | VARCHAR(64) | A/B 테스트 그룹 |
 | `variant_label` | VARCHAR(32) | A/B 테스트 레이블 |
 | `variant_config` | JSON | A/B 테스트 설정값 |
-| `tts_voice` | VARCHAR(32) | 게시글별 TTS 보이스 키 — 프리셋 `M1~M5`·`F1~F5`(없으면 `voice_resolver`가 post_id 시드로 결정적 랜덤, `default`·구 키는 성별 보존 매핑). 구 키(Fish 참조 음성)는 마이그레이션 `010`/`V5`가 성별 보존 프리셋으로 이관 ([ADR-0007](90-adr/0007-voice-presets.md)) |
+| `tts_voice` | VARCHAR(32) | 게시글별 TTS 보이스 키 — 프리셋 `M1~M5`·`F1~F5`(없음·`default`·미지 키는 `voice_resolver`가 post_id 시드로 10종 전체에서 결정적 랜덤, 구 Fish 키만 성별 보존 매핑; 워커가 글당 1회 확정해 이 컬럼에 저장 → [local-tts-client](../worker/30-components/local-tts-client.md)). 구 키(Fish 참조 음성)는 마이그레이션 `010`/`V5`가 성별 보존 프리셋으로 이관 ([ADR-0007](90-adr/0007-voice-presets.md)) |
 | `gen_instructions` | VARCHAR(1000) | 에디터에서 대본 재생성 시 사용한 추가 지시문 |
 
 **ScriptData 구조 (summary_text JSON):**

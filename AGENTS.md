@@ -31,6 +31,7 @@
 | docker-compose, 포트/볼륨/환경변수/VRAM | [docs/shared/20-containers.md](docs/shared/20-containers.md) |
 | settings.py·pipeline.json·.env 설정 | [docs/worker/20-containers.md](docs/worker/20-containers.md) |
 | Phase 1~8 로직, 씬/대본/TTS/비디오/렌더링 | [docs/worker/30-components/pipeline.md](docs/worker/30-components/pipeline.md) |
+| TTS(Local-TTS) 요청·응답·보이스·장애 재큐 | [docs/worker/30-components/local-tts-client.md](docs/worker/30-components/local-tts-client.md) |
 | 모듈 책임, 크롤러/업로더 구조 | [docs/worker/30-components/overview.md](docs/worker/30-components/overview.md) |
 | 구현 현황·버그 픽스 이력 확인 | [docs/worker/30-components/implementation-status.md](docs/worker/30-components/implementation-status.md) |
 | DB 모델 변경, 마이그레이션, 쿼리 작성 | [docs/shared/40-data.md](docs/shared/40-data.md) |

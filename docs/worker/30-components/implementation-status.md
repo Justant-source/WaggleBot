@@ -305,14 +305,14 @@ Claude Design 핸드오프 기반으로 렌더러 전면 교체. 컨테이너 PN
 
 ## TTS Local-TTS 전환 (2026-11-27, ADR-0006~0008)
 
-> **상태: 코드·문서 완료, 운영 미적용.** 컨테이너 재생성·DB 마이그레이션 적용·APPROVED 재큐·프로필 활성화(`--activate`)·청취 비교는 아직 실행하지 않았다.
+> **상태: 코드·문서 완료, 운영 적용(2026-11-27).** 컨테이너 재생성·`local_tts_net` 합류·Flyway `V5` 적용·프로필 `wagglebot/shorts-ko` v1 활성화 완료. 청취 비교는 미실시. 요청·응답·오류·재큐 상세는 [local-tts-client.md](local-tts-client.md), 70dbc00에서 글당 보이스 1회 확정·재큐 상한/백오프·대본 선저장·500 비일시 처리 추가.
 
 | 영역 | 변경 |
 |------|------|
 | 제공자 | Fish Speech 완전 폐기(`fish-speech` 컨테이너·`docker.sock`·`group_add`·게이트·임대·`container_control.py`·웜업·참조 음성 삭제). 외부 Local-TTS(`http://local-tts:8500`, 네트워크 `local_tts_net` 사전 생성 필요)에 `POST /v1/jobs` 요청만 한다 |
 | 클라이언트 | `tts/synth.py`·`local_tts_client.py`(복사본)·`voice_resolver.py`·`prenorm.py` 신규. `fish_client.py`·`fish_gate.py`·`quality.py`·`normalizer.py`·`number_reader.py` 삭제 |
 | 장애 처리 | `TTSUnavailable` → FAILED가 아니라 APPROVED 재큐(retry_count 유지). 집기 전 서버 확인 실패 시 폴링 보류 |
-| 보이스 | `voices.json` v4(M1~M5·F1~F5, Supertonic). 구 키는 성별 보존 매핑, 게시글 보이스 없으면 post_id 시드 결정적 랜덤. `pipeline.json` `tts_engine=local-tts`, `comment_voices=[M2,F2,M3]`. 마이그레이션 `010`/`V5` 작성(**미적용**) |
+| 보이스 | `voices.json` v4(M1~M5·F1~F5, Supertonic). 구 키는 성별 보존 매핑, 게시글 보이스 없으면 post_id 시드 결정적 랜덤. `pipeline.json` `tts_engine=local-tts`, `comment_voices=[M2,F2,M3]`. 마이그레이션 `010`/`V5`(V5 적용됨). `default`는 성별 무관 10종 중 post_id 시드 선택 |
 | 정규화 | 서버(FB 표준·`쩜`) + 프로필 `wagglebot/shorts-ko` v1(`config/tts_profile/`, 업로드 도구 `worker/tools/sync_tts_profile.py`) + 앱 `prenorm.py`. L1 diff 1726건, 비의도 회귀 0 |
 | 폐기 기능 | 감정 마커·`ㅋㅋ` 웃음 마커·웜업·참조 음성·초/자 품질 재시도, 로컬 150자 분할·atempo |
 | 설정·캐시 | `TTS_SERVER_*`·`TTS_PROFILE`·`TTS_CLIENT_ID`·`TTS_SPEED=1.1`(서버 speed), 디스크 캐시 `pp_v7` |

@@ -1,6 +1,6 @@
 # ADR-0008: TTS 텍스트 정규화 표준을 Flight-Brain 기준(소수점 `쩜`)으로 통일
 
-> **status:** accepted (코드 완료, 프로필 운영 활성화·청취 확인 미실시 — 2026-11-27)
+> **status:** accepted (코드 완료, 프로필 `wagglebot/shorts-ko` v1 운영 활성화 완료, 청취 확인 미실시 — 2026-11-27)
 > **date:** 2026-11-27
 > **related:** worker/ai_worker/tts/prenorm.py, config/tts_profile/shorts-ko.yaml, worker/tools/sync_tts_profile.py, worker/ai_worker/tts/synth.py, worker/test/test_tts_normalizer.py
 
@@ -24,7 +24,7 @@ WaggleBot의 `normalizer.py`·`number_reader.py`(soynlp 포함)는 Flight-Brain 
 
 ## 영향·후속
 
-- 출력 문구가 바뀌므로 **청취 비교 전에는 최종 품질 보증이 아니다.** 프로필 활성화(`--activate`)는 운영 반영 단계에서 명시적으로만 한다.
+- 출력 문구가 바뀌므로 **청취 비교 전에는 최종 품질 보증이 아니다.** 프로필 `wagglebot/shorts-ko` v1은 2026-11-27 서버에서 활성화됐다(이후 버전 활성화는 명시적으로만 한다).
 - 서버는 빈 텍스트에 `400`을 반환하므로 호출처는 전처리 결과가 공백이면 합성을 생략한다(현재 `synth.synthesize`가 `ValueError`).
 - 프로필에 없는 영문 약어(LG·MBC·KBS·SUV 등)는 서버가 낱자로 읽는다(이전엔 원문 유지). 필요 시 프로필에 추가한다.
 - 서버의 `대`·`기` 카운터를 고유어로 읽는 동작은 Local-TTS 쪽 확인 권고 항목이다(prenorm 보정으로 우회 중).

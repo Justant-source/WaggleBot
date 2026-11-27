@@ -15,7 +15,7 @@ last_updated: 2026-11-27
 | **00** agent | — | — | — | — | `00-agent.md` |
 | **10** context | — | — | — | — | `10-context.md` 🏛 |
 | **20** containers | — | — | — | `20-containers.md` | `20-containers.md` 🏛 |
-| **30** components | — | — | — | `30-components/` (3) | — |
+| **30** components | — | — | — | `30-components/` (4) | — |
 | **40** data | — | — | — | — | `40-data.md` 🏛 |
 | **50** api | `50-api.md` | — | — | `50-api.md` | — |
 | **60** runtime | — | — | — | `60-runtime.md` | `60-runtime.md` 🏛 |
@@ -33,6 +33,7 @@ last_updated: 2026-11-27
 | 배포 · 포트 · VRAM | `docs/shared/20-containers.md` | `docs/worker/20-containers.md` | `env/docker-compose.yml` |
 | worker 설정 | `docs/worker/20-containers.md` | `docs/shared/20-containers.md` | `config/settings.py` |
 | 파이프라인 Phase | `docs/worker/30-components/pipeline.md` | `docs/worker/60-runtime.md` | `worker/ai_worker/pipeline/content_processor.py` |
+| TTS 요청·응답(Local-TTS) · 보이스 · 재큐 | `docs/worker/30-components/local-tts-client.md` | `docs/worker/30-components/pipeline.md` | `worker/ai_worker/tts/` · `worker/ai_worker/core/tts_requeue.py` |
 | 모듈 · 크롤러 | `docs/worker/30-components/overview.md` | `docs/worker/30-components/implementation-status.md` | `worker/ai_worker/` · `worker/crawlers/` |
 | DB 스키마 | `docs/shared/40-data.md` | — | `worker/db/migrations/` · `backend/src/main/resources/db/migration/` |
 | Backend REST | `docs/backend/50-api.md` | `docs/worker/50-api.md` | `backend/src/main/java/com/wagglebot/controller/` |
@@ -68,14 +69,14 @@ last_updated: 2026-11-27
 | 12 | `worker/ai_worker/pipeline/**` | `docs/worker/30-components/pipeline.md` | M |
 | 13 | `worker/ai_worker/scene/**` | `docs/worker/30-components/pipeline.md` | M |
 | 14 | `worker/ai_worker/video/**` | `docs/worker/30-components/pipeline.md` | M |
-| 15 | `worker/ai_worker/tts/**` | `docs/worker/30-components/pipeline.md` | M |
+| 15 | `worker/ai_worker/tts/**` · `worker/ai_worker/core/tts_requeue.py` | `docs/worker/30-components/pipeline.md` · `docs/worker/30-components/local-tts-client.md` | M |
 | 16 | `worker/ai_worker/renderer/**` | `docs/worker/30-components/pipeline.md` | M |
 | 17 | `worker/ai_worker/core/processor.py` | `docs/worker/60-runtime.md` | M |
 | 18 | `worker/crawlers/**` | `docs/worker/30-components/overview.md` · `docs/worker/30-components/implementation-status.md` | C |
 | 19 | 하드 제약 추가·변경 | `docs/shared/90-adr/` · `docs/shared/70-policy.md` | M |
 | 20 | `worker/ai_worker/core/main.py` · `worker/ai_worker/core/progress.py` | `docs/worker/60-runtime.md` · `docs/backend/50-api.md` | M |
 | 21 | `telegram/**` | `docs/shared/20-containers.md` · `docs/worker/20-containers.md` | C |
-| 22 | `config/voices.json` · `config/tts_profile/**` · `worker/tools/sync_tts_profile.py` | `docs/worker/20-containers.md` · `docs/worker/30-components/pipeline.md` | M |
+| 22 | `config/voices.json` · `config/tts_profile/**` · `worker/tools/sync_tts_profile.py` | `docs/worker/20-containers.md` · `docs/worker/30-components/pipeline.md` · `docs/worker/30-components/local-tts-client.md` | M |
 
 ## §6. Code → Docs 역인덱스
 
@@ -83,6 +84,7 @@ last_updated: 2026-11-27
 |---|---|---|---|
 | `worker/ai_worker/pipeline/**` | worker | `docs/worker/30-components/pipeline.md` | 🏛 |
 | `worker/ai_worker/core/processor.py` | worker | `docs/worker/60-runtime.md` | |
+| `worker/ai_worker/tts/**` · `worker/ai_worker/core/tts_requeue.py` | worker | `docs/worker/30-components/local-tts-client.md` | |
 | `worker/ai_worker/scene/**` | worker | `docs/worker/30-components/pipeline.md` | |
 | `worker/llm/src/main/java/com/wagglebot/llmworker/LlmController.java` | worker | `docs/worker/50-api.md` | |
 | `backend/src/main/java/com/wagglebot/controller/**` | backend | `docs/backend/50-api.md` | |

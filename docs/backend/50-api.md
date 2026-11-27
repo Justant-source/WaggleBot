@@ -280,14 +280,14 @@ Spring 프로퍼티 `app.external.api-key`). 누락·불일치 시 `401 {"error"
 
 ## Local-TTS API (:8500, 외부 제공자)
 
-Python `worker/ai_worker/tts/synth.py`가 `local_tts_client.py`(Local-TTS 클라이언트 **복사본**)로 호출한다. 서버는 별도 저장소(`/home/justant/Data/Local-TTS`)가 운영하며 이 compose에는 없다. 컨테이너 간 주소 `http://local-tts:8500`(외부 네트워크 `local_tts_net`), 호스트 `127.0.0.1:8500`. 전체 계약은 Local-TTS `docs/api.md`·`docs/CONTRACT.md`가 정본이고, 아래는 WaggleBot이 쓰는 부분만 요약한다.
+Python `worker/ai_worker/tts/synth.py`가 `local_tts_client.py`(Local-TTS 클라이언트 **복사본**)로 호출한다. 서버는 별도 저장소(`/home/justant/Data/Local-TTS`)가 운영하며 이 compose에는 없다. 컨테이너 간 주소 `http://local-tts:8500`(외부 네트워크 `local_tts_net`), 호스트 `127.0.0.1:8500`. 전체 계약은 Local-TTS `docs/api.md`·`docs/CONTRACT.md`가 정본이고, 아래는 WaggleBot이 쓰는 부분만 요약한다. 클라이언트 동작(재시도·오류 매핑·재큐·보이스 해석)은 [worker/30-components/local-tts-client.md](../worker/30-components/local-tts-client.md)가 정본이다.
 
 **공통 헤더:** `X-Client-Id: wagglebot`(= 프로필 네임스페이스), 토큰이 설정된 서버면 `Authorization: Bearer <TTS_SERVER_TOKEN>`, 생성 시 `Idempotency-Key`(= `options.request_id`).
 
 | 호출 | 용도 |
 |------|------|
 | `POST /v1/jobs` | 합성 job 생성(202) |
-| `GET /v1/jobs/{id}` | 상태 대기(long-poll) |
+| `GET /v1/jobs/{id}?wait=25&since_rev=N` | 상태 대기(long-poll) |
 | `GET /v1/jobs/{id}/audio` | 최종 wav |
 | `DELETE /v1/jobs/{id}` | 결과 파일 삭제 |
 | `POST /v1/jobs/{id}:cancel` | 대기 시간 초과 시 취소 |
@@ -297,7 +297,7 @@ Python `worker/ai_worker/tts/synth.py`가 `local_tts_client.py`(Local-TTS 클라
 **Request (job 생성, `synth.build_options` 기준):**
 ```json
 {
-  "text": "<prenormalize 결과>",
+  "input": "<prenormalize 결과>",
   "options": {
     "voice": "F2",
     "lang": "ko",
@@ -311,9 +311,9 @@ Python `worker/ai_worker/tts/synth.py`가 `local_tts_client.py`(Local-TTS 클라
 }
 ```
 
-**오류 분류:** 연결 실패·타임아웃·429·503·5xx·대기 초과는 클라이언트가 `TTS_SERVER_RETRIES`회 재시도한 뒤 `TTSUnavailable`(일시 장애 → APPROVED 재큐). `empty_input` 등 요청 거부는 `ValueError`/`TTSError`(일반 실패). 재시도 가능한 job 실패는 `TTSUnavailable`, 영구 실패는 `TTSError`.
+**오류 분류:** 연결 실패·타임아웃·429·503·502/504는 클라이언트가 `TTS_SERVER_RETRIES`회 재시도한 뒤, 대기 초과(`WaitTimeout`)와 재시도 가능 job 실패(`error.retryable`)는 즉시 `TTSUnavailable`(일시 장애 → APPROVED 재큐). **500 등 그 밖의 5xx는 일시 장애가 아니다** — 같은 `request_id`로 총 2회 시도한 뒤 `TTSError`(FAILED). `empty_input`은 `ValueError`, 그 밖의 400/413/422·401/403/404/409/410·영구 job 실패는 `TTSError`(일반 실패). 전체 표는 local-tts-client.md §6.
 
-**설정값 (config/settings.py):** `TTS_SERVER_URL`, `TTS_SERVER_TOKEN`, `TTS_SERVER_TIMEOUT_SEC=120`, `TTS_SERVER_RETRIES=3`, `TTS_SERVER_MAX_WAIT_SEC=3600`, `TTS_PROFILE=wagglebot/shorts-ko`, `TTS_CLIENT_ID=wagglebot`, `TTS_SPEED=1.1` → [worker/20-containers](../worker/20-containers.md#tts-설정)
+**설정값 (config/settings.py):** `TTS_SERVER_URL`, `TTS_SERVER_TOKEN`, `TTS_SERVER_TIMEOUT_SEC=120`, `TTS_SERVER_RETRIES=3`, `TTS_SERVER_MAX_WAIT_SEC=3600`(job 완료 대기만), `TTS_PROFILE=wagglebot/shorts-ko`, `TTS_CLIENT_ID=wagglebot`, `TTS_SPEED=1.1` → [worker/20-containers](../worker/20-containers.md#tts-설정)
 
 > 폐기: Fish Speech API(`POST /v1/tts`, `reference_id`·`use_memory_cache`, 감정 마커), `fish-speech:8080`/`:8082`. ADR-0005는 폐기됨 → [ADR-0006](../shared/90-adr/0006-local-tts-provider.md).
 

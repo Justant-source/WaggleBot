@@ -182,7 +182,7 @@ graph TD
   TTS_SERVER_TOKEN=            # 서버가 LOCAL_TTS_TOKEN을 요구할 때만 (.env에서만 읽음)
   TTS_SERVER_TIMEOUT_SEC=120   # 요청 1건 read 타임아웃
   TTS_SERVER_RETRIES=3         # 연결·429·503 추가 재시도
-  TTS_SERVER_MAX_WAIT_SEC=3600 # job 완료·서버 준비 대기 상한
+  TTS_SERVER_MAX_WAIT_SEC=3600 # job 완료 대기 상한(연결 실패는 이 시간을 쓰지 않음)
   TTS_PROFILE=wagglebot/shorts-ko
   TTS_CLIENT_ID=wagglebot      # X-Client-Id = 프로필 네임스페이스
   TTS_SPEED=1.1                # 서버 speed 옵션으로만 전달 (로컬 atempo 없음)
@@ -286,7 +286,7 @@ graph TD
   ```
   DATABASE_URL=...
   LLM_WORKER_URL=http://llm-worker:8090
-  TTS_SERVER_URL=http://local-tts:8500   # 대시보드 TTS 미리듣기용. ai_worker와 동일한 TTS_* 8종을 전달(TOKEN·TIMEOUT·RETRIES·MAX_WAIT·PROFILE·CLIENT_ID·SPEED)
+  TTS_SERVER_URL=http://local-tts:8500   # 대시보드 TTS 미리듣기용. ai_worker와 동일한 TTS_* 8종을 전달(재큐 변수 `TTS_REQUEUE_MAX`는 ai_worker만)(TOKEN·TIMEOUT·RETRIES·MAX_WAIT·PROFILE·CLIENT_ID·SPEED)
   MEDIA_DIR=/app/media
   ```
 
