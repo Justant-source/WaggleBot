@@ -50,7 +50,7 @@ services:
       context: ..
       dockerfile: env/Dockerfile.comfyui
     container_name: comfyui
-    restart: unless-stopped
+    restart: "no"  # 재부팅 시 자동 기동 금지(과거 restart 정책 때문에 유휴 상태로 상시 떠 있었음). 필요할 때만 수동 기동
     runtime: nvidia
     ports:
       - "8188:8188"
