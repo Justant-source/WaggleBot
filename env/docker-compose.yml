@@ -236,6 +236,8 @@ services:
       LLM_QUEUE_CAPACITY: "${LLM_QUEUE_CAPACITY:-500}"
       CLAUDE_BIN: "claude"
       HOME: "/home/justant"
+      # caveman 플러그인(~/.claude 마운트로 함께 로드됨)이 운영 생성물에 켜지지 않게 고정
+      CAVEMAN_DEFAULT_MODE: "off"
     volumes:
       - ${CLAUDE_HOST_CONFIG_DIR:-/home/justant/.claude}:/home/justant/.claude
     healthcheck:

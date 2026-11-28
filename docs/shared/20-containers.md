@@ -141,7 +141,9 @@ graph TD
   LLM_REPORT_MODEL=claude-sonnet-5-5
   LLM_POOL_SIZE=100
   LLM_QUEUE_CAPACITY=500
+  CAVEMAN_DEFAULT_MODE=off
   ```
+- **`CAVEMAN_DEFAULT_MODE=off` 이유:** `~/.claude` 마운트로 호스트의 Claude Code 플러그인·훅이 컨테이너 CLI에도 로드된다. 호스트에 caveman 플러그인(응답 압축 문체)이 기본 켜짐으로 설치돼 있어, 운영 생성물에 섞이지 않게 컨테이너에서는 꺼 둔다. 플러그인 자체의 비대화형(`claude -p`) 가드에 더한 두 번째 안전장치다(2026-11-28).
 - **Dockerfile:** JDK21 빌드 → JRE21 + Node.js/npm + claude CLI 설치
 
 ---
